@@ -9,8 +9,8 @@ export default defineConfig({
     allowedHosts: true,
     proxy: {
       '/api': {
-        // "backend" is the docker-compose service name
-        target: 'http://backend:8000',
+        // "backend" is the docker-compose service name; override with VITE_API_TARGET
+        target: process.env.VITE_API_TARGET || 'http://backend:8000',
         changeOrigin: true,
       },
     },

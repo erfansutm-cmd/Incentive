@@ -11,6 +11,13 @@ services:
       - "8000:8000"
     volumes:
       - ./backend/app:/app/app
+    environment:
+      DB_USER: ${DB_USER:-erfan.mohamadi}
+      DB_PASSWORD: ${DB_PASSWORD:-}
+      DB_HOST: ${DB_HOST:-172.21.41.75}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_NAME: ${DB_NAME:-}
+      DB_CITIES_TABLE: ${DB_CITIES_TABLE:-cities}
 
   frontend:
     build:
