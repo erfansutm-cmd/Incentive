@@ -34,7 +34,10 @@ onMounted(async () => {
         <strong :class="db.ok ? 'ok' : 'err'">{{ db.ok ? 'connected' : db.detail }}</strong>
       </span>
     </div>
-    <router-link to="/cities" class="btn btn-primary">Go to Cities →</router-link>
+    <div class="links">
+      <router-link to="/cities" class="btn btn-primary">Go to Cities →</router-link>
+      <router-link to="/business-entities" class="btn btn-ghost">Business Entities →</router-link>
+    </div>
   </div>
 </template>
 
@@ -57,9 +60,14 @@ onMounted(async () => {
   gap: 0.3rem;
   margin: 1.25rem 0;
 }
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
 .home .btn {
   display: inline-block;
-  margin-top: 0.5rem;
   text-decoration: none;
 }
 .ok {

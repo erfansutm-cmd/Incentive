@@ -38,6 +38,8 @@ configured through a root `.env` file:
 | `DB_PORT`     | `3306`           |
 | `DB_NAME`     | `incentive`      |
 | `DB_CITIES_TABLE` | `cities`     |
+| `DB_BUSINESS_ENTITIES_TABLE` | `business_entities` |
+| `DB_CITY_MAPPING_TABLE` | `mafsho/city_mapping` |
 
 ```bash
 cp .env.example .env   # then fill in DB_PASSWORD
@@ -48,6 +50,20 @@ The connection lives in `backend/app/database.py` (SQLAlchemy engine, session
 factory, and a `get_db` dependency). A readiness endpoint is available at
 `GET /api/health/db`, which runs `SELECT 1` against MySQL and reports the
 connection state.
+
+**Tables in other schemas.** Each table is set in the env as
+`schema/table` (or just `table` for the default schema), e.g.
+
+```
+DB_CITIES_TABLE=cities
+DB_BUSINESS_ENTITIES_TABLE=other_db/business_entities
+DB_CITY_MAPPING_TABLE=mafsho/city_mapping
+```
+
+The `quote_table()` helper in `database.py` parses the `schema/table` form and
+emits a safely quoted MySQL identifier (`` `other_db`.`business_entities` ``),
+so a table can live in any database on the same MySQL server the DB user has
+access to.
 
 ## Cities CRUD
 
@@ -69,6 +85,56 @@ Every route returns `{"status": "ok", "message": ...}` on success, or
 The frontend page lives at `/cities` (`frontend/src/views/Cities.vue`): it
 lists the table with all its columns and supports add / edit / delete with
 confirmation popups, a green theme, and success/error toasts.
+
+### City name lookup (auto-fill on "Add city")
+
+The **Add city** form no longer needs every field typed by hand. Start typing a
+city name and it is looked up in the city mapping table:
+
+```sql
+select distinct correct_city, correct_city_id, box_city_name, city_group
+from mafsho.city_mapping
+```
+
+Picking a suggestion fills the matching columns of the `cities` table (the ID,
+box city name and group) — the filled fields are shown locked, with an
+*edit manually* link if you need to override one.
+
+| Method | Path                 | Action                                  |
+|--------|----------------------|-----------------------------------------|
+| GET    | `/api/cities/lookup` | Search the mapping table (`q`, `limit`) |
+
+The mapping table is set with `DB_CITY_MAPPING_TABLE` (default
+`mafsho/city_mapping`) and follows the same `schema/table` convention as the
+other tables. Because the cities table is introspected, the mapping columns are
+matched to whatever the local columns are called — `correct_city` fills
+`city_name` (or `city`), `correct_city_id` fills `city_id`, and so on; columns
+with no match are simply skipped. If the mapping table is unreachable the form
+stays fully usable, it just stops auto-filling.
+
+## Business Entities CRUD
+
+The `business_entities` table is exposed through
+`backend/app/business_entities.py` under `/api/business-entities`:
+
+| Method | Path                        | Action                    |
+|--------|-----------------------------|---------------------------|
+| GET    | `/api/business-entities`        | List all rows + columns |
+| POST   | `/api/business-entities`        | Insert a new row        |
+| PUT    | `/api/business-entities/{id}`   | Update a row by PK      |
+| DELETE | `/api/business-entities/{id}`   | Delete a row by PK      |
+
+The four JSON-array columns (`include_customer_id`, `exclude_customer_id`,
+`include_delivery_category`, `exclude_delivery_category`) are parsed to real
+arrays on read and serialized to JSON on write (a plain comma-separated
+string is also accepted).
+
+The frontend page lives at `/business-entities`
+(`frontend/src/views/BusinessEntities.vue`). The JSON-array fields use a
+tag-style input (`frontend/src/components/TagInput.vue`): pick a value from
+the suggestion chips (known delivery categories, plus values already used in
+the table) or type your own and press Enter / comma to add it — duplicates
+are removed automatically.
 
 ## Development
 

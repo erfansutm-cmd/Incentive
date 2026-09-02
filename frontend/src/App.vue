@@ -5,9 +5,10 @@
       <nav>
         <router-link to="/">Home</router-link>
         <router-link to="/cities">Cities</router-link>
+        <router-link to="/business-entities">Business Entities</router-link>
       </nav>
     </header>
-    <main class="page">
+    <main class="page" :class="{ 'page-wide': $route.meta.wide }">
       <router-view />
     </main>
   </div>
@@ -99,6 +100,10 @@ body {
   max-width: 1100px;
   margin: 0 auto;
   padding: 2rem 1.5rem 3rem;
+}
+/* wide tables (e.g. business entities with many columns) */
+.page-wide {
+  max-width: 1500px;
 }
 
 .card {

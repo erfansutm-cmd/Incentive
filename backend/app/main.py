@@ -2,11 +2,12 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from . import cities
+from . import business_entities, cities
 from .database import DB_HOST, DB_NAME, DB_PORT, DB_USER, engine
 
 app = FastAPI(title="Incentive API")
 app.include_router(cities.router)
+app.include_router(business_entities.router)
 
 
 @app.get("/api/health")

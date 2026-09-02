@@ -17,6 +17,165 @@ let msgTimer = null
 const searchQuery = ref('')
 const groupFilter = ref('')
 
+// --- city-name lookup (city_mapping) --------------------------------------
+// The "add city" form auto-fills its other columns from the mapping table:
+//   select distinct correct_city, correct_city_id, box_city_name, city_group
+//   from mafsho.city_mapping
+// The cities table is introspected, so the mapping columns are matched to
+// whatever the local columns happen to be called.
+const CITY_NAME_COLUMNS = ['city_name', 'city', 'name', 'correct_city']
+const MAPPING_TARGETS = {
+  correct_city: ['city_name', 'city', 'name', 'correct_city'],
+  correct_city_id: ['city_id', 'correct_city_id', 'correct_id'],
+  box_city_name: ['box_city_name'],
+  city_group: ['city_group', 'group'],
+}
+const MAPPING_FIELDS = Object.keys(MAPPING_TARGETS)
+
+const suggestions = ref([])
+const suggestOpen = ref(false)
+const suggestLoading = ref(false)
+const highlight = ref(-1)
+const autoFilled = ref(new Set())
+const selectedMapping = ref(null)
+const lookupError = ref('')
+let lookupTimer = null
+let lookupSeq = 0
+
+// The column of the cities table that holds the city name.
+const cityNameColumn = computed(() => {
+  for (const name of CITY_NAME_COLUMNS) {
+    const col = columns.value.find((c) => c.name === name)
+    if (col) return col
+  }
+  return null
+})
+
+// Which local column a mapping column fills (null when there is no match).
+function targetColumn(mappingField) {
+  for (const name of MAPPING_TARGETS[mappingField] || []) {
+    if (form.value && !(name in form.value)) continue
+    if (editableColumns.value.some((c) => c.name === name)) return name
+  }
+  return null
+}
+
+function isCityNameColumn(col) {
+  return !editing.value && cityNameColumn.value && col.name === cityNameColumn.value.name
+}
+
+async function fetchSuggestions(term) {
+  const seq = ++lookupSeq
+  suggestLoading.value = true
+  lookupError.value = ''
+  try {
+    const res = await fetch(`/api/cities/lookup?q=${encodeURIComponent(term)}&limit=20`)
+    const data = await res.json()
+    if (seq !== lookupSeq) return // a newer keystroke already won
+    if (!res.ok) throw new Error(data.message || data.detail || 'Lookup failed')
+    suggestions.value = data.rows || []
+    highlight.value = -1
+    suggestOpen.value = true
+  } catch (e) {
+    if (seq === lookupSeq) {
+      suggestions.value = []
+      suggestOpen.value = false
+      lookupError.value = e.message
+    }
+  } finally {
+    if (seq === lookupSeq) suggestLoading.value = false
+  }
+}
+
+function onCityInput() {
+  // Typing a fresh name unlocks whatever was auto-filled before.
+  releaseAutoFill()
+  highlight.value = -1
+  if (lookupTimer) clearTimeout(lookupTimer)
+  const nameCol = cityNameColumn.value?.name
+  const term = nameCol ? String(form.value[nameCol] ?? '').trim() : ''
+  if (!term) {
+    if (lookupTimer) clearTimeout(lookupTimer)
+    suggestions.value = []
+    suggestOpen.value = false
+    suggestLoading.value = false
+    return
+  }
+  suggestOpen.value = false
+  lookupTimer = setTimeout(() => fetchSuggestions(term), 250)
+}
+
+function onCityFocus() {
+  const nameCol = cityNameColumn.value?.name
+  const term = nameCol ? String(form.value[nameCol] ?? '').trim() : ''
+  if (term && !selectedMapping.value) fetchSuggestions(term)
+}
+
+function onCityKey(e) {
+  if (!suggestOpen.value || !suggestions.value.length) {
+    if (e.key === 'Escape') suggestOpen.value = false
+    return
+  }
+  if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    highlight.value = (highlight.value + 1) % suggestions.value.length
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    highlight.value =
+      (highlight.value + suggestions.value.length - 1) % suggestions.value.length
+  } else if (e.key === 'Enter') {
+    if (highlight.value >= 0) {
+      e.preventDefault()
+      pickSuggestion(suggestions.value[highlight.value])
+    } else {
+      suggestOpen.value = false
+    }
+  } else if (e.key === 'Escape') {
+    suggestOpen.value = false
+  } else if (e.key === 'Tab') {
+    suggestOpen.value = false
+  }
+}
+
+function pickSuggestion(s) {
+  const nameCol = cityNameColumn.value?.name
+  if (nameCol) form.value[nameCol] = s.correct_city ?? ''
+
+  const filled = new Set()
+  for (const field of MAPPING_FIELDS) {
+    const target = targetColumn(field)
+    if (!target || target === nameCol) continue
+    form.value[target] = s[field] ?? ''
+    filled.add(target)
+  }
+  autoFilled.value = filled
+  selectedMapping.value = s
+  suggestions.value = []
+  suggestOpen.value = false
+  if (lookupTimer) clearTimeout(lookupTimer)
+}
+
+function releaseAutoFill() {
+  autoFilled.value = new Set()
+  selectedMapping.value = null
+}
+
+function enableManual(columnName) {
+  const next = new Set(autoFilled.value)
+  next.delete(columnName)
+  autoFilled.value = next
+  if (!next.size) selectedMapping.value = null
+}
+
+function suggestLabel(s) {
+  const bits = []
+  if (s.correct_city_id !== null && s.correct_city_id !== undefined && s.correct_city_id !== '')
+    bits.push(`#${s.correct_city_id}`)
+  if (s.box_city_name) bits.push(s.box_city_name)
+  if (s.city_group) bits.push(s.city_group)
+  return bits.join(' · ')
+}
+
 const pkColumn = computed(() => columns.value.find((c) => c.key === 'PRI'))
 
 // Columns the user should NOT see in the table or edit directly (system-managed).
@@ -123,10 +282,23 @@ async function load() {
   }
 }
 
+function resetLookup() {
+  if (lookupTimer) clearTimeout(lookupTimer)
+  lookupSeq++
+  suggestions.value = []
+  suggestOpen.value = false
+  suggestLoading.value = false
+  highlight.value = -1
+  autoFilled.value = new Set()
+  selectedMapping.value = null
+  lookupError.value = ''
+}
+
 function openAdd() {
   editing.value = null
   form.value = {}
   for (const c of editableColumns.value) form.value[c.name] = c.default ?? ''
+  resetLookup()
   showModal.value = true
 }
 
@@ -134,6 +306,7 @@ function openEdit(row) {
   editing.value = row
   form.value = {}
   for (const c of editableColumns.value) form.value[c.name] = row[c.name] ?? ''
+  resetLookup()
   showModal.value = true
 }
 
@@ -248,15 +421,70 @@ onMounted(load)
 
     <!-- add / edit popup -->
     <div v-if="showModal" class="overlay" @click.self="showModal = false">
-      <div class="modal">
+      <div class="modal" :class="{ 'lookup-open': suggestOpen && suggestions.length > 0 }">
         <h2>{{ editing ? 'Edit city' : 'Add city' }}</h2>
+        <p v-if="!editing && cityNameColumn" class="modal-hint">
+          Start typing a city name — the other fields are filled from
+          <code>city_mapping</code>.
+        </p>
         <label v-for="c in editableColumns" :key="c.name" class="field">
           <span>
             {{ colLabel(c) }}
             <em v-if="c.nullable" class="opt">(optional)</em>
             <em class="opt type">{{ c.type }}</em>
           </span>
-          <input v-model="form[c.name]" :type="inputType(c)" :placeholder="c.type" />
+
+          <!-- city name: autocomplete fed by the mapping table -->
+          <div v-if="isCityNameColumn(c)" class="combo">
+            <input
+              v-model="form[c.name]"
+              type="text"
+              autocomplete="off"
+              placeholder="Start typing a city name…"
+              @input="onCityInput"
+              @focus="onCityFocus"
+              @keydown="onCityKey"
+              @blur="suggestOpen = false"
+            />
+            <ul v-if="suggestOpen && suggestions.length" class="suggest">
+              <li
+                v-for="(s, i) in suggestions"
+                :key="i"
+                :class="{ active: i === highlight }"
+                @mousedown.prevent="pickSuggestion(s)"
+                @mouseenter="highlight = i"
+              >
+                <span class="s-name">{{ s.correct_city }}</span>
+                <span v-if="suggestLabel(s)" class="s-meta">{{ suggestLabel(s) }}</span>
+              </li>
+            </ul>
+            <p v-if="lookupError" class="hint warn">
+              Name lookup unavailable — fill the fields manually.
+            </p>
+            <p v-else-if="suggestLoading" class="hint">Searching…</p>
+            <p v-else-if="selectedMapping" class="hint ok">
+              Matched in <code>city_mapping</code> — fields filled automatically.
+            </p>
+          </div>
+
+          <!-- every other column: plain input, read-only once auto-filled -->
+          <template v-else>
+            <input
+              v-model="form[c.name]"
+              :type="inputType(c)"
+              :placeholder="c.type"
+              :readonly="autoFilled.has(c.name)"
+              :class="{ 'auto-filled': autoFilled.has(c.name) }"
+            />
+            <button
+              v-if="autoFilled.has(c.name)"
+              type="button"
+              class="link"
+              @click="enableManual(c.name)"
+            >
+              edit manually
+            </button>
+          </template>
         </label>
         <div class="actions">
           <button class="btn btn-ghost" @click="showModal = false">Cancel</button>
@@ -405,5 +633,100 @@ tbody tr:hover {
 
 .field .type {
   margin-left: 0.4rem;
+}
+
+/* modal hint + city-name autocomplete */
+.modal-hint {
+  margin: -0.4rem 0 1rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+.modal-hint code {
+  background: var(--surface-2);
+  padding: 0.05rem 0.35rem;
+  border-radius: 0.3rem;
+  color: var(--accent-strong);
+}
+
+/* let the suggestion dropdown escape the modal's scroll box */
+.modal.lookup-open {
+  overflow: visible;
+}
+
+.combo {
+  position: relative;
+}
+
+.suggest {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+  max-height: 15rem;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  box-shadow: 0 12px 30px rgba(20, 40, 30, 0.16);
+}
+.suggest li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 0.4rem;
+  cursor: pointer;
+}
+.suggest li:hover,
+.suggest li.active {
+  background: var(--accent-soft);
+}
+.s-name {
+  font-size: 0.92rem;
+  color: var(--text);
+}
+.s-meta {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.hint.ok {
+  color: var(--ok-text);
+}
+.hint.warn {
+  color: var(--warning);
+}
+.hint code {
+  background: var(--surface-2);
+  padding: 0.05rem 0.3rem;
+  border-radius: 0.3rem;
+}
+
+.auto-filled {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  cursor: default;
+}
+
+.link {
+  align-self: flex-start;
+  margin-top: 0.25rem;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent-strong);
+  font-size: 0.78rem;
+  text-decoration: underline;
+  cursor: pointer;
 }
 </style>
