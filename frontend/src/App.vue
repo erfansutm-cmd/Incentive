@@ -5,6 +5,7 @@
       <nav>
         <router-link to="/">Home</router-link>
         <router-link to="/cities">Cities</router-link>
+        <router-link to="/business-entities">Business Entities</router-link>
       </nav>
     </header>
     <main class="page">

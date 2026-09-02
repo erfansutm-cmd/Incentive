@@ -38,6 +38,7 @@ configured through a root `.env` file:
 | `DB_PORT`     | `3306`           |
 | `DB_NAME`     | `incentive`      |
 | `DB_CITIES_TABLE` | `cities`     |
+| `DB_BUSINESS_ENTITIES_TABLE` | `business_entities` |
 
 ```bash
 cp .env.example .env   # then fill in DB_PASSWORD
@@ -69,6 +70,30 @@ Every route returns `{"status": "ok", "message": ...}` on success, or
 The frontend page lives at `/cities` (`frontend/src/views/Cities.vue`): it
 lists the table with all its columns and supports add / edit / delete with
 confirmation popups, a green theme, and success/error toasts.
+
+## Business Entities CRUD
+
+The `business_entities` table is exposed through
+`backend/app/business_entities.py` under `/api/business-entities`:
+
+| Method | Path                        | Action                    |
+|--------|-----------------------------|---------------------------|
+| GET    | `/api/business-entities`        | List all rows + columns |
+| POST   | `/api/business-entities`        | Insert a new row        |
+| PUT    | `/api/business-entities/{id}`   | Update a row by PK      |
+| DELETE | `/api/business-entities/{id}`   | Delete a row by PK      |
+
+The four JSON-array columns (`include_customer_id`, `exclude_customer_id`,
+`include_delivery_category`, `exclude_delivery_category`) are parsed to real
+arrays on read and serialized to JSON on write (a plain comma-separated
+string is also accepted).
+
+The frontend page lives at `/business-entities`
+(`frontend/src/views/BusinessEntities.vue`). The JSON-array fields use a
+tag-style input (`frontend/src/components/TagInput.vue`): pick a value from
+the suggestion chips (known delivery categories, plus values already used in
+the table) or type your own and press Enter / comma to add it — duplicates
+are removed automatically.
 
 ## Development
 
