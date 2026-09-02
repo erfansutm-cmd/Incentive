@@ -74,15 +74,10 @@ async function fetchSuggestions(term) {
     const data = await res.json()
     if (seq !== lookupSeq) return // a newer keystroke already won
     if (!res.ok) throw new Error(data.message || data.detail || 'Lookup failed')
-    // The backend already hides cities that are in the table and collapses
-    // duplicate mapping rows; keep it unique here too, just in case.
-    const seen = new Set()
-    suggestions.value = (data.rows || []).filter((r) => {
-      const key = String(r.correct_city ?? '').trim().toLowerCase()
-      if (!key || seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
+    // One row per city + box city name: the same city can legitimately appear
+    // more than once (different box city names), so nothing is de-duplicated
+    // here — the backend already drops cities that are in the table.
+    suggestions.value = data.rows || []
     noMatches.value = suggestions.value.length === 0
     highlight.value = -1
     suggestOpen.value = true
@@ -474,6 +469,7 @@ onMounted(load)
             </ul>
             <p v-if="lookupError" class="hint warn">
               Name lookup unavailable — fill the fields manually.
+              <span class="err">{{ lookupError }}</span>
             </p>
             <p v-else-if="suggestLoading" class="hint">Searching…</p>
             <p v-else-if="noMatches" class="hint warn">
@@ -728,6 +724,13 @@ tbody tr:hover {
   background: var(--surface-2);
   padding: 0.05rem 0.3rem;
   border-radius: 0.3rem;
+}
+.hint .err {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.72rem;
+  opacity: 0.85;
+  word-break: break-word;
 }
 
 .auto-filled {

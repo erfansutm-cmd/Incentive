@@ -132,14 +132,19 @@ def list_cities():
 
 
 @router.get("/lookup")
-def lookup_city(q: str = "", limit: int = 20):
+def lookup_city(q: str = "", limit: int = 20, exclude_existing: int = 1):
     """Search the city mapping table (used by the "add city" autocomplete).
 
-    Returns one row per ``correct_city`` (a city can have several mapping rows,
-    one per box city name — they are collapsed into a single suggestion) whose
-    city or box-city name contains ``q``. Cities already present in the cities
-    table are left out, so the form only ever offers cities that are still
-    missing. The UI fills the matching columns from the chosen row.
+    Returns the distinct ``correct_city`` / ``correct_city_id`` /
+    ``box_city_name`` / ``city_group`` rows whose city or box-city name contains
+    ``q`` — one row per city *and* box city name, because several cities can
+    share a box city name and each of them can be added.
+
+    The only thing filtered out is a city that is already in the cities table
+    (``NOT EXISTS`` on the city-name column, so the whole city disappears from
+    the suggestions, whatever its box city name). Pass ``exclude_existing=0``
+    to switch that filter off, which is handy to check what the mapping table
+    really holds. The UI fills the matching columns from the chosen row.
     """
     try:
         limit = max(1, min(int(limit), MAX_LOOKUP_LIMIT))
@@ -158,8 +163,9 @@ def lookup_city(q: str = "", limit: int = 20):
         clauses.append(f"({match})")
         params["term"] = f"%{safe}%"
 
-    # Hide cities that are already in the cities table.
-    name_col = _city_name_column()
+    # Hide cities that are already in the cities table (matched on the city
+    # name only — the box city name plays no part in it).
+    name_col = _city_name_column() if exclude_existing else None
     if name_col:
         clauses.append(
             f"NOT EXISTS (SELECT 1 FROM {TABLE_SQL} c"
@@ -167,14 +173,10 @@ def lookup_city(q: str = "", limit: int = 20):
         )
 
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    cols = ", ".join(f"m.`{c}` AS `{c}`" for c in MAPPING_COLUMNS)
     sql = text(
-        f"SELECT m.`correct_city` AS correct_city,"
-        f" m.`correct_city_id` AS correct_city_id,"
-        f" MIN(m.`box_city_name`) AS box_city_name,"
-        f" MIN(m.`city_group`) AS city_group"
-        f" FROM {MAPPING_TABLE_SQL} m{where}"
-        f" GROUP BY m.`correct_city`, m.`correct_city_id`"
-        f" ORDER BY `correct_city` LIMIT {limit}"
+        f"SELECT DISTINCT {cols} FROM {MAPPING_TABLE_SQL} m{where} "
+        f"ORDER BY m.`correct_city`, m.`box_city_name` LIMIT {limit}"
     )
     try:
         with engine.connect() as conn:

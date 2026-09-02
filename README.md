@@ -100,15 +100,19 @@ Picking a suggestion fills the matching columns of the `cities` table (the ID,
 box city name and group) — the filled fields are shown locked, with an
 *edit manually* link if you need to override one.
 
-The lookup never offers a city twice:
+Suggestions come from the plain `select distinct …` rows, so **one entry per
+city *and* box city name** — several cities can share the same box city name
+and each of them stays addable. The only thing filtered out is the city
+itself:
 
 * **Already in the table** — any `correct_city` that is already a row of the
-  cities table is left out, so you cannot add the same city again. Typing its
-  name shows "No match — either it is already in the table or it is missing
-  from `city_mapping`".
-* **Duplicates collapsed** — a city usually has several mapping rows (one per
-  `box_city_name`); they are grouped into a single suggestion, using the first
-  box city name / group.
+  cities table is left out (`NOT EXISTS` against the city-name column), so a
+  city cannot be added twice, whatever its box city name. Typing its name
+  shows "No match — either it is already in the table or it is missing from
+  `city_mapping`".
+* Add `?exclude_existing=0` to see the raw mapping rows, which is handy when a
+  city you expect does not show up:
+  `/api/cities/lookup?q=tehran&exclude_existing=0`.
 
 | Method | Path                 | Action                                  |
 |--------|----------------------|-----------------------------------------|
