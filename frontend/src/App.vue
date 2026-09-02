@@ -15,21 +15,24 @@
 
 <style>
 :root {
-  --green-50: #ecfdf5;
-  --green-100: #d1fae5;
-  --green-200: #a7f3d0;
-  --green-400: #34d399;
-  --green-500: #10b981;
-  --green-600: #059669;
-  --green-700: #047857;
-  --green-800: #065f46;
-  --green-900: #064e3b;
-  --danger: #dc2626;
-  --danger-dark: #b91c1c;
-  --text: #064e3b;
-  --muted: #6b7280;
-  --card: #ffffff;
-  --border: #d1fae5;
+  /* soft, low-saturation palette — easy on the eyes */
+  --bg: #f5f7f6;
+  --surface: #ffffff;
+  --surface-2: #eef3f0;
+  --border: #e3e9e5;
+  --text: #34413b;
+  --muted: #71847b;
+  --accent: #3d8b6d;
+  --accent-strong: #2f7057;
+  --accent-soft: #e6f1ec;
+  --accent-ring: rgba(61, 139, 109, 0.18);
+  --ok-text: #2c7a58;
+  --inactive-text: #7a8a82;
+  --danger: #cf5a5a;
+  --danger-strong: #b64949;
+  --danger-soft: #f7e8e8;
+  --warning: #b97f2e;
+  --warning-soft: #f6edde;
 }
 
 * {
@@ -38,10 +41,9 @@
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   color: var(--text);
-  background: linear-gradient(160deg, #f0fdf4, #d1fae5 60%, #a7f3d0);
-  min-height: 100vh;
+  background: var(--bg);
 }
 
 .app {
@@ -51,38 +53,44 @@ body {
 }
 
 .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
   display: flex;
   align-items: center;
   gap: 1.5rem;
-  padding: 0.9rem 2rem;
-  background: var(--green-800);
-  color: #fff;
-  box-shadow: 0 2px 10px rgba(6, 78, 59, 0.25);
+  padding: 0.7rem 2rem;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
 }
 .topbar .brand {
   font-weight: 700;
-  font-size: 1.15rem;
-  color: #fff;
+  font-size: 1.1rem;
+  color: var(--accent-strong);
   text-decoration: none;
+  letter-spacing: -0.01em;
 }
 .topbar nav {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.25rem;
 }
 .topbar nav a {
-  color: var(--green-100);
+  color: var(--muted);
   text-decoration: none;
   padding: 0.4rem 0.9rem;
-  border-radius: 0.5rem;
+  border-radius: 999px;
   font-weight: 500;
-  transition: background 0.15s ease;
+  font-size: 0.9rem;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 .topbar nav a:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--surface-2);
+  color: var(--text);
 }
 .topbar nav a.router-link-active {
-  background: rgba(255, 255, 255, 0.2);
-  color: #fff;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
 }
 
 .page {
@@ -90,14 +98,14 @@ body {
   width: 100%;
   max-width: 1100px;
   margin: 0 auto;
-  padding: 2rem 1.5rem;
+  padding: 2rem 1.5rem 3rem;
 }
 
 .card {
-  background: var(--card);
+  background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 1rem;
-  box-shadow: 0 6px 24px rgba(6, 78, 59, 0.08);
+  border-radius: 0.9rem;
+  box-shadow: 0 1px 2px rgba(20, 40, 30, 0.04), 0 8px 24px rgba(20, 40, 30, 0.05);
 }
 
 button {
@@ -109,9 +117,9 @@ button {
   border: none;
   border-radius: 0.6rem;
   padding: 0.55rem 1.1rem;
-  font-size: 0.95rem;
+  font-size: 0.92rem;
   font-weight: 600;
-  transition: transform 0.05s ease, background 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.05s ease;
 }
 .btn:active {
   transform: translateY(1px);
@@ -122,20 +130,20 @@ button {
 }
 
 .btn-primary {
-  background: var(--green-600);
+  background: var(--accent);
   color: #fff;
 }
 .btn-primary:hover {
-  background: var(--green-700);
+  background: var(--accent-strong);
 }
 
 .btn-ghost {
   background: #fff;
-  color: var(--green-800);
-  border: 1px solid var(--green-200);
+  color: var(--text);
+  border: 1px solid var(--border);
 }
 .btn-ghost:hover {
-  background: var(--green-50);
+  background: var(--surface-2);
 }
 
 .btn-danger {
@@ -143,12 +151,12 @@ button {
   color: #fff;
 }
 .btn-danger:hover {
-  background: var(--danger-dark);
+  background: var(--danger-strong);
 }
 
 .btn-sm {
-  padding: 0.35rem 0.7rem;
-  font-size: 0.85rem;
+  padding: 0.32rem 0.7rem;
+  font-size: 0.82rem;
   border-radius: 0.5rem;
 }
 
@@ -157,15 +165,16 @@ button {
   position: fixed;
   right: 1.5rem;
   bottom: 1.5rem;
-  padding: 0.9rem 1.25rem;
-  border-radius: 0.7rem;
+  padding: 0.8rem 1.15rem;
+  border-radius: 0.6rem;
   color: #fff;
   font-weight: 600;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  font-size: 0.9rem;
+  box-shadow: 0 8px 24px rgba(20, 40, 30, 0.18);
   z-index: 60;
 }
 .toast.ok {
-  background: var(--green-600);
+  background: var(--accent);
 }
 .toast.error {
   background: var(--danger);
@@ -178,9 +187,9 @@ button {
   margin-bottom: 1.25rem;
 }
 .banner.error {
-  background: #fee2e2;
-  border: 1px solid #fca5a5;
-  color: #7f1d1d;
+  background: var(--danger-soft);
+  border: 1px solid #f0caca;
+  color: #8c3030;
 }
 .banner.error p {
   margin: 0.25rem 0 0.75rem;
@@ -190,7 +199,7 @@ button {
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(6, 46, 35, 0.5);
+  background: rgba(30, 42, 36, 0.4);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -199,44 +208,49 @@ button {
 }
 .modal {
   background: #fff;
-  border-radius: 1rem;
+  border-radius: 0.9rem;
   width: 100%;
   max-width: 460px;
   padding: 1.5rem;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 20px 60px rgba(20, 40, 30, 0.25);
   max-height: 85vh;
   overflow-y: auto;
 }
 .modal h2 {
   margin: 0 0 1rem;
-  color: var(--green-900);
+  color: var(--text);
+  font-size: 1.15rem;
 }
 
 .field {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
-  margin-bottom: 0.9rem;
+  margin-bottom: 0.85rem;
 }
 .field span {
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   font-weight: 600;
-  color: var(--green-900);
+  color: var(--text);
 }
 .field .opt {
   font-weight: 400;
   color: var(--muted);
+  font-style: normal;
 }
 .field input {
   padding: 0.55rem 0.7rem;
-  border: 1px solid var(--green-200);
+  border: 1px solid var(--border);
   border-radius: 0.55rem;
   font-size: 0.95rem;
   outline: none;
+  color: var(--text);
+  background: #fbfdfc;
 }
 .field input:focus {
-  border-color: var(--green-500);
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+  background: #fff;
 }
 
 .modal .actions {

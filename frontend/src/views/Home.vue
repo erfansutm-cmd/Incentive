@@ -27,11 +27,13 @@ onMounted(async () => {
   <div class="card home">
     <h1>Welcome to Incentive</h1>
     <p>FastAPI + Vue starter with MySQL.</p>
-    <p>API status: <strong>{{ apiStatus }}</strong></p>
-    <p v-if="db">
-      Database:
-      <strong :class="db.ok ? 'ok' : 'err'">{{ db.ok ? 'connected' : db.detail }}</strong>
-    </p>
+    <div class="status">
+      <span>API: <strong>{{ apiStatus }}</strong></span>
+      <span v-if="db">
+        Database:
+        <strong :class="db.ok ? 'ok' : 'err'">{{ db.ok ? 'connected' : db.detail }}</strong>
+      </span>
+    </div>
     <router-link to="/cities" class="btn btn-primary">Go to Cities →</router-link>
   </div>
 </template>
@@ -42,16 +44,26 @@ onMounted(async () => {
   max-width: 560px;
 }
 .home h1 {
-  margin-top: 0;
-  color: var(--green-900);
+  margin: 0 0 0.4rem;
+  color: var(--text);
+}
+.home p {
+  color: var(--muted);
+  margin: 0.3rem 0;
+}
+.status {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: 1.25rem 0;
 }
 .home .btn {
   display: inline-block;
-  margin-top: 1rem;
+  margin-top: 0.5rem;
   text-decoration: none;
 }
 .ok {
-  color: var(--green-600);
+  color: var(--ok-text);
 }
 .err {
   color: var(--danger);

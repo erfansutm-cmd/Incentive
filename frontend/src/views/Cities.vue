@@ -18,17 +18,27 @@ const message = ref(null)
 let msgTimer = null
 
 const pkColumn = computed(() => columns.value.find((c) => c.key === 'PRI'))
+const hasDeactivated = computed(() => columns.value.some((c) => c.name === 'deactivated_at'))
 
-// Editable columns = everything except the auto-increment primary key.
+// Columns the user should NOT edit directly (system-managed).
+const MANAGED = new Set(['created_at', 'deactivated_at'])
+
+// Editable columns = everything except the auto-increment PK and managed columns.
 const editableColumns = computed(() =>
   columns.value.filter(
-    (c) => !(c.key === 'PRI' && (c.extra || '').includes('auto_increment'))
+    (c) =>
+      !(c.key === 'PRI' && (c.extra || '').includes('auto_increment')) &&
+      !MANAGED.has(c.name)
   )
 )
 
 function pkValue(row) {
   const pk = pkColumn.value
   return pk ? row[pk.name] : undefined
+}
+
+function isActive(row) {
+  return !row.deactivated_at
 }
 
 function inputType(col) {
@@ -102,6 +112,21 @@ async function save() {
   }
 }
 
+async function toggleActive(row) {
+  try {
+    const res = await fetch(`/api/cities/${encodeURIComponent(pkValue(row))}/toggle-active`, {
+      method: 'POST',
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.message || data.detail || 'Update failed')
+
+    showMessage('ok', data.message || 'Updated')
+    await load()
+  } catch (e) {
+    showMessage('error', e.message)
+  }
+}
+
 function askDelete(row) {
   confirmDelete.value = row
 }
@@ -153,6 +178,7 @@ onMounted(load)
         <thead>
           <tr>
             <th v-for="c in columns" :key="c.name">{{ c.name }}</th>
+            <th class="actions-col">Status</th>
             <th class="actions-col">Actions</th>
           </tr>
         </thead>
@@ -160,12 +186,26 @@ onMounted(load)
           <tr v-for="(row, i) in rows" :key="i">
             <td v-for="c in columns" :key="c.name">{{ row[c.name] ?? '' }}</td>
             <td class="actions-col">
+              <span v-if="hasDeactivated" class="pill" :class="isActive(row) ? 'on' : 'off'">
+                {{ isActive(row) ? 'Active' : 'Inactive' }}
+              </span>
+              <span v-else class="pill off">—</span>
+            </td>
+            <td class="actions-col">
+              <button
+                v-if="hasDeactivated"
+                class="btn btn-sm toggle"
+                :class="isActive(row) ? 'btn-deactivate' : 'btn-activate'"
+                @click="toggleActive(row)"
+              >
+                {{ isActive(row) ? 'Deactivate' : 'Activate' }}
+              </button>
               <button class="btn btn-ghost btn-sm" @click="openEdit(row)">Edit</button>
               <button class="btn btn-danger btn-sm" @click="askDelete(row)">Delete</button>
             </td>
           </tr>
           <tr v-if="rows.length === 0">
-            <td class="empty" :colspan="columns.length + 1">No cities yet — add the first one.</td>
+            <td class="empty" :colspan="columns.length + 2">No cities yet — add the first one.</td>
           </tr>
         </tbody>
       </table>
@@ -220,17 +260,18 @@ onMounted(load)
 }
 .head h1 {
   margin: 0;
-  color: var(--green-900);
+  color: var(--text);
+  font-size: 1.5rem;
 }
 .sub {
   margin: 0.3rem 0 0;
   color: var(--muted);
 }
 .sub code {
-  background: var(--green-100);
+  background: var(--surface-2);
   padding: 0.1rem 0.4rem;
   border-radius: 0.3rem;
-  color: var(--green-800);
+  color: var(--accent-strong);
 }
 
 .empty {
@@ -248,24 +289,27 @@ table {
 }
 thead th {
   text-align: left;
-  padding: 0.85rem 1rem;
-  background: var(--green-700);
-  color: #fff;
-  font-size: 0.85rem;
+  padding: 0.75rem 1rem;
+  background: var(--surface-2);
+  color: #4a6155;
+  font-size: 0.78rem;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.04em;
   white-space: nowrap;
+  border-bottom: 1px solid var(--border);
 }
 tbody td {
   padding: 0.7rem 1rem;
-  border-top: 1px solid var(--green-100);
-  font-size: 0.95rem;
+  border-bottom: 1px solid #eef2ef;
+  font-size: 0.94rem;
+  color: var(--text);
 }
-tbody tr:nth-child(even) {
-  background: var(--green-50);
+tbody tr:last-child td {
+  border-bottom: none;
 }
 tbody tr:hover {
-  background: var(--green-100);
+  background: #f6faf8;
 }
 .actions-col {
   text-align: right;
@@ -274,6 +318,49 @@ tbody tr:hover {
 .actions-col .btn + .btn {
   margin-left: 0.4rem;
 }
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.18rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.pill::before {
+  content: '';
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+.pill.on {
+  background: var(--accent-soft);
+  color: var(--ok-text);
+}
+.pill.off {
+  background: #eef1ef;
+  color: var(--inactive-text);
+}
+
+.btn-deactivate {
+  background: #fff;
+  color: var(--warning);
+  border: 1px solid #ecd9ba;
+}
+.btn-deactivate:hover {
+  background: var(--warning-soft);
+}
+.btn-activate {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  border: 1px solid #cfe5da;
+}
+.btn-activate:hover {
+  background: #d7eade;
+}
+
 .field .type {
   margin-left: 0.4rem;
 }

@@ -75,8 +75,10 @@ def _clean_payload(payload, cols):
 def list_cities():
     try:
         cols = _columns()
+        pk = _primary_key(cols)
+        order = f" ORDER BY `{pk}`" if pk else ""
         with engine.connect() as conn:
-            rows = conn.execute(text(f"SELECT * FROM `{TABLE_NAME}`"))
+            rows = conn.execute(text(f"SELECT * FROM `{TABLE_NAME}`{order}"))
             data = [{k: _jsonable(v) for k, v in r._mapping.items()} for r in rows]
     except Exception as exc:
         status, msg = _failure(exc)
@@ -107,6 +109,7 @@ async def add_city(payload: dict):
         return JSONResponse(status_code=status, content={"status": "error", "message": msg})
 
     pk = _primary_key(cols)
+    allowed = {c["Field"] for c in cols}
     data = _clean_payload(payload, cols)
     # Never insert the auto-increment primary key.
     if pk and any(
@@ -114,18 +117,29 @@ async def add_city(payload: dict):
     ):
         data.pop(pk, None)
 
-    if not data:
+    if not any(v is not None for v in data.values()):
         return JSONResponse(
             status_code=400,
-            content={"status": "error", "message": "No valid fields to insert."},
+            content={"status": "error", "message": "Please fill at least one field."},
         )
 
-    names = ", ".join(f"`{c}`" for c in data)
-    placeholders = ", ".join(f":{c}" for c in data)
-    sql = text(f"INSERT INTO `{TABLE_NAME}` ({names}) VALUES ({placeholders})")
+    names, values, params = [], [], {}
+    for c in data:
+        names.append(f"`{c}`")
+        values.append(f":{c}")
+        params[c] = data[c]
+    # Managed columns: created_at = now, deactivated_at = NULL (active by default).
+    if "created_at" in allowed and "created_at" not in data:
+        names.append("`created_at`")
+        values.append("NOW()")
+    if "deactivated_at" in allowed and "deactivated_at" not in data:
+        names.append("`deactivated_at`")
+        values.append("NULL")
+
+    sql = text(f"INSERT INTO `{TABLE_NAME}` ({', '.join(names)}) VALUES ({', '.join(values)})")
     try:
         with engine.begin() as conn:
-            conn.execute(sql, data)
+            conn.execute(sql, params)
     except Exception as exc:
         status, msg = _failure(exc)
         return JSONResponse(status_code=status, content={"status": "error", "message": msg})
@@ -204,3 +218,64 @@ async def delete_city(city_id: str):
             content={"status": "error", "message": "City not found."},
         )
     return {"status": "ok", "message": "City deleted successfully."}
+
+
+@router.post("/{city_id}/toggle-active")
+async def toggle_active(city_id: str):
+    """Activate / deactivate a city by flipping the `deactivated_at` column.
+
+    Active (deactivated_at is NULL) → set to NOW() (deactivate).
+    Inactive (deactivated_at is set) → set to NULL (activate).
+    """
+    try:
+        cols = _columns()
+    except Exception as exc:
+        status, msg = _failure(exc)
+        return JSONResponse(status_code=status, content={"status": "error", "message": msg})
+
+    fields = {c["Field"] for c in cols}
+    if "deactivated_at" not in fields:
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": "Table has no 'deactivated_at' column."},
+        )
+
+    pk = _primary_key(cols)
+    if not pk:
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": f"Table '{TABLE_NAME}' has no primary key."},
+        )
+
+    read_sql = text(f"SELECT `deactivated_at` FROM `{TABLE_NAME}` WHERE `{pk}` = :pk_value")
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(read_sql, {"pk_value": city_id}).first()
+    except Exception as exc:
+        status, msg = _failure(exc)
+        return JSONResponse(status_code=status, content={"status": "error", "message": msg})
+
+    if row is None:
+        return JSONResponse(
+            status_code=404,
+            content={"status": "error", "message": "City not found."},
+        )
+
+    currently_active = row._mapping["deactivated_at"] is None
+    if currently_active:
+        sql = text(f"UPDATE `{TABLE_NAME}` SET `deactivated_at` = NOW() WHERE `{pk}` = :pk_value")
+        message = "City deactivated successfully."
+        active = False
+    else:
+        sql = text(f"UPDATE `{TABLE_NAME}` SET `deactivated_at` = NULL WHERE `{pk}` = :pk_value")
+        message = "City activated successfully."
+        active = True
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(sql, {"pk_value": city_id})
+    except Exception as exc:
+        status, msg = _failure(exc)
+        return JSONResponse(status_code=status, content={"status": "error", "message": msg})
+
+    return {"status": "ok", "message": message, "active": active}
