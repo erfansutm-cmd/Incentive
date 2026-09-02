@@ -457,12 +457,20 @@ onMounted(load)
 
 .table-scroll {
   overflow-x: auto;
+  max-height: calc(100vh - 230px);
+  overflow-y: auto;
 }
 table {
-  width: 100%;
+  /* grow to the content's natural width and scroll horizontally instead
+     of squeezing the columns together */
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
 }
 thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   text-align: left;
   padding: 0.75rem 1rem;
   background: var(--surface-2);
@@ -480,12 +488,29 @@ tbody td {
   font-size: 0.92rem;
   color: var(--text);
   vertical-align: top;
-  max-width: 260px;
+  max-width: 300px;
+  word-break: break-word;
 }
 tbody tr:last-child td {
   border-bottom: none;
 }
 tbody tr:hover {
+  background: #f6faf8;
+}
+/* keep the action buttons visible while scrolling sideways */
+thead th.actions-col,
+tbody td.actions-col {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  background: var(--surface);
+  box-shadow: -1px 0 0 var(--border);
+}
+thead th.actions-col {
+  z-index: 3;
+  background: var(--surface-2);
+}
+tbody tr:hover td.actions-col {
   background: #f6faf8;
 }
 .muted {

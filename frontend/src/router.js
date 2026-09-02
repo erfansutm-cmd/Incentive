@@ -8,6 +8,11 @@ export default createRouter({
   routes: [
     { path: '/', name: 'home', component: Home },
     { path: '/cities', name: 'cities', component: Cities },
-    { path: '/business-entities', name: 'business-entities', component: BusinessEntities },
+    {
+      path: '/business-entities',
+      name: 'business-entities',
+      component: BusinessEntities,
+      meta: { wide: true },
+    },
   ],
 })
