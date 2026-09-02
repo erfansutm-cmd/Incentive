@@ -1,0 +1,26 @@
+# Production — standalone file, run with:
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# - Frontend is built once (vite build) and served as static files by nginx on port 80.
+# - nginx proxies /api/* to the backend, so the backend is not exposed to the host.
+# - No bind mounts, no hot reload; containers restart automatically.
+
+services:
+  backend:
+    build:
+      context: ./backend
+    container_name: incentive-backend
+    restart: unless-stopped
+    expose:
+      - "8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      target: prod
+    container_name: incentive-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
