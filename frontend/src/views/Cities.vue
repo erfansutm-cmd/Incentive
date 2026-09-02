@@ -35,11 +35,11 @@ const editableColumns = computed(() =>
   )
 )
 
-// city_name / box_city_name are searchable (fall back to all columns if absent).
+// Search matches the city-name and box-city-name columns, whatever the DB
+// calls them (some schemas use "city", others "city_name").
+const SEARCHABLE = ['city_name', 'city', 'box_city_name']
 const searchColumns = computed(() => {
-  const wanted = ['city_name', 'box_city_name'].filter((n) =>
-    columns.value.some((c) => c.name === n)
-  )
+  const wanted = SEARCHABLE.filter((n) => columns.value.some((c) => c.name === n))
   return wanted.length ? wanted : tableColumns.value.map((c) => c.name)
 })
 
