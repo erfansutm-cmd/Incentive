@@ -27,6 +27,21 @@ SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 Base = declarative_base()
 
 
+def quote_table(name):
+    """Return a safely-quoted MySQL table reference.
+
+    Accepts a plain table name (``business_entities``) or a schema-qualified
+    one (``other_schema.business_entities``) so tables can live in another
+    database on the same server. Backticks inside a part are escaped by
+    doubling them; anything else is rejected.
+    """
+    parts = [p.strip().strip("`") for p in str(name).split(".")]
+    parts = [p for p in parts if p]
+    if not parts or len(parts) > 2:
+        raise ValueError(f"Invalid table name: {name!r} (expected 'table' or 'schema.table')")
+    return ".".join(f"`{p.replace('`', '``')}`" for p in parts)
+
+
 def get_db():
     """FastAPI dependency that yields a database session."""
     db = SessionLocal()

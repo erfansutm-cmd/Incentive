@@ -7,9 +7,10 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from .database import engine
+from .database import engine, quote_table
 
 TABLE_NAME = os.getenv("DB_BUSINESS_ENTITIES_TABLE", "business_entities")
+TABLE_SQL = quote_table(TABLE_NAME)  # quoted, may be "schema.table"
 
 # Columns that store JSON arrays (customer id lists / delivery category lists).
 # These are returned to the UI as real arrays and accepted back as arrays.
@@ -103,7 +104,7 @@ def _failure(exc):
 def _columns():
     """Return the table's columns from SHOW COLUMNS."""
     with engine.connect() as conn:
-        rows = conn.execute(text(f"SHOW COLUMNS FROM `{TABLE_NAME}`"))
+        rows = conn.execute(text(f"SHOW COLUMNS FROM {TABLE_SQL}"))
         return [dict(r._mapping) for r in rows]
 
 
@@ -139,7 +140,7 @@ def list_entities():
         pk = _primary_key(cols)
         order = f" ORDER BY `{pk}`" if pk else ""
         with engine.connect() as conn:
-            rows = conn.execute(text(f"SELECT * FROM `{TABLE_NAME}`{order}"))
+            rows = conn.execute(text(f"SELECT * FROM {TABLE_SQL}{order}"))
             data = []
             for r in rows:
                 row = {}
@@ -199,7 +200,7 @@ async def add_entity(payload: dict):
         params[c] = data[c]
 
     sql = text(
-        f"INSERT INTO `{TABLE_NAME}` ({', '.join(names)}) VALUES ({', '.join(values)})"
+        f"INSERT INTO {TABLE_SQL} ({', '.join(names)}) VALUES ({', '.join(values)})"
     )
     try:
         with engine.begin() as conn:
@@ -240,7 +241,7 @@ async def update_entity(entity_id: str, payload: dict):
     set_clause = ", ".join(f"`{c}` = :{c}" for c in data)
     params = dict(data)
     params["pk_value"] = entity_id
-    sql = text(f"UPDATE `{TABLE_NAME}` SET {set_clause} WHERE `{pk}` = :pk_value")
+    sql = text(f"UPDATE {TABLE_SQL} SET {set_clause} WHERE `{pk}` = :pk_value")
     try:
         with engine.begin() as conn:
             result = conn.execute(sql, params)
@@ -274,7 +275,7 @@ async def delete_entity(entity_id: str):
             },
         )
 
-    sql = text(f"DELETE FROM `{TABLE_NAME}` WHERE `{pk}` = :pk_value")
+    sql = text(f"DELETE FROM {TABLE_SQL} WHERE `{pk}` = :pk_value")
     try:
         with engine.begin() as conn:
             result = conn.execute(sql, {"pk_value": entity_id})

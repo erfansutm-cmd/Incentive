@@ -6,9 +6,10 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from .database import engine
+from .database import engine, quote_table
 
 TABLE_NAME = os.getenv("DB_CITIES_TABLE", "cities")
+TABLE_SQL = quote_table(TABLE_NAME)  # quoted, may be "schema.table"
 
 router = APIRouter(prefix="/api/cities", tags=["cities"])
 
@@ -49,7 +50,7 @@ def _failure(exc):
 def _columns():
     """Return the table's columns from SHOW COLUMNS."""
     with engine.connect() as conn:
-        rows = conn.execute(text(f"SHOW COLUMNS FROM `{TABLE_NAME}`"))
+        rows = conn.execute(text(f"SHOW COLUMNS FROM {TABLE_SQL}"))
         return [dict(r._mapping) for r in rows]
 
 
@@ -78,7 +79,7 @@ def list_cities():
         pk = _primary_key(cols)
         order = f" ORDER BY `{pk}`" if pk else ""
         with engine.connect() as conn:
-            rows = conn.execute(text(f"SELECT * FROM `{TABLE_NAME}`{order}"))
+            rows = conn.execute(text(f"SELECT * FROM {TABLE_SQL}{order}"))
             data = [{k: _jsonable(v) for k, v in r._mapping.items()} for r in rows]
     except Exception as exc:
         status, msg = _failure(exc)
@@ -136,7 +137,7 @@ async def add_city(payload: dict):
         names.append("`deactivated_at`")
         values.append("NULL")
 
-    sql = text(f"INSERT INTO `{TABLE_NAME}` ({', '.join(names)}) VALUES ({', '.join(values)})")
+    sql = text(f"INSERT INTO {TABLE_SQL} ({', '.join(names)}) VALUES ({', '.join(values)})")
     try:
         with engine.begin() as conn:
             conn.execute(sql, params)
@@ -173,7 +174,7 @@ async def update_city(city_id: str, payload: dict):
     set_clause = ", ".join(f"`{c}` = :{c}" for c in data)
     params = dict(data)
     params["pk_value"] = city_id
-    sql = text(f"UPDATE `{TABLE_NAME}` SET {set_clause} WHERE `{pk}` = :pk_value")
+    sql = text(f"UPDATE {TABLE_SQL} SET {set_clause} WHERE `{pk}` = :pk_value")
     try:
         with engine.begin() as conn:
             result = conn.execute(sql, params)
@@ -204,7 +205,7 @@ async def delete_city(city_id: str):
             content={"status": "error", "message": f"Table '{TABLE_NAME}' has no primary key; cannot delete rows."},
         )
 
-    sql = text(f"DELETE FROM `{TABLE_NAME}` WHERE `{pk}` = :pk_value")
+    sql = text(f"DELETE FROM {TABLE_SQL} WHERE `{pk}` = :pk_value")
     try:
         with engine.begin() as conn:
             result = conn.execute(sql, {"pk_value": city_id})
@@ -247,7 +248,7 @@ async def delete_city(city_id: str):
 #             content={"status": "error", "message": f"Table '{TABLE_NAME}' has no primary key."},
 #         )
 #
-#     read_sql = text(f"SELECT `deactivated_at` FROM `{TABLE_NAME}` WHERE `{pk}` = :pk_value")
+#     read_sql = text(f"SELECT `deactivated_at` FROM {TABLE_SQL} WHERE `{pk}` = :pk_value")
 #     try:
 #         with engine.connect() as conn:
 #             row = conn.execute(read_sql, {"pk_value": city_id}).first()
@@ -263,11 +264,11 @@ async def delete_city(city_id: str):
 #
 #     currently_active = row._mapping["deactivated_at"] is None
 #     if currently_active:
-#         sql = text(f"UPDATE `{TABLE_NAME}` SET `deactivated_at` = NOW() WHERE `{pk}` = :pk_value")
+#         sql = text(f"UPDATE {TABLE_SQL} SET `deactivated_at` = NOW() WHERE `{pk}` = :pk_value")
 #         message = "City deactivated successfully."
 #         active = False
 #     else:
-#         sql = text(f"UPDATE `{TABLE_NAME}` SET `deactivated_at` = NULL WHERE `{pk}` = :pk_value")
+#         sql = text(f"UPDATE {TABLE_SQL} SET `deactivated_at` = NULL WHERE `{pk}` = :pk_value")
 #         message = "City activated successfully."
 #         active = True
 #
