@@ -100,9 +100,19 @@ Picking a suggestion fills the matching columns of the `cities` table (the ID,
 box city name and group) — the filled fields are shown locked, with an
 *edit manually* link if you need to override one.
 
+The lookup never offers a city twice:
+
+* **Already in the table** — any `correct_city` that is already a row of the
+  cities table is left out, so you cannot add the same city again. Typing its
+  name shows "No match — either it is already in the table or it is missing
+  from `city_mapping`".
+* **Duplicates collapsed** — a city usually has several mapping rows (one per
+  `box_city_name`); they are grouped into a single suggestion, using the first
+  box city name / group.
+
 | Method | Path                 | Action                                  |
 |--------|----------------------|-----------------------------------------|
-| GET    | `/api/cities/lookup` | Search the mapping table (`q`, `limit`) |
+| GET    | `/api/cities/lookup` | Search the mapping table (`q`, `limit`) — cities already in the table are excluded |
 
 The mapping table is set with `DB_CITY_MAPPING_TABLE` (default
 `mafsho/city_mapping`) and follows the same `schema/table` convention as the

@@ -35,6 +35,7 @@ const MAPPING_FIELDS = Object.keys(MAPPING_TARGETS)
 const suggestions = ref([])
 const suggestOpen = ref(false)
 const suggestLoading = ref(false)
+const noMatches = ref(false)
 const highlight = ref(-1)
 const autoFilled = ref(new Set())
 const selectedMapping = ref(null)
@@ -73,13 +74,23 @@ async function fetchSuggestions(term) {
     const data = await res.json()
     if (seq !== lookupSeq) return // a newer keystroke already won
     if (!res.ok) throw new Error(data.message || data.detail || 'Lookup failed')
-    suggestions.value = data.rows || []
+    // The backend already hides cities that are in the table and collapses
+    // duplicate mapping rows; keep it unique here too, just in case.
+    const seen = new Set()
+    suggestions.value = (data.rows || []).filter((r) => {
+      const key = String(r.correct_city ?? '').trim().toLowerCase()
+      if (!key || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    noMatches.value = suggestions.value.length === 0
     highlight.value = -1
     suggestOpen.value = true
   } catch (e) {
     if (seq === lookupSeq) {
       suggestions.value = []
       suggestOpen.value = false
+      noMatches.value = false
       lookupError.value = e.message
     }
   } finally {
@@ -99,6 +110,7 @@ function onCityInput() {
     suggestions.value = []
     suggestOpen.value = false
     suggestLoading.value = false
+    noMatches.value = false
     return
   }
   suggestOpen.value = false
@@ -152,6 +164,7 @@ function pickSuggestion(s) {
   selectedMapping.value = s
   suggestions.value = []
   suggestOpen.value = false
+  noMatches.value = false
   if (lookupTimer) clearTimeout(lookupTimer)
 }
 
@@ -292,6 +305,7 @@ function resetLookup() {
   autoFilled.value = new Set()
   selectedMapping.value = null
   lookupError.value = ''
+  noMatches.value = false
 }
 
 function openAdd() {
@@ -462,6 +476,10 @@ onMounted(load)
               Name lookup unavailable — fill the fields manually.
             </p>
             <p v-else-if="suggestLoading" class="hint">Searching…</p>
+            <p v-else-if="noMatches" class="hint warn">
+              No match — either it is already in the table or it is missing from
+              <code>city_mapping</code>.
+            </p>
             <p v-else-if="selectedMapping" class="hint ok">
               Matched in <code>city_mapping</code> — fields filled automatically.
             </p>

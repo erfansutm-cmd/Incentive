@@ -20,6 +20,8 @@ MAPPING_TABLE_SQL = quote_table(MAPPING_TABLE)
 MAPPING_COLUMNS = ("correct_city", "correct_city_id", "box_city_name", "city_group")
 # Columns matched against the search term.
 MAPPING_SEARCH_COLUMNS = ("correct_city", "box_city_name")
+# Column of the cities table holding the city name — the first one found wins.
+CITY_NAME_CANDIDATES = ("city_name", "city", "name", "correct_city")
 MAX_LOOKUP_LIMIT = 100
 
 router = APIRouter(prefix="/api/cities", tags=["cities"])
@@ -73,6 +75,22 @@ def _primary_key(cols):
     return None
 
 
+def _city_name_column():
+    """Return the cities column that holds the city name, or None.
+
+    Returns None when the table cannot be introspected (the lookup then simply
+    stops filtering out cities that were already added).
+    """
+    try:
+        fields = {c["Field"] for c in _columns()}
+    except Exception:
+        return None
+    for name in CITY_NAME_CANDIDATES:
+        if name in fields:
+            return name
+    return None
+
+
 def _clean_payload(payload, cols):
     """Keep only real columns (whitelist) and treat empty strings as NULL."""
     allowed = {c["Field"] for c in cols}
@@ -117,9 +135,11 @@ def list_cities():
 def lookup_city(q: str = "", limit: int = 20):
     """Search the city mapping table (used by the "add city" autocomplete).
 
-    Returns distinct ``correct_city`` / ``correct_city_id`` / ``box_city_name``
-    / ``city_group`` rows whose city or box-city name contains ``q``. The UI
-    fills the matching columns of the cities table from the chosen row.
+    Returns one row per ``correct_city`` (a city can have several mapping rows,
+    one per box city name — they are collapsed into a single suggestion) whose
+    city or box-city name contains ``q``. Cities already present in the cities
+    table are left out, so the form only ever offers cities that are still
+    missing. The UI fills the matching columns from the chosen row.
     """
     try:
         limit = max(1, min(int(limit), MAX_LOOKUP_LIMIT))
@@ -128,20 +148,33 @@ def lookup_city(q: str = "", limit: int = 20):
 
     term = (q or "").strip()
     params = {}
-    where = ""
+    clauses = []
     if term:
         # Escape LIKE wildcards so a literal % or _ in the term is not a wildcard.
         safe = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         match = " OR ".join(
-            f"(`{c}` LIKE :term ESCAPE '\\\\')" for c in MAPPING_SEARCH_COLUMNS
+            f"(m.`{c}` LIKE :term ESCAPE '\\\\')" for c in MAPPING_SEARCH_COLUMNS
         )
-        where = f" WHERE ({match})"
+        clauses.append(f"({match})")
         params["term"] = f"%{safe}%"
 
-    cols = ", ".join(f"`{c}`" for c in MAPPING_COLUMNS)
+    # Hide cities that are already in the cities table.
+    name_col = _city_name_column()
+    if name_col:
+        clauses.append(
+            f"NOT EXISTS (SELECT 1 FROM {TABLE_SQL} c"
+            f" WHERE c.`{name_col}` = m.`correct_city`)"
+        )
+
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     sql = text(
-        f"SELECT DISTINCT {cols} FROM {MAPPING_TABLE_SQL}{where} "
-        f"ORDER BY `correct_city`, `box_city_name` LIMIT {limit}"
+        f"SELECT m.`correct_city` AS correct_city,"
+        f" m.`correct_city_id` AS correct_city_id,"
+        f" MIN(m.`box_city_name`) AS box_city_name,"
+        f" MIN(m.`city_group`) AS city_group"
+        f" FROM {MAPPING_TABLE_SQL} m{where}"
+        f" GROUP BY m.`correct_city`, m.`correct_city_id`"
+        f" ORDER BY `correct_city` LIMIT {limit}"
     )
     try:
         with engine.connect() as conn:
