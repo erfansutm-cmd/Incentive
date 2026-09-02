@@ -278,19 +278,9 @@ onMounted(load)
               <td v-for="c in tableColumns" :key="c.name">
                 <div v-if="c.json_array" class="cell-chips">
                   <template v-if="asArray(row[c.name]).length">
-                    <span
-                      v-for="(v, i) in asArray(row[c.name]).slice(0, 4)"
-                      :key="i"
-                      class="mini-chip"
-                      >{{ v }}</span
-                    >
-                    <span
-                      v-if="asArray(row[c.name]).length > 4"
-                      class="mini-chip more"
-                      :title="cellText(row, c)"
-                    >
-                      +{{ asArray(row[c.name]).length - 4 }}
-                    </span>
+                    <span v-for="(v, i) in asArray(row[c.name])" :key="i" class="mini-chip">{{
+                      v
+                    }}</span>
                   </template>
                   <span v-else class="muted">—</span>
                 </div>
@@ -456,61 +446,48 @@ onMounted(load)
 }
 
 .table-scroll {
-  overflow-x: auto;
-  max-height: calc(100vh - 230px);
-  overflow-y: auto;
+  /* table is sized to fit the page width — no horizontal scrolling */
+  overflow-x: hidden;
 }
 table {
-  /* grow to the content's natural width and scroll horizontally instead
-     of squeezing the columns together */
-  width: max-content;
-  min-width: 100%;
+  /* fixed layout: columns share the page width and content wraps inside */
+  width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
 }
+/* column widths (id is hidden, so: name, fa_name, 4 list columns, actions) */
+thead th:nth-child(1) { width: 13%; }
+thead th:nth-child(2) { width: 14%; }
+thead th:nth-child(3),
+thead th:nth-child(4),
+thead th:nth-child(5),
+thead th:nth-child(6) { width: 15%; }
+thead th.actions-col { width: 13%; }
+
 thead th {
-  position: sticky;
-  top: 0;
-  z-index: 2;
   text-align: left;
-  padding: 0.75rem 1rem;
+  padding: 0.75rem 0.8rem;
   background: var(--surface-2);
   color: #4a6155;
-  font-size: 0.78rem;
+  font-size: 0.74rem;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
+  letter-spacing: 0.03em;
   border-bottom: 1px solid var(--border);
 }
 tbody td {
-  padding: 0.7rem 1rem;
+  padding: 0.7rem 0.8rem;
   border-bottom: 1px solid #eef2ef;
-  font-size: 0.92rem;
+  font-size: 0.9rem;
   color: var(--text);
   vertical-align: top;
-  max-width: 300px;
   word-break: break-word;
+  overflow-wrap: anywhere;
 }
 tbody tr:last-child td {
   border-bottom: none;
 }
 tbody tr:hover {
-  background: #f6faf8;
-}
-/* keep the action buttons visible while scrolling sideways */
-thead th.actions-col,
-tbody td.actions-col {
-  position: sticky;
-  right: 0;
-  z-index: 1;
-  background: var(--surface);
-  box-shadow: -1px 0 0 var(--border);
-}
-thead th.actions-col {
-  z-index: 3;
-  background: var(--surface-2);
-}
-tbody tr:hover td.actions-col {
   background: #f6faf8;
 }
 .muted {
@@ -532,11 +509,6 @@ tbody tr:hover td.actions-col {
   font-weight: 600;
   white-space: nowrap;
 }
-.mini-chip.more {
-  background: var(--surface-2);
-  color: var(--muted);
-  cursor: default;
-}
 
 .actions-col {
   text-align: right;
@@ -544,6 +516,14 @@ tbody tr:hover td.actions-col {
 }
 .actions-col .btn + .btn {
   margin-left: 0.4rem;
+}
+@media (max-width: 900px) {
+  .actions-col {
+    white-space: normal;
+  }
+  .actions-col .btn {
+    margin-bottom: 0.3rem;
+  }
 }
 
 .modal-wide {
