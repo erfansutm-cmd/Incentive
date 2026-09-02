@@ -37,6 +37,7 @@ configured through a root `.env` file:
 | `DB_HOST`     | `172.21.41.75`   |
 | `DB_PORT`     | `3306`           |
 | `DB_NAME`     | `incentive`      |
+| `DB_CITIES_TABLE` | `cities`     |
 
 ```bash
 cp .env.example .env   # then fill in DB_PASSWORD
@@ -47,6 +48,27 @@ The connection lives in `backend/app/database.py` (SQLAlchemy engine, session
 factory, and a `get_db` dependency). A readiness endpoint is available at
 `GET /api/health/db`, which runs `SELECT 1` against MySQL and reports the
 connection state.
+
+## Cities CRUD
+
+The `cities` table is exposed through `backend/app/cities.py` (generic — it
+introspects the table with `SHOW COLUMNS`, so it works with any schema). All
+routes are under `/api/cities`:
+
+| Method | Path           | Action                       |
+|--------|----------------|------------------------------|
+| GET    | `/api/cities`      | List all rows + column info |
+| POST   | `/api/cities`      | Insert a new row           |
+| PUT    | `/api/cities/{id}` | Update a row by PK        |
+| DELETE | `/api/cities/{id}` | Delete a row by PK        |
+
+Every route returns `{"status": "ok", "message": ...}` on success, or
+`{"status": "error", "message": ...}` with a proper HTTP status on failure
+(e.g. `404` if the table doesn't exist, `503` if the DB is unreachable).
+
+The frontend page lives at `/cities` (`frontend/src/views/Cities.vue`): it
+lists the table with all its columns and supports add / edit / delete with
+confirmation popups, a green theme, and success/error toasts.
 
 ## Development
 

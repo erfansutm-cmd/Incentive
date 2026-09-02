@@ -19,6 +19,7 @@ services:
       DB_HOST: ${DB_HOST:-172.21.41.75}
       DB_PORT: ${DB_PORT:-3306}
       DB_NAME: ${DB_NAME:-}
+      DB_CITIES_TABLE: ${DB_CITIES_TABLE:-cities}
 
   frontend:
     build:
