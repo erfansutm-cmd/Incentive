@@ -24,6 +24,30 @@ incentive/
         └── App.vue
 ```
 
+## Database
+
+The backend connects to MySQL using **SQLAlchemy + PyMySQL**. Connection
+settings are read from environment variables (with dev defaults) and are
+configured through a root `.env` file:
+
+| Variable      | Default          |
+|---------------|------------------|
+| `DB_USER`     | `erfan.mohamadi` |
+| `DB_PASSWORD` | *(empty)*        |
+| `DB_HOST`     | `172.21.41.75`   |
+| `DB_PORT`     | `3306`           |
+| `DB_NAME`     | `incentive`      |
+
+```bash
+cp .env.example .env   # then fill in DB_PASSWORD
+docker compose up --build
+```
+
+The connection lives in `backend/app/database.py` (SQLAlchemy engine, session
+factory, and a `get_db` dependency). A readiness endpoint is available at
+`GET /api/health/db`, which runs `SELECT 1` against MySQL and reports the
+connection state.
+
 ## Development
 
 ```bash
