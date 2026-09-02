@@ -11,17 +11,20 @@ const editing = ref(null)
 const form = ref({})
 const saving = ref(false)
 
-const confirmDelete = ref(null)
-const deleting = ref(false)
-
 const message = ref(null)
 let msgTimer = null
 
-const pkColumn = computed(() => columns.value.find((c) => c.key === 'PRI'))
-const hasDeactivated = computed(() => columns.value.some((c) => c.name === 'deactivated_at'))
+const searchQuery = ref('')
+const groupFilter = ref('')
 
-// Columns the user should NOT edit directly (system-managed).
+const pkColumn = computed(() => columns.value.find((c) => c.key === 'PRI'))
+
+// Columns the user should NOT see in the table or edit directly (system-managed).
+const HIDDEN = new Set(['deactivated_at'])
 const MANAGED = new Set(['created_at', 'deactivated_at'])
+
+// Columns shown in the table (deactivated_at is hidden).
+const tableColumns = computed(() => columns.value.filter((c) => !HIDDEN.has(c.name)))
 
 // Editable columns = everything except the auto-increment PK and managed columns.
 const editableColumns = computed(() =>
@@ -32,13 +35,64 @@ const editableColumns = computed(() =>
   )
 )
 
+// city_name / box_city_name are searchable (fall back to all columns if absent).
+const searchColumns = computed(() => {
+  const wanted = ['city_name', 'box_city_name'].filter((n) =>
+    columns.value.some((c) => c.name === n)
+  )
+  return wanted.length ? wanted : tableColumns.value.map((c) => c.name)
+})
+
+// distinct city_group values for the filter dropdown
+const groupOptions = computed(() => {
+  const seen = new Set()
+  for (const r of rows.value) {
+    const v = r.city_group
+    if (v !== null && v !== undefined && v !== '') seen.add(v)
+  }
+  return [...seen].sort((a, b) => String(a).localeCompare(String(b)))
+})
+
+const filteredRows = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  return rows.value.filter((row) => {
+    if (groupFilter.value && String(row.city_group ?? '') !== groupFilter.value) return false
+    if (!q) return true
+    return searchColumns.value.some((name) =>
+      String(row[name] ?? '').toLowerCase().includes(q)
+    )
+  })
+})
+
 function pkValue(row) {
   const pk = pkColumn.value
   return pk ? row[pk.name] : undefined
 }
 
-function isActive(row) {
-  return !row.deactivated_at
+// "city_id" -> "City ID", "box_city_name" -> "Box City Name"
+function colLabel(col) {
+  return col.name
+    .split('_')
+    .map((w) => (w.toLowerCase() === 'id' ? 'ID' : w.charAt(0).toUpperCase() + w.slice(1)))
+    .join(' ')
+}
+
+// "2026-09-02T09:20:57" -> "Sep 2, 2026, 9:20 AM"
+function formatDate(value) {
+  if (!value) return ''
+  const d = new Date(value)
+  if (isNaN(d)) return value
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(d)
+}
+
+function cellValue(row, col) {
+  const v = row[col.name]
+  if (v === null || v === undefined) return ''
+  if (col.name === 'created_at') return formatDate(v)
+  return v
 }
 
 function inputType(col) {
@@ -112,44 +166,9 @@ async function save() {
   }
 }
 
-async function toggleActive(row) {
-  try {
-    const res = await fetch(`/api/cities/${encodeURIComponent(pkValue(row))}/toggle-active`, {
-      method: 'POST',
-    })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.message || data.detail || 'Update failed')
-
-    showMessage('ok', data.message || 'Updated')
-    await load()
-  } catch (e) {
-    showMessage('error', e.message)
-  }
-}
-
-function askDelete(row) {
-  confirmDelete.value = row
-}
-
-async function doDelete() {
-  const row = confirmDelete.value
-  deleting.value = true
-  try {
-    const res = await fetch(`/api/cities/${encodeURIComponent(pkValue(row))}`, {
-      method: 'DELETE',
-    })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.message || data.detail || 'Delete failed')
-
-    confirmDelete.value = null
-    showMessage('ok', data.message || 'Deleted')
-    await load()
-  } catch (e) {
-    confirmDelete.value = null
-    showMessage('error', e.message)
-  } finally {
-    deleting.value = false
-  }
+function clearFilters() {
+  searchQuery.value = ''
+  groupFilter.value = ''
 }
 
 onMounted(load)
@@ -160,7 +179,7 @@ onMounted(load)
     <div class="head">
       <div>
         <h1>Cities</h1>
-        <p class="sub">Manage the <code>cities</code> table — all columns are shown.</p>
+        <p class="sub">Manage the <code>cities</code> table.</p>
       </div>
       <button class="btn btn-primary" @click="openAdd">+ Add city</button>
     </div>
@@ -174,38 +193,54 @@ onMounted(load)
     <div v-else-if="loading" class="card empty">Loading…</div>
 
     <div v-else class="card table-card">
+      <div class="toolbar">
+        <div class="search-wrap">
+          <span class="search-icon">🔎</span>
+          <input
+            v-model="searchQuery"
+            type="search"
+            class="search-input"
+            placeholder="Search by city name or box city name…"
+          />
+        </div>
+
+        <select v-model="groupFilter" class="group-select">
+          <option value="">All groups</option>
+          <option v-for="g in groupOptions" :key="g" :value="String(g)">{{ g }}</option>
+        </select>
+
+        <button
+          v-if="searchQuery || groupFilter"
+          class="btn btn-ghost btn-sm"
+          @click="clearFilters"
+        >
+          Clear
+        </button>
+
+        <span class="result-count">
+          {{ filteredRows.length }} of {{ rows.length }} cities
+        </span>
+      </div>
+
       <table>
         <thead>
           <tr>
-            <th v-for="c in columns" :key="c.name">{{ c.name }}</th>
-            <th class="actions-col">Status</th>
+            <th v-for="c in tableColumns" :key="c.name">{{ colLabel(c) }}</th>
             <th class="actions-col">Actions</th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="(row, i) in rows" :key="i">
-            <td v-for="c in columns" :key="c.name">{{ row[c.name] ?? '' }}</td>
+          <tr v-for="(row, i) in filteredRows" :key="i">
+            <td v-for="c in tableColumns" :key="c.name">{{ cellValue(row, c) }}</td>
             <td class="actions-col">
-              <span v-if="hasDeactivated" class="pill" :class="isActive(row) ? 'on' : 'off'">
-                {{ isActive(row) ? 'Active' : 'Inactive' }}
-              </span>
-              <span v-else class="pill off">—</span>
-            </td>
-            <td class="actions-col">
-              <button
-                v-if="hasDeactivated"
-                class="btn btn-sm toggle"
-                :class="isActive(row) ? 'btn-deactivate' : 'btn-activate'"
-                @click="toggleActive(row)"
-              >
-                {{ isActive(row) ? 'Deactivate' : 'Activate' }}
-              </button>
               <button class="btn btn-ghost btn-sm" @click="openEdit(row)">Edit</button>
-              <button class="btn btn-danger btn-sm" @click="askDelete(row)">Delete</button>
             </td>
           </tr>
-          <tr v-if="rows.length === 0">
-            <td class="empty" :colspan="columns.length + 2">No cities yet — add the first one.</td>
+          <tr v-if="filteredRows.length === 0">
+            <td class="empty" :colspan="tableColumns.length + 1">
+              <template v-if="rows.length === 0">No cities yet — add the first one.</template>
+              <template v-else>No cities match your search or filter.</template>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -217,7 +252,7 @@ onMounted(load)
         <h2>{{ editing ? 'Edit city' : 'Add city' }}</h2>
         <label v-for="c in editableColumns" :key="c.name" class="field">
           <span>
-            {{ c.name }}
+            {{ colLabel(c) }}
             <em v-if="c.nullable" class="opt">(optional)</em>
             <em class="opt type">{{ c.type }}</em>
           </span>
@@ -227,20 +262,6 @@ onMounted(load)
           <button class="btn btn-ghost" @click="showModal = false">Cancel</button>
           <button class="btn btn-primary" :disabled="saving" @click="save">
             {{ saving ? 'Saving…' : 'Save' }}
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- delete confirm popup -->
-    <div v-if="confirmDelete" class="overlay" @click.self="confirmDelete = null">
-      <div class="modal">
-        <h2>Delete city?</h2>
-        <p>This will permanently remove this row from the database. Are you sure?</p>
-        <div class="actions">
-          <button class="btn btn-ghost" @click="confirmDelete = null">Cancel</button>
-          <button class="btn btn-danger" :disabled="deleting" @click="doDelete">
-            {{ deleting ? 'Deleting…' : 'Yes, delete' }}
           </button>
         </div>
       </div>
@@ -283,6 +304,69 @@ onMounted(load)
 .table-card {
   overflow: hidden;
 }
+
+/* search + filter toolbar */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: #fbfdfc;
+}
+.search-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 220px;
+  max-width: 380px;
+}
+.search-icon {
+  position: absolute;
+  left: 0.65rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.85rem;
+  opacity: 0.6;
+  pointer-events: none;
+}
+.search-input {
+  width: 100%;
+  padding: 0.5rem 0.7rem 0.5rem 2rem;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  font-size: 0.92rem;
+  outline: none;
+  color: var(--text);
+  background: #fff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.search-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+.group-select {
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  font-size: 0.92rem;
+  background: #fff;
+  color: var(--text);
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.group-select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+.result-count {
+  margin-left: auto;
+  font-size: 0.82rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -317,48 +401,6 @@ tbody tr:hover {
 }
 .actions-col .btn + .btn {
   margin-left: 0.4rem;
-}
-
-.pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.18rem 0.6rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 600;
-}
-.pill::before {
-  content: '';
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
-  background: currentColor;
-}
-.pill.on {
-  background: var(--accent-soft);
-  color: var(--ok-text);
-}
-.pill.off {
-  background: #eef1ef;
-  color: var(--inactive-text);
-}
-
-.btn-deactivate {
-  background: #fff;
-  color: var(--warning);
-  border: 1px solid #ecd9ba;
-}
-.btn-deactivate:hover {
-  background: var(--warning-soft);
-}
-.btn-activate {
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-  border: 1px solid #cfe5da;
-}
-.btn-activate:hover {
-  background: #d7eade;
 }
 
 .field .type {
