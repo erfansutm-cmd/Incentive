@@ -50,11 +50,18 @@ factory, and a `get_db` dependency). A readiness endpoint is available at
 `GET /api/health/db`, which runs `SELECT 1` against MySQL and reports the
 connection state.
 
-**Tables in other schemas.** Table names may be given as a plain name
-(`business_entities`) or schema-qualified (`other_db.business_entities`) via
-the `DB_CITIES_TABLE` / `DB_BUSINESS_ENTITIES_TABLE` variables. The qualifier
-is quoted safely (`quote_table` in `database.py`), so a table can live in any
-database on the same MySQL server the DB user has access to.
+**Tables in other schemas.** Each table is set in the env as
+`schema/table` (or just `table` for the default schema), e.g.
+
+```
+DB_CITIES_TABLE=cities
+DB_BUSINESS_ENTITIES_TABLE=other_db/business_entities
+```
+
+The `quote_table()` helper in `database.py` parses the `schema/table` form and
+emits a safely quoted MySQL identifier (`` `other_db`.`business_entities` ``),
+so a table can live in any database on the same MySQL server the DB user has
+access to.
 
 ## Cities CRUD
 

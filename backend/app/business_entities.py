@@ -10,7 +10,7 @@ from sqlalchemy import text
 from .database import engine, quote_table
 
 TABLE_NAME = os.getenv("DB_BUSINESS_ENTITIES_TABLE", "business_entities")
-TABLE_SQL = quote_table(TABLE_NAME)  # quoted, may be "schema.table"
+TABLE_SQL = quote_table(TABLE_NAME)  # quoted, may be "schema/table"
 
 # Columns that store JSON arrays (customer id lists / delivery category lists).
 # These are returned to the UI as real arrays and accepted back as arrays.

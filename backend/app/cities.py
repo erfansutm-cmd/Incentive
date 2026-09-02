@@ -9,7 +9,7 @@ from sqlalchemy import text
 from .database import engine, quote_table
 
 TABLE_NAME = os.getenv("DB_CITIES_TABLE", "cities")
-TABLE_SQL = quote_table(TABLE_NAME)  # quoted, may be "schema.table"
+TABLE_SQL = quote_table(TABLE_NAME)  # quoted, may be "schema/table"
 
 router = APIRouter(prefix="/api/cities", tags=["cities"])
 
