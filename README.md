@@ -39,6 +39,7 @@ configured through a root `.env` file:
 | `DB_NAME`     | `incentive`      |
 | `DB_CITIES_TABLE` | `cities`     |
 | `DB_BUSINESS_ENTITIES_TABLE` | `business_entities` |
+| `DB_CITY_MAPPING_TABLE` | `mafsho/city_mapping` |
 
 ```bash
 cp .env.example .env   # then fill in DB_PASSWORD
@@ -56,6 +57,7 @@ connection state.
 ```
 DB_CITIES_TABLE=cities
 DB_BUSINESS_ENTITIES_TABLE=other_db/business_entities
+DB_CITY_MAPPING_TABLE=mafsho/city_mapping
 ```
 
 The `quote_table()` helper in `database.py` parses the `schema/table` form and
@@ -83,6 +85,32 @@ Every route returns `{"status": "ok", "message": ...}` on success, or
 The frontend page lives at `/cities` (`frontend/src/views/Cities.vue`): it
 lists the table with all its columns and supports add / edit / delete with
 confirmation popups, a green theme, and success/error toasts.
+
+### City name lookup (auto-fill on "Add city")
+
+The **Add city** form no longer needs every field typed by hand. Start typing a
+city name and it is looked up in the city mapping table:
+
+```sql
+select distinct correct_city, correct_city_id, box_city_name, city_group
+from mafsho.city_mapping
+```
+
+Picking a suggestion fills the matching columns of the `cities` table (the ID,
+box city name and group) — the filled fields are shown locked, with an
+*edit manually* link if you need to override one.
+
+| Method | Path                 | Action                                  |
+|--------|----------------------|-----------------------------------------|
+| GET    | `/api/cities/lookup` | Search the mapping table (`q`, `limit`) |
+
+The mapping table is set with `DB_CITY_MAPPING_TABLE` (default
+`mafsho/city_mapping`) and follows the same `schema/table` convention as the
+other tables. Because the cities table is introspected, the mapping columns are
+matched to whatever the local columns are called — `correct_city` fills
+`city_name` (or `city`), `correct_city_id` fills `city_id`, and so on; columns
+with no match are simply skipped. If the mapping table is unreachable the form
+stays fully usable, it just stops auto-filling.
 
 ## Business Entities CRUD
 

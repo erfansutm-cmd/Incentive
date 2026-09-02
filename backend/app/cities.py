@@ -11,6 +11,17 @@ from .database import engine, quote_table
 TABLE_NAME = os.getenv("DB_CITIES_TABLE", "cities")
 TABLE_SQL = quote_table(TABLE_NAME)  # quoted, may be "schema/table"
 
+# Reference table used to auto-fill the "add city" form. It lives in another
+# schema, so it is configured the same way: "table" or "schema/table".
+MAPPING_TABLE = os.getenv("DB_CITY_MAPPING_TABLE", "mafsho/city_mapping")
+MAPPING_TABLE_SQL = quote_table(MAPPING_TABLE)
+
+# Columns read from the mapping table (in the order they are returned).
+MAPPING_COLUMNS = ("correct_city", "correct_city_id", "box_city_name", "city_group")
+# Columns matched against the search term.
+MAPPING_SEARCH_COLUMNS = ("correct_city", "box_city_name")
+MAX_LOOKUP_LIMIT = 100
+
 router = APIRouter(prefix="/api/cities", tags=["cities"])
 
 
@@ -29,14 +40,15 @@ def _jsonable(value):
     return str(value)
 
 
-def _failure(exc):
+def _failure(exc, table=None):
     """Map a database exception to a (status_code, message) pair."""
+    table = table or TABLE_NAME
     orig = getattr(exc, "orig", None)
     args = getattr(orig, "args", ()) if orig is not None else ()
     if isinstance(args, tuple) and len(args) >= 2 and isinstance(args[0], int):
         code, msg = args[0], args[1]
         if code == 1146:  # ER_NO_SUCH_TABLE
-            return 404, f"Table '{TABLE_NAME}' does not exist in the database."
+            return 404, f"Table '{table}' does not exist in the database."
         if code == 2003:  # can't connect
             return 503, f"Cannot connect to the database: {msg}"
         if code in (1045, 1044):  # access denied
@@ -99,6 +111,47 @@ def list_cities():
         ],
         "rows": data,
     }
+
+
+@router.get("/lookup")
+def lookup_city(q: str = "", limit: int = 20):
+    """Search the city mapping table (used by the "add city" autocomplete).
+
+    Returns distinct ``correct_city`` / ``correct_city_id`` / ``box_city_name``
+    / ``city_group`` rows whose city or box-city name contains ``q``. The UI
+    fills the matching columns of the cities table from the chosen row.
+    """
+    try:
+        limit = max(1, min(int(limit), MAX_LOOKUP_LIMIT))
+    except (TypeError, ValueError):
+        limit = 20
+
+    term = (q or "").strip()
+    params = {}
+    where = ""
+    if term:
+        # Escape LIKE wildcards so a literal % or _ in the term is not a wildcard.
+        safe = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        match = " OR ".join(
+            f"(`{c}` LIKE :term ESCAPE '\\\\')" for c in MAPPING_SEARCH_COLUMNS
+        )
+        where = f" WHERE ({match})"
+        params["term"] = f"%{safe}%"
+
+    cols = ", ".join(f"`{c}`" for c in MAPPING_COLUMNS)
+    sql = text(
+        f"SELECT DISTINCT {cols} FROM {MAPPING_TABLE_SQL}{where} "
+        f"ORDER BY `correct_city`, `box_city_name` LIMIT {limit}"
+    )
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(sql, params)
+            data = [{k: _jsonable(v) for k, v in r._mapping.items()} for r in rows]
+    except Exception as exc:
+        status, msg = _failure(exc, table=MAPPING_TABLE)
+        return JSONResponse(status_code=status, content={"status": "error", "message": msg})
+
+    return {"columns": list(MAPPING_COLUMNS), "rows": data}
 
 
 @router.post("")
