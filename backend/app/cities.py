@@ -242,36 +242,36 @@ async def update_city(city_id: str, payload: dict):
         )
     return {"status": "ok", "message": "City updated successfully."}
 
-
-@router.delete("/{city_id}")
-async def delete_city(city_id: str):
-    try:
-        cols = _columns()
-    except Exception as exc:
-        status, msg = _failure(exc)
-        return JSONResponse(status_code=status, content={"status": "error", "message": msg})
-
-    pk = _primary_key(cols)
-    if not pk:
-        return JSONResponse(
-            status_code=400,
-            content={"status": "error", "message": f"Table '{TABLE_NAME}' has no primary key; cannot delete rows."},
-        )
-
-    sql = text(f"DELETE FROM {TABLE_SQL} WHERE `{pk}` = :pk_value")
-    try:
-        with engine.begin() as conn:
-            result = conn.execute(sql, {"pk_value": city_id})
-    except Exception as exc:
-        status, msg = _failure(exc)
-        return JSONResponse(status_code=status, content={"status": "error", "message": msg})
-
-    if result.rowcount == 0:
-        return JSONResponse(
-            status_code=404,
-            content={"status": "error", "message": "City not found."},
-        )
-    return {"status": "ok", "message": "City deleted successfully."}
+#
+# @router.delete("/{city_id}")
+# async def delete_city(city_id: str):
+#     try:
+#         cols = _columns()
+#     except Exception as exc:
+#         status, msg = _failure(exc)
+#         return JSONResponse(status_code=status, content={"status": "error", "message": msg})
+#
+#     pk = _primary_key(cols)
+#     if not pk:
+#         return JSONResponse(
+#             status_code=400,
+#             content={"status": "error", "message": f"Table '{TABLE_NAME}' has no primary key; cannot delete rows."},
+#         )
+#
+#     sql = text(f"DELETE FROM {TABLE_SQL} WHERE `{pk}` = :pk_value")
+#     try:
+#         with engine.begin() as conn:
+#             result = conn.execute(sql, {"pk_value": city_id})
+#     except Exception as exc:
+#         status, msg = _failure(exc)
+#         return JSONResponse(status_code=status, content={"status": "error", "message": msg})
+#
+#     if result.rowcount == 0:
+#         return JSONResponse(
+#             status_code=404,
+#             content={"status": "error", "message": "City not found."},
+#         )
+#     return {"status": "ok", "message": "City deleted successfully."}
 
 #
 # @router.post("/{city_id}/toggle-active")
