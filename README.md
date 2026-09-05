@@ -39,6 +39,7 @@ configured through a root `.env` file:
 | `DB_NAME`     | `incentive`      |
 | `DB_CITIES_TABLE` | `cities`     |
 | `DB_BUSINESS_ENTITIES_TABLE` | `business_entities` |
+| `DB_CITY_PLAN_MAPPING_TABLE` | `incentive/incentive_city_plan_mapping` |
 | `DB_CITY_MAPPING_TABLE` | `mafsho/city_mapping` |
 
 ```bash
@@ -111,6 +112,22 @@ matched to whatever the local columns are called — `correct_city` fills
 `city_name` (or `city`), `correct_city_id` fills `city_id`, and so on; columns
 with no match are simply skipped. If the mapping table is unreachable the form
 stays fully usable, it just stops auto-filling.
+
+### Plan mappings (slide-down per city)
+
+Clicking a city row expands a slide-down panel with that city's rows from
+`incentive.incentive_city_plan_mapping`, matched on `city_id`. The panel shows
+the active mappings (`deactivated_at IS NULL`) first, with a
+*Show deactivated* button to reveal the deactivated ones. The lookup lives in
+`backend/app/city_plan_mappings.py` (separate from `cities.py`):
+
+| Method | Path                 | Action                                  |
+|--------|----------------------|-----------------------------------------|
+| GET    | `/api/city-plan-mappings?city_id={id}[&include_deactivated=true]` | List mappings for one city |
+
+The table is set with `DB_CITY_PLAN_MAPPING_TABLE` (default
+`incentive/incentive_city_plan_mapping`) and follows the same `schema/table`
+convention as the other tables.
 
 ## Business Entities CRUD
 

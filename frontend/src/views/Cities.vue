@@ -228,6 +228,131 @@ function pkValue(row) {
   return pk ? row[pk.name] : undefined
 }
 
+// --- plan mappings slide-down (incentive_city_plan_mapping) ----------------
+// Clicking a city row expands a panel with that city's plan mappings,
+// matched on `city_id`. Active mappings (deactivated_at IS NULL) show first;
+// a button reveals the deactivated ones. Fetched from the dedicated
+// /api/city-plan-mappings endpoint (see backend/app/city_plan_mappings.py).
+const CITY_ID_COLUMNS = ['city_id', 'correct_city_id', 'correct_id']
+const expandedKey = ref(null)
+const planCache = ref({}) // expand-key -> { loading, error, active, deactivated, showDeactivated, cityId }
+
+function cityIdOf(row) {
+  for (const name of CITY_ID_COLUMNS) {
+    const v = row[name]
+    if (v !== null && v !== undefined && v !== '') return v
+  }
+  return null
+}
+
+function expandKeyOf(row, i) {
+  const pk = pkValue(row)
+  if (pk !== null && pk !== undefined && pk !== '') return `pk:${pk}`
+  const cityId = cityIdOf(row)
+  if (cityId !== null) return `city:${cityId}`
+  return `idx:${i}`
+}
+
+function isExpanded(row, i) {
+  return expandedKey.value === expandKeyOf(row, i)
+}
+
+function plansFor(row, i) {
+  return planCache.value[expandKeyOf(row, i)]
+}
+
+function rowCityName(row) {
+  const nameCol = cityNameColumn.value?.name
+  if (nameCol && row[nameCol] !== null && row[nameCol] !== undefined && row[nameCol] !== '')
+    return row[nameCol]
+  return row.city_name ?? row.city ?? row.correct_city ?? `City #${cityIdOf(row) ?? ''}`
+}
+
+function planTitle(row) {
+  return `${rowCityName(row)} · city_id ${cityIdOf(row) ?? '—'}`
+}
+
+function planCountsText(entry) {
+  const a = entry.active.length
+  const d = entry.deactivated.length
+  return d ? `${a} active · ${d} deactivated` : `${a} active`
+}
+
+function toggleExpand(row, i) {
+  const key = expandKeyOf(row, i)
+  if (expandedKey.value === key) {
+    expandedKey.value = null // collapse
+    return
+  }
+  expandedKey.value = key
+  if (!planCache.value[key]) fetchPlans(row, key)
+}
+
+function toggleDeactivated(row, i) {
+  const entry = plansFor(row, i)
+  if (entry) entry.showDeactivated = !entry.showDeactivated
+}
+
+function retryPlans(row, i) {
+  fetchPlans(row, expandKeyOf(row, i))
+}
+
+async function fetchPlans(row, key) {
+  const cityId = cityIdOf(row)
+  if (cityId === null) {
+    planCache.value[key] = {
+      loading: false,
+      error: 'This row has no city_id, so plan mappings cannot be looked up.',
+      active: [],
+      deactivated: [],
+      showDeactivated: false,
+      cityId: null,
+    }
+    return
+  }
+  planCache.value[key] = {
+    loading: true,
+    error: '',
+    active: [],
+    deactivated: [],
+    showDeactivated: false,
+    cityId,
+  }
+  try {
+    // Fetch everything once; the panel shows active first and reveals
+    // deactivated rows only when the button is pressed.
+    const res = await fetch(
+      `/api/city-plan-mappings?city_id=${encodeURIComponent(cityId)}&include_deactivated=true`
+    )
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.message || data.detail || 'Failed to load plan mappings')
+    const active = []
+    const deactivated = []
+    for (const r of data.rows || []) {
+      if (r.deactivated_at === null || r.deactivated_at === undefined || r.deactivated_at === '')
+        active.push(r)
+      else deactivated.push(r)
+    }
+    planCache.value[key] = {
+      loading: false,
+      error: '',
+      active,
+      deactivated,
+      showDeactivated: false,
+      cityId,
+    }
+  } catch (e) {
+    planCache.value[key] = {
+      loading: false,
+      error: e.message,
+      active: [],
+      deactivated: [],
+      showDeactivated: false,
+      cityId,
+    }
+  }
+}
+
 // "city_id" -> "City ID", "box_city_name" -> "Box City Name"
 function colLabel(col) {
   return col.name
@@ -269,6 +394,8 @@ function showMessage(type, text) {
 async function load() {
   loading.value = true
   error.value = ''
+  expandedKey.value = null
+  planCache.value = {}
   try {
     const res = await fetch('/api/cities')
     const data = await res.json()
@@ -352,7 +479,7 @@ onMounted(load)
     <div class="head">
       <div>
         <h1>Cities</h1>
-        <p class="sub">Manage the <code>cities</code> table.</p>
+        <p class="sub">Manage the <code>cities</code> table. Click a city to see its plan mappings.</p>
       </div>
       <button class="btn btn-primary" @click="openAdd">+ Add city</button>
     </div>
@@ -398,19 +525,133 @@ onMounted(load)
       <table>
         <thead>
           <tr>
+            <th class="expand-col"><span class="sr-only">Expand</span></th>
             <th v-for="c in tableColumns" :key="c.name">{{ colLabel(c) }}</th>
             <th class="actions-col">Actions</th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="(row, i) in filteredRows" :key="i">
-            <td v-for="c in tableColumns" :key="c.name">{{ cellValue(row, c) }}</td>
-            <td class="actions-col">
-              <button class="btn btn-ghost btn-sm" @click="openEdit(row)">Edit</button>
-            </td>
-          </tr>
+          <template v-for="(row, i) in filteredRows" :key="expandKeyOf(row, i)">
+            <tr
+              class="city-row"
+              :class="{ expanded: isExpanded(row, i) }"
+              :title="cityIdOf(row) === null ? '' : 'Click to see plan mappings'"
+              @click="toggleExpand(row, i)"
+            >
+              <td class="expand-col"><span class="chevron">❯</span></td>
+              <td v-for="c in tableColumns" :key="c.name">{{ cellValue(row, c) }}</td>
+              <td class="actions-col">
+                <button class="btn btn-ghost btn-sm" @click.stop="openEdit(row)">Edit</button>
+              </td>
+            </tr>
+            <tr v-if="isExpanded(row, i)" class="detail-row">
+              <td :colspan="tableColumns.length + 2" class="detail-cell" @click.stop>
+                <div class="slide-wrap">
+                  <div class="plan-panel">
+                    <div class="plan-head">
+                      <strong>Plan mappings</strong>
+                      <span class="plan-city">{{ planTitle(row) }}</span>
+                      <template
+                        v-if="plansFor(row, i) && !plansFor(row, i).loading && !plansFor(row, i).error"
+                      >
+                        <span class="plan-counts">{{ planCountsText(plansFor(row, i)) }}</span>
+                        <button
+                          v-if="plansFor(row, i).deactivated.length"
+                          class="btn btn-ghost btn-sm"
+                          @click.stop="toggleDeactivated(row, i)"
+                        >
+                          {{
+                            plansFor(row, i).showDeactivated
+                              ? 'Hide deactivated'
+                              : `Show deactivated (${plansFor(row, i).deactivated.length})`
+                          }}
+                        </button>
+                      </template>
+                    </div>
+
+                    <div
+                      v-if="!plansFor(row, i) || plansFor(row, i).loading"
+                      class="plan-loading"
+                    >
+                      Loading plan mappings…
+                    </div>
+                    <div v-else-if="plansFor(row, i).error" class="plan-error">
+                      <span>{{ plansFor(row, i).error }}</span>
+                      <button class="btn btn-ghost btn-sm" @click.stop="retryPlans(row, i)">
+                        Retry
+                      </button>
+                    </div>
+                    <template v-else>
+                      <div v-if="!plansFor(row, i).active.length" class="plan-empty">
+                        No active plan mappings for this city.
+                      </div>
+                      <table v-else class="plan-table">
+                        <thead>
+                          <tr>
+                            <th>ID</th>
+                            <th>Incentive Type ID</th>
+                            <th>Business Entity</th>
+                            <th>Created At</th>
+                            <th>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr
+                            v-for="(m, mi) in plansFor(row, i).active"
+                            :key="m.id ?? mi"
+                          >
+                            <td>{{ m.id ?? '—' }}</td>
+                            <td>{{ m.incentive_type_id ?? '—' }}</td>
+                            <td>{{ m.business_entity ?? '—' }}</td>
+                            <td>{{ formatDate(m.created_at) || '—' }}</td>
+                            <td><span class="badge active">Active</span></td>
+                          </tr>
+                        </tbody>
+                      </table>
+
+                      <div
+                        v-if="
+                          plansFor(row, i).showDeactivated &&
+                          plansFor(row, i).deactivated.length
+                        "
+                        class="deactivated-block"
+                      >
+                        <div class="plan-subhead">Deactivated</div>
+                        <table class="plan-table">
+                          <thead>
+                            <tr>
+                              <th>ID</th>
+                              <th>Incentive Type ID</th>
+                              <th>Business Entity</th>
+                              <th>Created At</th>
+                              <th>Deactivated At</th>
+                              <th>Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr
+                              v-for="(m, mi) in plansFor(row, i).deactivated"
+                              :key="m.id ?? mi"
+                              class="is-deactivated"
+                            >
+                              <td>{{ m.id ?? '—' }}</td>
+                              <td>{{ m.incentive_type_id ?? '—' }}</td>
+                              <td>{{ m.business_entity ?? '—' }}</td>
+                              <td>{{ formatDate(m.created_at) || '—' }}</td>
+                              <td>{{ formatDate(m.deactivated_at) || '—' }}</td>
+                              <td><span class="badge deactivated">Deactivated</span></td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          </template>
           <tr v-if="filteredRows.length === 0">
-            <td class="empty" :colspan="tableColumns.length + 1">
+            <td class="empty" :colspan="tableColumns.length + 2">
               <template v-if="rows.length === 0">No cities yet — add the first one.</template>
               <template v-else>No cities match your search or filter.</template>
             </td>
@@ -728,5 +969,157 @@ tbody tr:hover {
   font-size: 0.78rem;
   text-decoration: underline;
   cursor: pointer;
+}
+
+/* expandable rows + slide-down plan mappings */
+.city-row {
+  cursor: pointer;
+}
+.city-row.expanded {
+  background: #f0f7f3;
+}
+.expand-col {
+  width: 2.4rem;
+  text-align: center;
+}
+thead th.expand-col {
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+}
+.chevron {
+  display: inline-block;
+  font-size: 0.75rem;
+  color: var(--muted);
+  transition: transform 0.2s ease, color 0.2s ease;
+}
+.city-row.expanded .chevron {
+  transform: rotate(90deg);
+  color: var(--accent-strong);
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+tbody tr.detail-row:hover {
+  background: #fbfdfc;
+}
+.detail-cell {
+  padding: 0;
+  background: #fbfdfc;
+}
+.slide-wrap {
+  overflow: hidden;
+  animation: slideDown 0.25s ease;
+}
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.plan-panel {
+  padding: 1rem 1.25rem 1.25rem;
+  border-top: 1px dashed var(--border);
+}
+.plan-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.7rem;
+}
+.plan-head strong {
+  color: var(--accent-strong);
+  font-size: 0.95rem;
+}
+.plan-city {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.plan-counts {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.plan-head .btn {
+  margin-left: auto;
+}
+
+.plan-loading,
+.plan-empty {
+  color: var(--muted);
+  font-size: 0.9rem;
+  padding: 0.6rem 0;
+}
+.plan-error {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  color: #8c3030;
+  background: var(--danger-soft);
+  border: 1px solid #f0caca;
+  border-radius: 0.6rem;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.88rem;
+}
+
+table.plan-table {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  overflow: hidden;
+}
+table.plan-table thead th {
+  font-size: 0.72rem;
+  padding: 0.5rem 0.7rem;
+}
+table.plan-table tbody td {
+  font-size: 0.87rem;
+  padding: 0.5rem 0.7rem;
+  background: #fff;
+}
+table.plan-table tbody tr:hover {
+  background: #f6faf8;
+}
+table.plan-table tbody tr.is-deactivated td {
+  color: var(--muted);
+}
+
+.deactivated-block {
+  margin-top: 0.9rem;
+}
+.plan-subhead {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 0.45rem;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.12rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.badge.active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+.badge.deactivated {
+  background: #eceff0;
+  color: #687876;
 }
 </style>
