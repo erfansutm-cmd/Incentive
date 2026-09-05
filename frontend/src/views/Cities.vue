@@ -776,7 +776,6 @@ onMounted(() => {
                             <th>Type</th>
                             <th>Business Entity</th>
                             <th>Created At</th>
-                            <th>Status</th>
                             <th class="actions-col">Actions</th>
                           </tr>
                         </thead>
@@ -789,8 +788,16 @@ onMounted(() => {
                             <td>{{ typeDisplay(m.incentive_type_id) || m.incentive_type_id || '—' }}<span v-if="typeDisplay(m.incentive_type_id)" class="type-id"> #{{ m.incentive_type_id }}</span></td>
                             <td>{{ m.business_entity ?? '—' }}</td>
                             <td>{{ formatDate(m.created_at) || '—' }}</td>
-                            <td><span class="badge active">Active</span></td>
                             <td class="actions-col">
+                              <a
+                                :href="`/plans/${m.id}`"
+                                target="_blank"
+                                rel="noopener"
+                                class="btn btn-ghost btn-sm"
+                                @click.stop
+                              >
+                                Details
+                              </a>
                               <button class="btn btn-ghost btn-sm" @click.stop="askDeactivate(row, i, m)">
                                 Deactivate
                               </button>
@@ -815,7 +822,7 @@ onMounted(() => {
                               <th>Business Entity</th>
                               <th>Created At</th>
                               <th>Deactivated At</th>
-                              <th>Status</th>
+                              <th class="actions-col">Actions</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -829,7 +836,17 @@ onMounted(() => {
                               <td>{{ m.business_entity ?? '—' }}</td>
                               <td>{{ formatDate(m.created_at) || '—' }}</td>
                               <td>{{ formatDate(m.deactivated_at) || '—' }}</td>
-                              <td><span class="badge deactivated">Deactivated</span></td>
+                              <td class="actions-col">
+                                <a
+                                  :href="`/plans/${m.id}`"
+                                  target="_blank"
+                                  rel="noopener"
+                                  class="btn btn-ghost btn-sm"
+                                  @click.stop
+                                >
+                                  Details
+                                </a>
+                              </td>
                             </tr>
                           </tbody>
                         </table>
@@ -1137,6 +1154,10 @@ tbody tr:hover {
 }
 .actions-col .btn + .btn {
   margin-left: 0.4rem;
+}
+.actions-col a.btn {
+  display: inline-block;
+  text-decoration: none;
 }
 
 .field .type {

@@ -127,6 +127,7 @@ the active mappings (`deactivated_at IS NULL`) first, with a
 | GET    | `/api/city-plan-mappings?city_id={id}[&include_deactivated=true]` | List mappings for one city |
 | POST   | `/api/city-plan-mappings` | Add a mapping (`city_id`, `incentive_type_id`, `business_entity`) |
 | POST   | `/api/city-plan-mappings/{id}/deactivate` | Deactivate a mapping (sets `deactivated_at`) |
+| GET    | `/api/city-plan-mappings/{id}` | Get one mapping (plan detail page at `/plans/:id`) |
 | GET    | `/api/incentive-types` | List incentive types (`id`, `name`) from `mafsho.incentive_type` |
 
 The tables are set with `DB_CITY_PLAN_MAPPING_TABLE` (default

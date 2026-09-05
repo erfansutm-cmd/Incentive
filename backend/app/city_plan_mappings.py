@@ -295,3 +295,59 @@ async def deactivate_mapping(mapping_id: str):
         return JSONResponse(status_code=status, content={"status": "error", "message": msg})
 
     return {"status": "ok", "message": "Plan deactivated successfully.", "active": False}
+
+
+@router.get("/{mapping_id}")
+def get_mapping(mapping_id: str):
+    """Return a single plan (mapping row) by primary key.
+
+    Used by the plan detail page, which the Cities slide-down opens in a
+    new browser tab via the per-row "Details" button.
+    """
+    try:
+        cols = _columns()
+    except Exception as exc:
+        status, msg = _failure(exc)
+        return JSONResponse(status_code=status, content={"status": "error", "message": msg})
+
+    fields = {c["Field"] for c in cols}
+    pk = _primary_key(cols) or ("id" if "id" in fields else None)
+    if not pk:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "error",
+                "message": f"Table '{TABLE_NAME}' has no primary key.",
+            },
+        )
+
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                text(f"SELECT * FROM {TABLE_SQL} WHERE `{pk}` = :pk_value"),
+                {"pk_value": mapping_id},
+            ).first()
+    except Exception as exc:
+        status, msg = _failure(exc)
+        return JSONResponse(status_code=status, content={"status": "error", "message": msg})
+
+    if row is None:
+        return JSONResponse(
+            status_code=404,
+            content={"status": "error", "message": "Plan not found."},
+        )
+
+    return {
+        "columns": [
+            {
+                "name": c["Field"],
+                "type": c["Type"],
+                "nullable": c.get("Null") == "YES",
+                "key": c.get("Key") or "",
+                "default": _jsonable(c.get("Default")),
+                "extra": c.get("Extra") or "",
+            }
+            for c in cols
+        ],
+        "row": {k: _jsonable(v) for k, v in row._mapping.items()},
+    }
