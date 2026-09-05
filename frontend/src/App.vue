@@ -159,6 +159,16 @@ button {
   background: var(--danger-strong);
 }
 
+.btn-danger-soft {
+  background: var(--danger-soft);
+  color: var(--danger-strong);
+  border: 1px solid #eecdcd;
+}
+.btn-danger-soft:hover {
+  background: #f3dcdc;
+  border-color: #e5b8b8;
+}
+
 .btn-sm {
   padding: 0.32rem 0.7rem;
   font-size: 0.82rem;

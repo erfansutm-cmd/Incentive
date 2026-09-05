@@ -19,6 +19,8 @@ services:
       DB_NAME: ${DB_NAME:-}
       DB_CITIES_TABLE: ${DB_CITIES_TABLE:-cities}
       DB_BUSINESS_ENTITIES_TABLE: ${DB_BUSINESS_ENTITIES_TABLE:-business_entities}
+      DB_CITY_PLAN_MAPPING_TABLE: ${DB_CITY_PLAN_MAPPING_TABLE:-incentive/incentive_city_plan_mapping}
+      DB_INCENTIVE_TYPE_TABLE: ${DB_INCENTIVE_TYPE_TABLE:-mafsho/incentive_type}
       DB_CITY_MAPPING_TABLE: ${DB_CITY_MAPPING_TABLE:-mafsho/city_mapping}
 
   frontend:
