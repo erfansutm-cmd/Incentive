@@ -6,7 +6,7 @@ from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from .database import engine, quote_table
+from ..core.database import engine, quote_table
 
 # Table holding the per-city plan mapping:
 #   id | city_id | incentive_type_id | business_entity | created_at | deactivated_at
