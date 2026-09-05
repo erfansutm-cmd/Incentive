@@ -772,7 +772,7 @@ onMounted(() => {
                       <table v-else class="plan-table">
                         <thead>
                           <tr>
-                            <th>City Name</th>
+                            <th>Plan ID</th>
                             <th>Type</th>
                             <th>Business Entity</th>
                             <th>Created At</th>
@@ -784,7 +784,7 @@ onMounted(() => {
                             v-for="(m, mi) in plansFor(row, i).active"
                             :key="m.id ?? mi"
                           >
-                            <td>{{ rowCityName(row) }}</td>
+                            <td>{{ m.id ?? '—' }}</td>
                             <td>{{ typeDisplay(m.incentive_type_id) || m.incentive_type_id || '—' }}<span v-if="typeDisplay(m.incentive_type_id)" class="type-id"> #{{ m.incentive_type_id }}</span></td>
                             <td>{{ m.business_entity ?? '—' }}</td>
                             <td>{{ formatDate(m.created_at) || '—' }}</td>
@@ -817,7 +817,7 @@ onMounted(() => {
                         <table class="plan-table">
                           <thead>
                             <tr>
-                              <th>City Name</th>
+                              <th>Plan ID</th>
                               <th>Type</th>
                               <th>Business Entity</th>
                               <th>Created At</th>
@@ -831,7 +831,7 @@ onMounted(() => {
                               :key="m.id ?? mi"
                               class="is-deactivated"
                             >
-                              <td>{{ rowCityName(row) }}</td>
+                              <td>{{ m.id ?? '—' }}</td>
                               <td>{{ typeDisplay(m.incentive_type_id) || m.incentive_type_id || '—' }}<span v-if="typeDisplay(m.incentive_type_id)" class="type-id"> #{{ m.incentive_type_id }}</span></td>
                               <td>{{ m.business_entity ?? '—' }}</td>
                               <td>{{ formatDate(m.created_at) || '—' }}</td>
