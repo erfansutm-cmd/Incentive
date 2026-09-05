@@ -135,8 +135,9 @@ The tables are set with `DB_CITY_PLAN_MAPPING_TABLE` (default
 convention as the other tables.
 
 In the panel, `incentive_type_id` is shown as its type name (e.g. `DAILY`),
-the *Add plan* form picks the type from `mafsho.incentive_type` and suggests
-business entities from `incentive.business_entities`, and every active row has
+the *Add plan* form picks the type from `mafsho.incentive_type` and the
+business entity from `incentive.business_entities` (both are dropdowns —
+nothing new can be added there), and every active row has
 a *Deactivate* button behind a confirmation popup.
 
 ## Business Entities CRUD

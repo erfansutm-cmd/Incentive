@@ -330,16 +330,18 @@ async function loadTypes() {
   }
 }
 
-// --- business entity name suggestions (incentive.business_entities) ---------
-// Loaded lazily when the "Add plan" form opens; the field stays usable as
-// free text when suggestions are unavailable.
+// --- business entities (incentive.business_entities) --------------------------
+// Loaded lazily when the "Add plan" popup opens. The entity must be picked
+// from the dropdown — nothing new can be added from here.
 const beNames = ref([])
 const beNamesLoading = ref(false)
 const beNamesLoaded = ref(false)
+const beNamesError = ref('')
 
 async function loadBeNames() {
   if (beNamesLoaded.value || beNamesLoading.value) return
   beNamesLoading.value = true
+  beNamesError.value = ''
   try {
     const res = await fetch('/api/business-entities')
     const data = await res.json()
@@ -355,7 +357,7 @@ async function loadBeNames() {
     }
     beNamesLoaded.value = true
   } catch (e) {
-    showMessage('error', e.message)
+    beNamesError.value = e.message
   } finally {
     beNamesLoading.value = false
   }
@@ -368,16 +370,6 @@ const addPlanForm = ref({ incentive_type_id: '', business_entity: '' })
 const addPlanSaving = ref(false)
 const addPlanError = ref('')
 
-// Business-entity autocomplete (same combo pattern as the city-name lookup).
-const beSuggestOpen = ref(false)
-const beHighlight = ref(-1)
-const beFiltered = computed(() => {
-  const term = String(addPlanForm.value.business_entity ?? '').trim().toLowerCase()
-  const names = beNames.value || []
-  const matches = term ? names.filter((n) => n.toLowerCase().includes(term)) : names
-  return matches.slice(0, 12)
-})
-
 function openAddPlan(row, i) {
   addPlanCity.value = {
     key: expandKeyOf(row, i),
@@ -388,8 +380,6 @@ function openAddPlan(row, i) {
   }
   addPlanForm.value = { incentive_type_id: '', business_entity: '' }
   addPlanError.value = ''
-  beSuggestOpen.value = false
-  beHighlight.value = -1
   showAddPlan.value = true
   if (!planTypes.value.length && !planTypesLoading.value) loadTypes()
   loadBeNames()
@@ -397,44 +387,6 @@ function openAddPlan(row, i) {
 
 function closeAddPlan() {
   showAddPlan.value = false
-}
-
-function onBeInput() {
-  beHighlight.value = -1
-  beSuggestOpen.value = true
-}
-
-function onBeFocus() {
-  if (beFiltered.value.length) beSuggestOpen.value = true
-}
-
-function onBeKey(e) {
-  if (!beSuggestOpen.value || !beFiltered.value.length) {
-    if (e.key === 'Escape') beSuggestOpen.value = false
-    return
-  }
-  if (e.key === 'ArrowDown') {
-    e.preventDefault()
-    beHighlight.value = (beHighlight.value + 1) % beFiltered.value.length
-  } else if (e.key === 'ArrowUp') {
-    e.preventDefault()
-    beHighlight.value =
-      (beHighlight.value + beFiltered.value.length - 1) % beFiltered.value.length
-  } else if (e.key === 'Enter') {
-    if (beHighlight.value >= 0) {
-      e.preventDefault()
-      pickBe(beFiltered.value[beHighlight.value])
-    } else {
-      beSuggestOpen.value = false
-    }
-  } else if (e.key === 'Escape' || e.key === 'Tab') {
-    beSuggestOpen.value = false
-  }
-}
-
-function pickBe(name) {
-  addPlanForm.value.business_entity = name
-  beSuggestOpen.value = false
 }
 
 async function saveAddPlan() {
@@ -447,7 +399,7 @@ async function saveAddPlan() {
     return
   }
   if (!business) {
-    addPlanError.value = 'Please enter a business entity.'
+    addPlanError.value = 'Please select a business entity.'
     return
   }
   if (city.cityId === null || city.cityId === undefined || city.cityId === '') {
@@ -976,7 +928,7 @@ onMounted(() => {
 
     <!-- add plan popup -->
     <div v-if="showAddPlan" class="overlay" @click.self="closeAddPlan">
-      <div class="modal" :class="{ 'lookup-open': beSuggestOpen && beFiltered.length > 0 }">
+      <div class="modal">
         <h2>Add plan</h2>
         <div v-if="addPlanCity" class="plan-city-chip">
           <span class="chip-label">City</span>
@@ -1002,33 +954,21 @@ onMounted(() => {
         </div>
         <div class="field">
           <span>Business entity</span>
-          <div class="combo">
-            <input
-              v-model="addPlanForm.business_entity"
-              type="text"
-              autocomplete="off"
-              placeholder="Start typing…"
-              @input="onBeInput"
-              @focus="onBeFocus"
-              @keydown="onBeKey"
-              @blur="beSuggestOpen = false"
-            />
-            <ul v-if="beSuggestOpen && beFiltered.length" class="suggest">
-              <li
-                v-for="(name, bi) in beFiltered"
-                :key="name"
-                :class="{ active: bi === beHighlight }"
-                @mousedown.prevent="pickBe(name)"
-                @mouseenter="beHighlight = bi"
-              >
-                <span class="s-name">{{ name }}</span>
-              </li>
-            </ul>
-          </div>
-          <p v-if="beNamesLoading" class="hint">Loading suggestions…</p>
-          <p v-else-if="beNamesLoaded && beNames.length" class="hint">
-            {{ beNames.length }} known entities — or type a new one
+          <select v-model="addPlanForm.business_entity" :disabled="beNamesLoading">
+            <option value="" disabled>Select a business entity…</option>
+            <option v-for="name in beNames" :key="name" :value="name">
+              {{ name }}
+            </option>
+          </select>
+          <p v-if="beNamesLoading" class="hint">Loading business entities…</p>
+          <p v-else-if="beNamesError" class="hint warn">
+            Could not load business entities —
+            <button type="button" class="link" @click="loadBeNames">retry</button>
           </p>
+          <p v-else-if="beNames.length" class="hint">
+            {{ beNames.length }} entities from <code>business_entities</code>
+          </p>
+          <p v-else-if="beNamesLoaded" class="hint warn">No business entities found.</p>
         </div>
         <p v-if="addPlanError" class="form-error">{{ addPlanError }}</p>
         <div class="actions">
