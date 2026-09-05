@@ -9,6 +9,7 @@ const plan = ref(null)
 const loading = ref(true)
 const error = ref('')
 const typeName = ref('')
+const cityName = ref('')
 
 const isActive = computed(() => {
   if (!plan.value) return false
@@ -31,9 +32,10 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [planRes, typesRes] = await Promise.all([
+    const [planRes, typesRes, citiesRes] = await Promise.all([
       fetch(`/api/city-plan-mappings/${encodeURIComponent(planId.value)}`),
       fetch('/api/incentive-types'),
+      fetch('/api/cities'),
     ])
     const data = await planRes.json()
     if (!planRes.ok) throw new Error(data.message || data.detail || 'Failed to load plan')
@@ -45,6 +47,25 @@ async function load() {
         (t) => String(t.id) === String(plan.value?.incentive_type_id)
       )
       if (match) typeName.value = match.name
+    }
+    // Map city_id -> city name; the page stays usable without it.
+    if (citiesRes.ok) {
+      const cdata = await citiesRes.json()
+      const cols = (cdata.columns || []).map((c) => c.name)
+      const nameCol = ['city_name', 'city', 'name', 'correct_city'].find((n) =>
+        cols.includes(n)
+      )
+      const idCol = ['city_id', 'correct_city_id', 'correct_id'].find((n) =>
+        cols.includes(n)
+      )
+      if (nameCol && idCol) {
+        const city = (cdata.rows || []).find(
+          (r) => String(r[idCol]) === String(plan.value?.city_id)
+        )
+        if (city && city[nameCol] !== null && city[nameCol] !== undefined && city[nameCol] !== '') {
+          cityName.value = city[nameCol]
+        }
+      }
     }
   } catch (e) {
     error.value = e.message
@@ -88,12 +109,8 @@ onMounted(load)
 
       <dl class="facts">
         <div>
-          <dt>Plan ID</dt>
-          <dd>{{ plan.id ?? '—' }}</dd>
-        </div>
-        <div>
-          <dt>City ID</dt>
-          <dd>{{ plan.city_id ?? '—' }}</dd>
+          <dt>City</dt>
+          <dd>{{ cityName || '—' }}</dd>
         </div>
         <div>
           <dt>Type</dt>
