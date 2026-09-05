@@ -1264,7 +1264,10 @@ tbody tr:hover {
   cursor: pointer;
 }
 .city-row.expanded {
-  background: #f0f7f3;
+  background: #e2eee7;
+}
+.city-row.expanded td:first-child {
+  box-shadow: inset 4px 0 0 var(--accent);
 }
 .expand-col {
   width: 2.4rem;
@@ -1294,11 +1297,19 @@ thead th.expand-col {
 }
 
 tbody tr.detail-row:hover {
-  background: #fbfdfc;
+  background: #e6efe9;
 }
 .detail-cell {
-  padding: 0;
-  background: #fbfdfc;
+  padding: 0.8rem 1rem 1rem 2.9rem;
+  background: #e6efe9;
+  box-shadow:
+    inset 0 8px 10px -8px rgba(47, 112, 87, 0.35),
+    inset 0 -8px 10px -8px rgba(47, 112, 87, 0.35);
+}
+@media (max-width: 640px) {
+  .detail-cell {
+    padding-left: 0.8rem;
+  }
 }
 .slide-wrap {
   overflow: hidden;
@@ -1315,8 +1326,12 @@ tbody tr.detail-row:hover {
   }
 }
 .plan-panel {
+  background: #fff;
+  border: 1px solid #c9dcd2;
+  border-left: 4px solid var(--accent);
+  border-radius: 0.7rem;
   padding: 1rem 1.25rem 1.25rem;
-  border-top: 1px dashed var(--border);
+  box-shadow: 0 6px 18px rgba(47, 112, 87, 0.12);
 }
 .plan-head {
   display: flex;
@@ -1326,8 +1341,12 @@ tbody tr.detail-row:hover {
   margin-bottom: 0.7rem;
 }
 .plan-head strong {
-  color: var(--accent-strong);
-  font-size: 0.95rem;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.8rem;
+  padding: 0.2rem 0.7rem;
+  border-radius: 999px;
+  letter-spacing: 0.02em;
 }
 .plan-city {
   color: var(--muted);
