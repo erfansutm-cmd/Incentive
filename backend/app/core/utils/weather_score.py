@@ -1,15 +1,23 @@
 from datetime import date, timedelta
-import os
 import requests
+
+from ..config import WEATHER_API_URL
 
 
 def get_city_weather_score(city: str) -> int:
-    API_URL = os.getenv("weather_ENDPOINT", "http://172.21.88.66:5000/severity-forecast")
+    """Get the weather score for a given city.
+    
+    Args:
+        city: The name of the city.
+        
+    Returns:
+        The weather severity score (integer), defaults to 1 on error.
+    """
     incentive_date = (date.today() + timedelta(days=1)).isoformat()
 
     try:
         response = requests.get(
-            f"{API_URL}/{city}",
+            f"{WEATHER_API_URL}/{city}",
             params={
                 "date": incentive_date,
             },
@@ -20,6 +28,5 @@ def get_city_weather_score(city: str) -> int:
         weather_response = response.json()
         return round(weather_response.get("response", 1))
 
-    except Exception as e:
-        # print(f"Failed to fetch weather data for {city}: {e}")
+    except Exception:
         return 1  # Fallback score on error
