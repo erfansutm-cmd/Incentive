@@ -183,7 +183,7 @@ REQUIRED_COLUMNS = ("city_id", "incentive_type_id", "business_entity")
 
 @router.post("")
 async def add_mapping(payload: dict):
-    """Insert a new plan mapping (active by default: deactivated_at = NULL)."""
+    """Insert a new plan (active by default: deactivated_at = NULL)."""
     try:
         cols = _columns()
     except Exception as exc:
@@ -234,12 +234,12 @@ async def add_mapping(payload: dict):
         status, msg = _failure(exc)
         return JSONResponse(status_code=status, content={"status": "error", "message": msg})
 
-    return {"status": "ok", "message": "Plan mapping added successfully."}
+    return {"status": "ok", "message": "Plan added successfully."}
 
 
 @router.post("/{mapping_id}/deactivate")
 async def deactivate_mapping(mapping_id: str):
-    """Deactivate a plan mapping by setting `deactivated_at` to NOW()."""
+    """Deactivate a plan by setting `deactivated_at` to NOW()."""
     try:
         cols = _columns()
     except Exception as exc:
@@ -276,10 +276,10 @@ async def deactivate_mapping(mapping_id: str):
     if row is None:
         return JSONResponse(
             status_code=404,
-            content={"status": "error", "message": "Plan mapping not found."},
+            content={"status": "error", "message": "Plan not found."},
         )
     if row._mapping[DEACTIVATED_COLUMN] is not None:
-        return {"status": "ok", "message": "Plan mapping is already deactivated.", "active": False}
+        return {"status": "ok", "message": "Plan is already deactivated.", "active": False}
 
     try:
         with engine.begin() as conn:
@@ -294,4 +294,4 @@ async def deactivate_mapping(mapping_id: str):
         status, msg = _failure(exc)
         return JSONResponse(status_code=status, content={"status": "error", "message": msg})
 
-    return {"status": "ok", "message": "Plan mapping deactivated successfully.", "active": False}
+    return {"status": "ok", "message": "Plan deactivated successfully.", "active": False}

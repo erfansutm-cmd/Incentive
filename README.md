@@ -114,7 +114,7 @@ matched to whatever the local columns are called — `correct_city` fills
 with no match are simply skipped. If the mapping table is unreachable the form
 stays fully usable, it just stops auto-filling.
 
-### Plan mappings (slide-down per city)
+### Plans (slide-down per city)
 
 Clicking a city row expands a slide-down panel with that city's rows from
 `incentive.incentive_city_plan_mapping`, matched on `city_id`. The panel shows

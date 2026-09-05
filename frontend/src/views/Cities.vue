@@ -228,8 +228,8 @@ function pkValue(row) {
   return pk ? row[pk.name] : undefined
 }
 
-// --- plan mappings slide-down (incentive_city_plan_mapping) ----------------
-// Clicking a city row expands a panel with that city's plan mappings,
+// --- plans slide-down (incentive_city_plan_mapping) ----------------
+// Clicking a city row expands a panel with that city's plans,
 // matched on `city_id`. Active mappings (deactivated_at IS NULL) show first;
 // a button reveals the deactivated ones. Fetched from the dedicated
 // /api/city-plan-mappings endpoint (see backend/app/city_plan_mappings.py).
@@ -361,69 +361,120 @@ async function loadBeNames() {
   }
 }
 
-// --- add plan (per expanded city) -------------------------------------------
-const addPlanState = ref({}) // expand-key -> { open, form, saving, error }
+// --- add plan popup ---------------------------------------------------------
+const showAddPlan = ref(false)
+const addPlanCity = ref(null) // { key, row, i, cityId, label }
+const addPlanForm = ref({ incentive_type_id: '', business_entity: '' })
+const addPlanSaving = ref(false)
+const addPlanError = ref('')
 
-function addPlanFor(row, i) {
-  return addPlanState.value[expandKeyOf(row, i)]
-}
+// Business-entity autocomplete (same combo pattern as the city-name lookup).
+const beSuggestOpen = ref(false)
+const beHighlight = ref(-1)
+const beFiltered = computed(() => {
+  const term = String(addPlanForm.value.business_entity ?? '').trim().toLowerCase()
+  const names = beNames.value || []
+  const matches = term ? names.filter((n) => n.toLowerCase().includes(term)) : names
+  return matches.slice(0, 12)
+})
 
 function openAddPlan(row, i) {
-  addPlanState.value[expandKeyOf(row, i)] = {
-    open: true,
-    form: { incentive_type_id: '', business_entity: '' },
-    saving: false,
-    error: '',
+  addPlanCity.value = {
+    key: expandKeyOf(row, i),
+    row,
+    i,
+    cityId: cityIdOf(row),
+    label: planTitle(row),
   }
+  addPlanForm.value = { incentive_type_id: '', business_entity: '' }
+  addPlanError.value = ''
+  beSuggestOpen.value = false
+  beHighlight.value = -1
+  showAddPlan.value = true
   if (!planTypes.value.length && !planTypesLoading.value) loadTypes()
   loadBeNames()
 }
 
-function closeAddPlan(row, i) {
-  const s = addPlanFor(row, i)
-  if (s) s.open = false
+function closeAddPlan() {
+  showAddPlan.value = false
 }
 
-async function saveAddPlan(row, i) {
-  const key = expandKeyOf(row, i)
-  const s = addPlanState.value[key]
-  if (!s || s.saving) return
-  const typeId = String(s.form.incentive_type_id ?? '').trim()
-  const business = String(s.form.business_entity ?? '').trim()
-  const cityId = cityIdOf(row)
+function onBeInput() {
+  beHighlight.value = -1
+  beSuggestOpen.value = true
+}
+
+function onBeFocus() {
+  if (beFiltered.value.length) beSuggestOpen.value = true
+}
+
+function onBeKey(e) {
+  if (!beSuggestOpen.value || !beFiltered.value.length) {
+    if (e.key === 'Escape') beSuggestOpen.value = false
+    return
+  }
+  if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    beHighlight.value = (beHighlight.value + 1) % beFiltered.value.length
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    beHighlight.value =
+      (beHighlight.value + beFiltered.value.length - 1) % beFiltered.value.length
+  } else if (e.key === 'Enter') {
+    if (beHighlight.value >= 0) {
+      e.preventDefault()
+      pickBe(beFiltered.value[beHighlight.value])
+    } else {
+      beSuggestOpen.value = false
+    }
+  } else if (e.key === 'Escape' || e.key === 'Tab') {
+    beSuggestOpen.value = false
+  }
+}
+
+function pickBe(name) {
+  addPlanForm.value.business_entity = name
+  beSuggestOpen.value = false
+}
+
+async function saveAddPlan() {
+  const city = addPlanCity.value
+  if (!city || addPlanSaving.value) return
+  const typeId = String(addPlanForm.value.incentive_type_id ?? '').trim()
+  const business = String(addPlanForm.value.business_entity ?? '').trim()
   if (!typeId) {
-    s.error = 'Please select a type.'
+    addPlanError.value = 'Please select a type.'
     return
   }
   if (!business) {
-    s.error = 'Please enter a business entity.'
+    addPlanError.value = 'Please enter a business entity.'
     return
   }
-  if (cityId === null) {
-    s.error = 'This row has no city_id.'
+  if (city.cityId === null || city.cityId === undefined || city.cityId === '') {
+    addPlanError.value = 'This city has no city_id.'
     return
   }
-  s.saving = true
-  s.error = ''
+  addPlanSaving.value = true
+  addPlanError.value = ''
   try {
     const res = await fetch('/api/city-plan-mappings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        city_id: cityId,
+        city_id: city.cityId,
         incentive_type_id: typeId,
         business_entity: business,
       }),
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.message || data.detail || 'Save failed')
-    s.open = false
-    showMessage('ok', data.message || 'Plan mapping added successfully.')
-    await fetchPlans(row, key)
+    showAddPlan.value = false
+    showMessage('ok', data.message || 'Plan added successfully.')
+    await fetchPlans(city.row, city.key)
   } catch (e) {
-    s.error = e.message
+    addPlanError.value = e.message
   } finally {
-    s.saving = false
+    addPlanSaving.value = false
   }
 }
 
@@ -457,7 +508,7 @@ async function confirmDeactivate() {
     const data = await res.json()
     if (!res.ok) throw new Error(data.message || data.detail || 'Deactivate failed')
     deactivateTarget.value = null
-    showMessage('ok', data.message || 'Plan mapping deactivated successfully.')
+    showMessage('ok', data.message || 'Plan deactivated successfully.')
     await fetchPlans(t.row, t.key)
   } catch (e) {
     showMessage('error', e.message)
@@ -494,7 +545,7 @@ async function fetchPlans(row, key) {
       `/api/city-plan-mappings?city_id=${encodeURIComponent(cityId)}&include_deactivated=true`
     )
     const data = await res.json()
-    if (!res.ok) throw new Error(data.message || data.detail || 'Failed to load plan mappings')
+    if (!res.ok) throw new Error(data.message || data.detail || 'Failed to load plans')
     const active = []
     const deactivated = []
     for (const r of data.rows || []) {
@@ -565,7 +616,7 @@ async function load() {
   error.value = ''
   expandedKey.value = null
   planCache.value = {}
-  addPlanState.value = {}
+  showAddPlan.value = false
   deactivateTarget.value = null
   try {
     const res = await fetch('/api/cities')
@@ -653,7 +704,7 @@ onMounted(() => {
     <div class="head">
       <div>
         <h1>Cities</h1>
-        <p class="sub">Manage the <code>cities</code> table. Click a city to see its plan mappings.</p>
+        <p class="sub">Manage the <code>cities</code> table. Click a city to see its plans.</p>
       </div>
       <button class="btn btn-primary" @click="openAdd">+ Add city</button>
     </div>
@@ -723,7 +774,7 @@ onMounted(() => {
                 <div class="slide-wrap">
                   <div class="plan-panel">
                     <div class="plan-head">
-                      <strong>Plan mappings</strong>
+                      <strong>Plans</strong>
                       <span class="plan-city">{{ planTitle(row) }}</span>
                       <template
                         v-if="plansFor(row, i) && !plansFor(row, i).loading && !plansFor(row, i).error"
@@ -749,65 +800,12 @@ onMounted(() => {
                       </template>
                     </div>
 
-                    <div v-if="addPlanFor(row, i)?.open" class="add-plan">
-                      <div class="add-plan-title">Add plan for {{ planTitle(row) }}</div>
-                      <div class="add-plan-grid">
-                        <label class="add-field">
-                          <span>Type</span>
-                          <select
-                            v-model="addPlanFor(row, i).form.incentive_type_id"
-                            :disabled="planTypesLoading"
-                          >
-                            <option value="" disabled>Select type…</option>
-                            <option v-for="t in planTypes" :key="t.id" :value="t.id">
-                              {{ t.name }}
-                            </option>
-                          </select>
-                          <em v-if="planTypesLoading" class="add-hint">Loading types…</em>
-                          <em v-else-if="planTypesError" class="add-hint warn">
-                            Could not load types —
-                            <button type="button" class="link" @click.stop="loadTypes">
-                              retry
-                            </button>
-                          </em>
-                        </label>
-                        <label class="add-field">
-                          <span>Business entity</span>
-                          <input
-                            v-model="addPlanFor(row, i).form.business_entity"
-                            type="text"
-                            :list="'be-list-' + i"
-                            placeholder="e.g. foodZooket"
-                            autocomplete="off"
-                          />
-                          <datalist :id="'be-list-' + i">
-                            <option v-for="name in beNames" :key="name" :value="name" />
-                          </datalist>
-                          <em v-if="beNamesLoading" class="add-hint">Loading suggestions…</em>
-                        </label>
-                      </div>
-                      <p v-if="addPlanFor(row, i).error" class="add-error">
-                        {{ addPlanFor(row, i).error }}
-                      </p>
-                      <div class="add-plan-actions">
-                        <button class="btn btn-ghost btn-sm" @click.stop="closeAddPlan(row, i)">
-                          Cancel
-                        </button>
-                        <button
-                          class="btn btn-primary btn-sm"
-                          :disabled="addPlanFor(row, i).saving"
-                          @click.stop="saveAddPlan(row, i)"
-                        >
-                          {{ addPlanFor(row, i).saving ? 'Saving…' : 'Save' }}
-                        </button>
-                      </div>
-                    </div>
 
                     <div
                       v-if="!plansFor(row, i) || plansFor(row, i).loading"
                       class="plan-loading"
                     >
-                      Loading plan mappings…
+                      Loading plans…
                     </div>
                     <div v-else-if="plansFor(row, i).error" class="plan-error">
                       <span>{{ plansFor(row, i).error }}</span>
@@ -817,7 +815,7 @@ onMounted(() => {
                     </div>
                     <template v-else>
                       <div v-if="!plansFor(row, i).active.length" class="plan-empty">
-                        No active plan mappings for this city.
+                        No active plans for this city.
                       </div>
                       <table v-else class="plan-table">
                         <thead>
@@ -976,10 +974,76 @@ onMounted(() => {
       </div>
     </div>
 
+    <!-- add plan popup -->
+    <div v-if="showAddPlan" class="overlay" @click.self="closeAddPlan">
+      <div class="modal" :class="{ 'lookup-open': beSuggestOpen && beFiltered.length > 0 }">
+        <h2>Add plan</h2>
+        <div v-if="addPlanCity" class="plan-city-chip">
+          <span class="chip-label">City</span>
+          <strong>{{ addPlanCity.label }}</strong>
+          <span class="chip-id">city_id {{ addPlanCity.cityId }}</span>
+        </div>
+        <div class="field">
+          <span>Type</span>
+          <select v-model="addPlanForm.incentive_type_id" :disabled="planTypesLoading">
+            <option value="" disabled>Select a type…</option>
+            <option v-for="t in planTypes" :key="t.id" :value="t.id">
+              {{ t.name }} (#{{ t.id }})
+            </option>
+          </select>
+          <p v-if="planTypesLoading" class="hint">Loading types…</p>
+          <p v-else-if="planTypesError" class="hint warn">
+            Could not load types —
+            <button type="button" class="link" @click="loadTypes">retry</button>
+          </p>
+          <p v-else-if="planTypes.length" class="hint">
+            {{ planTypes.length }} types from <code>incentive_type</code>
+          </p>
+        </div>
+        <div class="field">
+          <span>Business entity</span>
+          <div class="combo">
+            <input
+              v-model="addPlanForm.business_entity"
+              type="text"
+              autocomplete="off"
+              placeholder="Start typing…"
+              @input="onBeInput"
+              @focus="onBeFocus"
+              @keydown="onBeKey"
+              @blur="beSuggestOpen = false"
+            />
+            <ul v-if="beSuggestOpen && beFiltered.length" class="suggest">
+              <li
+                v-for="(name, bi) in beFiltered"
+                :key="name"
+                :class="{ active: bi === beHighlight }"
+                @mousedown.prevent="pickBe(name)"
+                @mouseenter="beHighlight = bi"
+              >
+                <span class="s-name">{{ name }}</span>
+              </li>
+            </ul>
+          </div>
+          <p v-if="beNamesLoading" class="hint">Loading suggestions…</p>
+          <p v-else-if="beNamesLoaded && beNames.length" class="hint">
+            {{ beNames.length }} known entities — or type a new one
+          </p>
+        </div>
+        <p v-if="addPlanError" class="form-error">{{ addPlanError }}</p>
+        <div class="actions">
+          <button class="btn btn-ghost" @click="closeAddPlan">Cancel</button>
+          <button class="btn btn-primary" :disabled="addPlanSaving" @click="saveAddPlan">
+            {{ addPlanSaving ? 'Saving…' : 'Save plan' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- deactivate plan mapping confirmation -->
     <div v-if="deactivateTarget" class="overlay" @click.self="cancelDeactivate">
       <div class="modal">
-        <h2>Deactivate plan mapping</h2>
+        <h2>Deactivate plan</h2>
         <p class="confirm-text">
           Deactivate
           <strong>{{
@@ -1386,85 +1450,67 @@ table.plan-table tbody tr.is-deactivated td {
   color: #687876;
 }
 
-/* add-plan form + type names + deactivate modal */
+/* plans slide-down: type names, add-plan popup, deactivate popup */
 .type-id {
   color: var(--muted);
   font-size: 0.78rem;
   margin-left: 0.3rem;
   white-space: nowrap;
 }
-.add-plan {
-  background: #fff;
-  border: 1px solid var(--border);
-  border-radius: 0.6rem;
-  padding: 0.8rem 0.9rem;
-  margin-bottom: 0.8rem;
-}
-.add-plan-title {
-  font-size: 0.85rem;
-  font-weight: 700;
-  color: var(--accent-strong);
-  margin-bottom: 0.6rem;
-}
-.add-plan-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.6rem;
-}
-@media (max-width: 640px) {
-  .add-plan-grid {
-    grid-template-columns: 1fr;
-  }
-}
-.add-field {
+.plan-city-chip {
   display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  font-size: 0.82rem;
-  font-weight: 600;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  background: var(--accent-soft);
+  border: 1px solid #cfdfd7;
+  border-radius: 0.6rem;
+  padding: 0.55rem 0.75rem;
+  margin-bottom: 1rem;
+  font-size: 0.88rem;
+}
+.chip-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent-strong);
+}
+.plan-city-chip strong {
   color: var(--text);
 }
-.add-field select,
-.add-field input {
-  padding: 0.5rem 0.65rem;
+.chip-id {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.field select {
+  padding: 0.55rem 0.7rem;
   border: 1px solid var(--border);
   border-radius: 0.55rem;
-  font-size: 0.9rem;
-  font-weight: 400;
+  font-size: 0.95rem;
   outline: none;
   color: var(--text);
   background: #fbfdfc;
+  cursor: pointer;
 }
-.add-field select:focus,
-.add-field input:focus {
+.field select:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-ring);
   background: #fff;
 }
-.add-hint {
-  font-weight: 400;
-  font-style: normal;
-  font-size: 0.78rem;
-  color: var(--muted);
+.field select:disabled {
+  opacity: 0.6;
+  cursor: wait;
 }
-.add-hint.warn {
-  color: var(--warning);
-}
-.add-error {
+.form-error {
   color: #8c3030;
   background: var(--danger-soft);
   border: 1px solid #f0caca;
   border-radius: 0.55rem;
-  padding: 0.45rem 0.65rem;
+  padding: 0.5rem 0.7rem;
   font-size: 0.85rem;
-  font-weight: 400;
-  margin: 0.6rem 0 0;
-}
-.add-plan-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 0.7rem;
+  margin: 0 0 0.6rem;
 }
 .confirm-text {
   color: var(--text);
