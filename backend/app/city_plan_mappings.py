@@ -176,3 +176,122 @@ def list_mappings(
         "deactivated_count": deactivated_count,
         "total": total,
     }
+
+
+REQUIRED_COLUMNS = ("city_id", "incentive_type_id", "business_entity")
+
+
+@router.post("")
+async def add_mapping(payload: dict):
+    """Insert a new plan mapping (active by default: deactivated_at = NULL)."""
+    try:
+        cols = _columns()
+    except Exception as exc:
+        status, msg = _failure(exc)
+        return JSONResponse(status_code=status, content={"status": "error", "message": msg})
+
+    fields = {c["Field"] for c in cols}
+    missing = [c for c in REQUIRED_COLUMNS if c not in fields]
+    if missing:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "error",
+                "message": f"Table '{TABLE_NAME}' has no column(s): {', '.join(missing)}.",
+            },
+        )
+
+    data = {}
+    for c in REQUIRED_COLUMNS:
+        v = (payload or {}).get(c)
+        if isinstance(v, str):
+            v = v.strip()
+        if v in (None, ""):
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": f"'{c}' is required."},
+            )
+        data[c] = v
+
+    names, values, params = [], [], {}
+    for c, v in data.items():
+        names.append(f"`{c}`")
+        values.append(f":{c}")
+        params[c] = v
+    # Managed columns: created_at = now, deactivated_at = NULL (active by default).
+    if "created_at" in fields:
+        names.append("`created_at`")
+        values.append("NOW()")
+    if DEACTIVATED_COLUMN in fields:
+        names.append(f"`{DEACTIVATED_COLUMN}`")
+        values.append("NULL")
+
+    sql = text(f"INSERT INTO {TABLE_SQL} ({', '.join(names)}) VALUES ({', '.join(values)})")
+    try:
+        with engine.begin() as conn:
+            conn.execute(sql, params)
+    except Exception as exc:
+        status, msg = _failure(exc)
+        return JSONResponse(status_code=status, content={"status": "error", "message": msg})
+
+    return {"status": "ok", "message": "Plan mapping added successfully."}
+
+
+@router.post("/{mapping_id}/deactivate")
+async def deactivate_mapping(mapping_id: str):
+    """Deactivate a plan mapping by setting `deactivated_at` to NOW()."""
+    try:
+        cols = _columns()
+    except Exception as exc:
+        status, msg = _failure(exc)
+        return JSONResponse(status_code=status, content={"status": "error", "message": msg})
+
+    fields = {c["Field"] for c in cols}
+    if DEACTIVATED_COLUMN not in fields:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "error",
+                "message": f"Table '{TABLE_NAME}' has no '{DEACTIVATED_COLUMN}' column.",
+            },
+        )
+    pk = _primary_key(cols) or ("id" if "id" in fields else None)
+    if not pk:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "error",
+                "message": f"Table '{TABLE_NAME}' has no primary key.",
+            },
+        )
+
+    read_sql = text(f"SELECT `{DEACTIVATED_COLUMN}` FROM {TABLE_SQL} WHERE `{pk}` = :pk_value")
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(read_sql, {"pk_value": mapping_id}).first()
+    except Exception as exc:
+        status, msg = _failure(exc)
+        return JSONResponse(status_code=status, content={"status": "error", "message": msg})
+
+    if row is None:
+        return JSONResponse(
+            status_code=404,
+            content={"status": "error", "message": "Plan mapping not found."},
+        )
+    if row._mapping[DEACTIVATED_COLUMN] is not None:
+        return {"status": "ok", "message": "Plan mapping is already deactivated.", "active": False}
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    f"UPDATE {TABLE_SQL} SET `{DEACTIVATED_COLUMN}` = NOW() "
+                    f"WHERE `{pk}` = :pk_value"
+                ),
+                {"pk_value": mapping_id},
+            )
+    except Exception as exc:
+        status, msg = _failure(exc)
+        return JSONResponse(status_code=status, content={"status": "error", "message": msg})
+
+    return {"status": "ok", "message": "Plan mapping deactivated successfully.", "active": False}

@@ -297,6 +297,175 @@ function retryPlans(row, i) {
   fetchPlans(row, expandKeyOf(row, i))
 }
 
+// --- incentive types (mafsho.incentive_type): id -> name --------------------
+// Loaded once; used to show type names in the panel and to fill the "Add plan"
+// type dropdown. If the lookup fails the panel falls back to raw type ids.
+const planTypes = ref([])
+const planTypesLoading = ref(false)
+const planTypesError = ref('')
+
+const typeNameById = computed(() => {
+  const map = {}
+  for (const t of planTypes.value) map[String(t.id)] = t.name
+  return map
+})
+
+function typeDisplay(typeId) {
+  if (typeId === null || typeId === undefined || typeId === '') return ''
+  return typeNameById.value[String(typeId)] || ''
+}
+
+async function loadTypes() {
+  planTypesLoading.value = true
+  planTypesError.value = ''
+  try {
+    const res = await fetch('/api/incentive-types')
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.message || data.detail || 'Failed to load incentive types')
+    planTypes.value = data.rows || []
+  } catch (e) {
+    planTypesError.value = e.message
+  } finally {
+    planTypesLoading.value = false
+  }
+}
+
+// --- business entity name suggestions (incentive.business_entities) ---------
+// Loaded lazily when the "Add plan" form opens; the field stays usable as
+// free text when suggestions are unavailable.
+const beNames = ref([])
+const beNamesLoading = ref(false)
+const beNamesLoaded = ref(false)
+
+async function loadBeNames() {
+  if (beNamesLoaded.value || beNamesLoading.value) return
+  beNamesLoading.value = true
+  try {
+    const res = await fetch('/api/business-entities')
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.message || data.detail || 'Failed to load business entities')
+    const cols = (data.columns || []).map((c) => c.name)
+    if (cols.includes('name')) {
+      const seen = new Set()
+      for (const r of data.rows || []) {
+        const v = r.name
+        if (v !== null && v !== undefined && v !== '') seen.add(String(v))
+      }
+      beNames.value = [...seen].sort((a, b) => a.localeCompare(b))
+    }
+    beNamesLoaded.value = true
+  } catch (e) {
+    showMessage('error', e.message)
+  } finally {
+    beNamesLoading.value = false
+  }
+}
+
+// --- add plan (per expanded city) -------------------------------------------
+const addPlanState = ref({}) // expand-key -> { open, form, saving, error }
+
+function addPlanFor(row, i) {
+  return addPlanState.value[expandKeyOf(row, i)]
+}
+
+function openAddPlan(row, i) {
+  addPlanState.value[expandKeyOf(row, i)] = {
+    open: true,
+    form: { incentive_type_id: '', business_entity: '' },
+    saving: false,
+    error: '',
+  }
+  if (!planTypes.value.length && !planTypesLoading.value) loadTypes()
+  loadBeNames()
+}
+
+function closeAddPlan(row, i) {
+  const s = addPlanFor(row, i)
+  if (s) s.open = false
+}
+
+async function saveAddPlan(row, i) {
+  const key = expandKeyOf(row, i)
+  const s = addPlanState.value[key]
+  if (!s || s.saving) return
+  const typeId = String(s.form.incentive_type_id ?? '').trim()
+  const business = String(s.form.business_entity ?? '').trim()
+  const cityId = cityIdOf(row)
+  if (!typeId) {
+    s.error = 'Please select a type.'
+    return
+  }
+  if (!business) {
+    s.error = 'Please enter a business entity.'
+    return
+  }
+  if (cityId === null) {
+    s.error = 'This row has no city_id.'
+    return
+  }
+  s.saving = true
+  s.error = ''
+  try {
+    const res = await fetch('/api/city-plan-mappings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        city_id: cityId,
+        incentive_type_id: typeId,
+        business_entity: business,
+      }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.message || data.detail || 'Save failed')
+    s.open = false
+    showMessage('ok', data.message || 'Plan mapping added successfully.')
+    await fetchPlans(row, key)
+  } catch (e) {
+    s.error = e.message
+  } finally {
+    s.saving = false
+  }
+}
+
+// --- deactivate plan mapping (with confirmation) ----------------------------
+const deactivateTarget = ref(null) // { key, row, i, mapping, cityLabel }
+const deactivating = ref(false)
+
+function askDeactivate(row, i, mapping) {
+  deactivateTarget.value = {
+    key: expandKeyOf(row, i),
+    row,
+    i,
+    mapping,
+    cityLabel: planTitle(row),
+  }
+}
+
+function cancelDeactivate() {
+  deactivateTarget.value = null
+}
+
+async function confirmDeactivate() {
+  const t = deactivateTarget.value
+  if (!t || deactivating.value) return
+  deactivating.value = true
+  try {
+    const res = await fetch(
+      `/api/city-plan-mappings/${encodeURIComponent(t.mapping.id)}/deactivate`,
+      { method: 'POST' }
+    )
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.message || data.detail || 'Deactivate failed')
+    deactivateTarget.value = null
+    showMessage('ok', data.message || 'Plan mapping deactivated successfully.')
+    await fetchPlans(t.row, t.key)
+  } catch (e) {
+    showMessage('error', e.message)
+  } finally {
+    deactivating.value = false
+  }
+}
+
 async function fetchPlans(row, key) {
   const cityId = cityIdOf(row)
   if (cityId === null) {
@@ -396,6 +565,8 @@ async function load() {
   error.value = ''
   expandedKey.value = null
   planCache.value = {}
+  addPlanState.value = {}
+  deactivateTarget.value = null
   try {
     const res = await fetch('/api/cities')
     const data = await res.json()
@@ -471,7 +642,10 @@ function clearFilters() {
   groupFilter.value = ''
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadTypes()
+})
 </script>
 
 <template>
@@ -566,7 +740,67 @@ onMounted(load)
                               : `Show deactivated (${plansFor(row, i).deactivated.length})`
                           }}
                         </button>
+                        <button
+                          class="btn btn-primary btn-sm"
+                          @click.stop="openAddPlan(row, i)"
+                        >
+                          + Add plan
+                        </button>
                       </template>
+                    </div>
+
+                    <div v-if="addPlanFor(row, i)?.open" class="add-plan">
+                      <div class="add-plan-title">Add plan for {{ planTitle(row) }}</div>
+                      <div class="add-plan-grid">
+                        <label class="add-field">
+                          <span>Type</span>
+                          <select
+                            v-model="addPlanFor(row, i).form.incentive_type_id"
+                            :disabled="planTypesLoading"
+                          >
+                            <option value="" disabled>Select type…</option>
+                            <option v-for="t in planTypes" :key="t.id" :value="t.id">
+                              {{ t.name }}
+                            </option>
+                          </select>
+                          <em v-if="planTypesLoading" class="add-hint">Loading types…</em>
+                          <em v-else-if="planTypesError" class="add-hint warn">
+                            Could not load types —
+                            <button type="button" class="link" @click.stop="loadTypes">
+                              retry
+                            </button>
+                          </em>
+                        </label>
+                        <label class="add-field">
+                          <span>Business entity</span>
+                          <input
+                            v-model="addPlanFor(row, i).form.business_entity"
+                            type="text"
+                            :list="'be-list-' + i"
+                            placeholder="e.g. foodZooket"
+                            autocomplete="off"
+                          />
+                          <datalist :id="'be-list-' + i">
+                            <option v-for="name in beNames" :key="name" :value="name" />
+                          </datalist>
+                          <em v-if="beNamesLoading" class="add-hint">Loading suggestions…</em>
+                        </label>
+                      </div>
+                      <p v-if="addPlanFor(row, i).error" class="add-error">
+                        {{ addPlanFor(row, i).error }}
+                      </p>
+                      <div class="add-plan-actions">
+                        <button class="btn btn-ghost btn-sm" @click.stop="closeAddPlan(row, i)">
+                          Cancel
+                        </button>
+                        <button
+                          class="btn btn-primary btn-sm"
+                          :disabled="addPlanFor(row, i).saving"
+                          @click.stop="saveAddPlan(row, i)"
+                        >
+                          {{ addPlanFor(row, i).saving ? 'Saving…' : 'Save' }}
+                        </button>
+                      </div>
                     </div>
 
                     <div
@@ -589,10 +823,11 @@ onMounted(load)
                         <thead>
                           <tr>
                             <th>ID</th>
-                            <th>Incentive Type ID</th>
+                            <th>Type</th>
                             <th>Business Entity</th>
                             <th>Created At</th>
                             <th>Status</th>
+                            <th class="actions-col">Actions</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -601,10 +836,15 @@ onMounted(load)
                             :key="m.id ?? mi"
                           >
                             <td>{{ m.id ?? '—' }}</td>
-                            <td>{{ m.incentive_type_id ?? '—' }}</td>
+                            <td>{{ typeDisplay(m.incentive_type_id) || m.incentive_type_id || '—' }}<span v-if="typeDisplay(m.incentive_type_id)" class="type-id"> #{{ m.incentive_type_id }}</span></td>
                             <td>{{ m.business_entity ?? '—' }}</td>
                             <td>{{ formatDate(m.created_at) || '—' }}</td>
                             <td><span class="badge active">Active</span></td>
+                            <td class="actions-col">
+                              <button class="btn btn-ghost btn-sm" @click.stop="askDeactivate(row, i, m)">
+                                Deactivate
+                              </button>
+                            </td>
                           </tr>
                         </tbody>
                       </table>
@@ -621,7 +861,7 @@ onMounted(load)
                           <thead>
                             <tr>
                               <th>ID</th>
-                              <th>Incentive Type ID</th>
+                              <th>Type</th>
                               <th>Business Entity</th>
                               <th>Created At</th>
                               <th>Deactivated At</th>
@@ -635,7 +875,7 @@ onMounted(load)
                               class="is-deactivated"
                             >
                               <td>{{ m.id ?? '—' }}</td>
-                              <td>{{ m.incentive_type_id ?? '—' }}</td>
+                              <td>{{ typeDisplay(m.incentive_type_id) || m.incentive_type_id || '—' }}<span v-if="typeDisplay(m.incentive_type_id)" class="type-id"> #{{ m.incentive_type_id }}</span></td>
                               <td>{{ m.business_entity ?? '—' }}</td>
                               <td>{{ formatDate(m.created_at) || '—' }}</td>
                               <td>{{ formatDate(m.deactivated_at) || '—' }}</td>
@@ -731,6 +971,29 @@ onMounted(load)
           <button class="btn btn-ghost" @click="showModal = false">Cancel</button>
           <button class="btn btn-primary" :disabled="saving" @click="save">
             {{ saving ? 'Saving…' : 'Save' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- deactivate plan mapping confirmation -->
+    <div v-if="deactivateTarget" class="overlay" @click.self="cancelDeactivate">
+      <div class="modal">
+        <h2>Deactivate plan mapping</h2>
+        <p class="confirm-text">
+          Deactivate
+          <strong>{{
+            typeDisplay(deactivateTarget.mapping.incentive_type_id) ||
+            deactivateTarget.mapping.incentive_type_id
+          }}</strong>
+          ({{ deactivateTarget.mapping.business_entity }}) for
+          <strong>{{ deactivateTarget.cityLabel }}</strong>? It will move to the
+          deactivated list.
+        </p>
+        <div class="actions">
+          <button class="btn btn-ghost" @click="cancelDeactivate">Cancel</button>
+          <button class="btn btn-danger" :disabled="deactivating" @click="confirmDeactivate">
+            {{ deactivating ? 'Deactivating…' : 'Deactivate' }}
           </button>
         </div>
       </div>
@@ -1121,5 +1384,90 @@ table.plan-table tbody tr.is-deactivated td {
 .badge.deactivated {
   background: #eceff0;
   color: #687876;
+}
+
+/* add-plan form + type names + deactivate modal */
+.type-id {
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin-left: 0.3rem;
+  white-space: nowrap;
+}
+.add-plan {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  padding: 0.8rem 0.9rem;
+  margin-bottom: 0.8rem;
+}
+.add-plan-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--accent-strong);
+  margin-bottom: 0.6rem;
+}
+.add-plan-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+}
+@media (max-width: 640px) {
+  .add-plan-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.add-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.add-field select,
+.add-field input {
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  font-size: 0.9rem;
+  font-weight: 400;
+  outline: none;
+  color: var(--text);
+  background: #fbfdfc;
+}
+.add-field select:focus,
+.add-field input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+  background: #fff;
+}
+.add-hint {
+  font-weight: 400;
+  font-style: normal;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.add-hint.warn {
+  color: var(--warning);
+}
+.add-error {
+  color: #8c3030;
+  background: var(--danger-soft);
+  border: 1px solid #f0caca;
+  border-radius: 0.55rem;
+  padding: 0.45rem 0.65rem;
+  font-size: 0.85rem;
+  font-weight: 400;
+  margin: 0.6rem 0 0;
+}
+.add-plan-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.7rem;
+}
+.confirm-text {
+  color: var(--text);
+  line-height: 1.5;
 }
 </style>

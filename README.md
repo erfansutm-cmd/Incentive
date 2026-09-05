@@ -40,6 +40,7 @@ configured through a root `.env` file:
 | `DB_CITIES_TABLE` | `cities`     |
 | `DB_BUSINESS_ENTITIES_TABLE` | `business_entities` |
 | `DB_CITY_PLAN_MAPPING_TABLE` | `incentive/incentive_city_plan_mapping` |
+| `DB_INCENTIVE_TYPE_TABLE` | `mafsho/incentive_type` |
 | `DB_CITY_MAPPING_TABLE` | `mafsho/city_mapping` |
 
 ```bash
@@ -124,10 +125,19 @@ the active mappings (`deactivated_at IS NULL`) first, with a
 | Method | Path                 | Action                                  |
 |--------|----------------------|-----------------------------------------|
 | GET    | `/api/city-plan-mappings?city_id={id}[&include_deactivated=true]` | List mappings for one city |
+| POST   | `/api/city-plan-mappings` | Add a mapping (`city_id`, `incentive_type_id`, `business_entity`) |
+| POST   | `/api/city-plan-mappings/{id}/deactivate` | Deactivate a mapping (sets `deactivated_at`) |
+| GET    | `/api/incentive-types` | List incentive types (`id`, `name`) from `mafsho.incentive_type` |
 
-The table is set with `DB_CITY_PLAN_MAPPING_TABLE` (default
-`incentive/incentive_city_plan_mapping`) and follows the same `schema/table`
+The tables are set with `DB_CITY_PLAN_MAPPING_TABLE` (default
+`incentive/incentive_city_plan_mapping`) and `DB_INCENTIVE_TYPE_TABLE`
+(default `mafsho/incentive_type`); both follow the same `schema/table`
 convention as the other tables.
+
+In the panel, `incentive_type_id` is shown as its type name (e.g. `DAILY`),
+the *Add plan* form picks the type from `mafsho.incentive_type` and suggests
+business entities from `incentive.business_entities`, and every active row has
+a *Deactivate* button behind a confirmation popup.
 
 ## Business Entities CRUD
 
