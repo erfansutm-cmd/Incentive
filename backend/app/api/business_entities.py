@@ -1,5 +1,6 @@
 import datetime
 import decimal
+import json
 import os
 
 from fastapi import APIRouter
@@ -62,14 +63,76 @@ def _primary_key(cols):
     return None
 
 
+def _is_json_column(col):
+    """True when a SHOW COLUMNS row describes a MySQL JSON column."""
+    return "json" in (col.get("Type") or "").lower()
+
+
+def _column_meta(col):
+    """Public metadata for one column."""
+    return {
+        "name": col["Field"],
+        "type": col["Type"],
+        "nullable": col.get("Null") == "YES",
+        "key": col.get("Key") or "",
+        "default": _jsonable(col.get("Default")),
+        "extra": col.get("Extra") or "",
+        "json_array": _is_json_column(col),
+    }
+
+
+def _to_array(value):
+    """Coerce a stored JSON value into a plain list (JSON or comma string)."""
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    if isinstance(value, str):
+        value = value.strip()
+        if value in ("", "null"):
+            return []
+        try:
+            parsed = json.loads(value)
+        except (ValueError, TypeError):
+            parsed = None
+        if isinstance(parsed, list):
+            return parsed
+        # Fallback: treat as a comma-separated list of plain values.
+        return [v for v in (s.strip() for s in value.split(",")) if v]
+    return [value]
+
+
+def _row_data(mapping, json_cols):
+    """Serialize a DB row for the client, expanding JSON columns to arrays."""
+    data = {}
+    for k, v in mapping.items():
+        if k in json_cols:
+            data[k] = _to_array(v)
+        else:
+            data[k] = _jsonable(v)
+    return data
+
+
 def _clean_payload(payload, cols):
-    """Keep only real columns (whitelist) and treat empty strings as NULL."""
+    """Keep only real columns (whitelist), expand lists for JSON columns.
+
+    Plain-empty values become NULL. Values meant for a JSON column are
+    serialized to a JSON string if they arrive as a list (or comma string).
+    """
+    json_cols = {c["Field"] for c in cols if _is_json_column(c)}
     allowed = {c["Field"] for c in cols}
     data = {}
     for key, value in payload.items():
         if key not in allowed:
             continue
-        data[key] = None if value in (None, "") else value
+        if value in (None, ""):
+            data[key] = None
+        elif key in json_cols:
+            data[key] = json.dumps(_to_array(value))
+        else:
+            data[key] = value
     return data
 
 
@@ -77,27 +140,18 @@ def _clean_payload(payload, cols):
 def list_business_entities():
     try:
         cols = _columns()
+        json_cols = {c["Field"] for c in cols if _is_json_column(c)}
         pk = _primary_key(cols)
         order = f" ORDER BY `{pk}`" if pk else ""
         with engine.connect() as conn:
             rows = conn.execute(text(f"SELECT * FROM {TABLE_SQL}{order}"))
-            data = [{k: _jsonable(v) for k, v in r._mapping.items()} for r in rows]
+            data = [_row_data(r._mapping, json_cols) for r in rows]
     except Exception as exc:
         status, msg = _failure(exc)
         return JSONResponse(status_code=status, content={"status": "error", "message": msg})
 
     return {
-        "columns": [
-            {
-                "name": c["Field"],
-                "type": c["Type"],
-                "nullable": c.get("Null") == "YES",
-                "key": c.get("Key") or "",
-                "default": _jsonable(c.get("Default")),
-                "extra": c.get("Extra") or "",
-            }
-            for c in cols
-        ],
+        "columns": [_column_meta(c) for c in cols],
         "rows": data,
     }
 
@@ -153,7 +207,10 @@ async def update_business_entity(entity_id: str, payload: dict):
     if not pk:
         return JSONResponse(
             status_code=400,
-            content={"status": "error", "message": f"Table '{TABLE_NAME}' has no primary key; cannot edit rows."},
+            content={
+                "status": "error",
+                "message": f"Table '{TABLE_NAME}' has no primary key; cannot edit rows.",
+            },
         )
 
     data = _clean_payload(payload, cols)
@@ -181,3 +238,37 @@ async def update_business_entity(entity_id: str, payload: dict):
             content={"status": "error", "message": "Business entity not found (nothing updated)."},
         )
     return {"status": "ok", "message": "Business entity updated successfully."}
+
+
+@router.delete("/{entity_id}")
+async def delete_business_entity(entity_id: str):
+    try:
+        cols = _columns()
+    except Exception as exc:
+        status, msg = _failure(exc)
+        return JSONResponse(status_code=status, content={"status": "error", "message": msg})
+
+    pk = _primary_key(cols)
+    if not pk:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "error",
+                "message": f"Table '{TABLE_NAME}' has no primary key; cannot delete rows.",
+            },
+        )
+
+    sql = text(f"DELETE FROM {TABLE_SQL} WHERE `{pk}` = :pk_value")
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(sql, {"pk_value": entity_id})
+    except Exception as exc:
+        status, msg = _failure(exc)
+        return JSONResponse(status_code=status, content={"status": "error", "message": msg})
+
+    if result.rowcount == 0:
+        return JSONResponse(
+            status_code=404,
+            content={"status": "error", "message": "Business entity not found (nothing deleted)."},
+        )
+    return {"status": "ok", "message": "Business entity deleted successfully."}

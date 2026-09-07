@@ -4,6 +4,9 @@ from sqlalchemy import text
 
 from .api import cities, business_entities, city_plan_mappings, incentive_types, weather
 from .core.database import engine, DB_HOST, DB_NAME, DB_PORT, DB_USER
+from .core.logger import get_logger
+
+logger = get_logger(__name__)
 
 app = FastAPI(title="Incentive API")
 
@@ -27,6 +30,7 @@ def db_health():
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
     except Exception as exc:  # keep it simple: report the failure in the response
+        logger.exception("Database health check failed")
         return JSONResponse(
             status_code=503,
             content={"status": "error", "detail": str(exc)},
