@@ -30,7 +30,17 @@ def get_city_weather_score(city: str) -> int:
         response.raise_for_status()
 
         weather_response = response.json()
-        return round(weather_response.get("response", 1))
+        score = round(weather_response.get("response", 1))
+        logger.info(
+            "Weather score retrieved for city=%r: score=%s "
+            "(status_code=%s, url=%s, params=%s)",
+            city,
+            score,
+            response.status_code,
+            url,
+            params,
+        )
+        return score
 
     except Exception as exc:
         # Collect as much context as possible before logging the failure.
