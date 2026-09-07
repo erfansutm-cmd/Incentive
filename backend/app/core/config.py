@@ -16,3 +16,6 @@ WEATHER_API_URL = os.getenv("weather_ENDPOINT", "http://172.21.88.66:5000/severi
 
 # Logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+# Microsoft Teams incoming-webhook URL used to post notifications
+TEAMS_WEBHOOK_URL = os.getenv("TEAMS_WEBHOOK_URL", "")
