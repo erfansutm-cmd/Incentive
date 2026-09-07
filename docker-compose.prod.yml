@@ -24,6 +24,7 @@ services:
       DB_CITY_PLAN_MAPPING_TABLE: ${DB_CITY_PLAN_MAPPING_TABLE:-incentive/incentive_city_plan_mapping}
       DB_INCENTIVE_TYPE_TABLE: ${DB_INCENTIVE_TYPE_TABLE:-mafsho/incentive_type}
       DB_CITY_MAPPING_TABLE: ${DB_CITY_MAPPING_TABLE:-mafsho/city_mapping}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
 
   frontend:
     build:

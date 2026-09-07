@@ -13,3 +13,6 @@ DB_CITY_MAPPING_TABLE = os.getenv("DB_CITY_MAPPING_TABLE", "mafsho/city_mapping"
 
 # Weather API
 WEATHER_API_URL = os.getenv("weather_ENDPOINT", "http://172.21.88.66:5000/severity-forecast")
+
+# Logging
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
