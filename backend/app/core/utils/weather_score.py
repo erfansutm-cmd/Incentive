@@ -30,16 +30,16 @@ def get_city_weather_score(city: str) -> int:
         response.raise_for_status()
 
         weather_response = response.json()
-        score = round(weather_response.get("response", 1))
+        raw_score = weather_response.get("response", 1)
+        score = round(raw_score)
+
         logger.info(
-            "Weather score retrieved for city=%r: score=%s "
-            "(status_code=%s, url=%s, params=%s)",
+            "Weather score retrieved from API: city=%r, raw_score=%s, rounded_score=%s",
             city,
+            raw_score,
             score,
-            response.status_code,
-            url,
-            params,
         )
+
         return score
 
     except Exception as exc:
