@@ -4,6 +4,7 @@ import Cities from './views/Cities.vue'
 import BusinessEntities from './views/BusinessEntities.vue'
 import PlanDetail from './views/PlanDetail.vue'
 import DecisionMatrix from './views/DecisionMatrix.vue'
+import DecisionMatrixTypeDetail from './views/DecisionMatrixTypeDetail.vue'
 
 export default createRouter({
   history: createWebHistory(),
@@ -18,11 +19,9 @@ export default createRouter({
       meta: { wide: true },
     },
     {
-      // Focused view of a single incentive type: same component and UI as the
-      // main Decision Matrix tab, scoped via ?city_group=…&type=….
       path: '/decision-matrix/type',
       name: 'decision-matrix-type',
-      component: DecisionMatrix,
+      component: DecisionMatrixTypeDetail,
       meta: { wide: true },
     },
     {

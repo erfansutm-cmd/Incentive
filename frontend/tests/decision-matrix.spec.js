@@ -535,7 +535,7 @@ test('typing a database key selects its friendly label without creating a custom
   await expect(groupPanel(page).getByRole('region', { name: 'Order Level Increase active steps', exact: true })).toBeVisible()
 })
 
-test('each incentive type opens a focused single-type view in a new tab', async ({ page }) => {
+test('each incentive type opens a dedicated page scoped to that type with full actions', async ({ page }) => {
   await mockDecisionMatrix(page, { rows: [
     makeStep(),
     makeStep({ id: 2, score: 2, score_type: 'Weather' }),
@@ -548,14 +548,16 @@ test('each incentive type opens a focused single-type view in a new tab', async 
   await expect(openLink).toBeVisible()
   await expect(openLink).toHaveAttribute('target', '_blank')
   await expect(openLink).toHaveAttribute('href', '/decision-matrix/type?city_group=Group%20A&type=1')
-  // The focused view keeps the exact same structure and flows, scoped to one type.
+  // The dedicated page shows the type + city group and only that type's scores.
   await page.goto('/decision-matrix/type?city_group=Group%20A&type=1')
-  await expect(groupButton(page)).toHaveAttribute('aria-expanded', 'true')
-  await expect(groupPanel(page).getByRole('button', { name: /DAILY #/ })).toBeVisible()
-  await expect(groupPanel(page).getByRole('button', { name: /WEEKLY #/ })).toHaveCount(0)
-  await expect(groupPanel(page).getByRole('button', { name: '+ Add score type', exact: true })).toBeVisible()
-  // Add step still works from the focused view.
-  await openSeries(page, 'Delivery')
-  await groupPanel(page).getByRole('button', { name: '+ Add step', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'DAILY #1', exact: true })).toBeVisible()
+  await expect(page.getByText('City group Group A', { exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Delivery active steps', exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Weather active steps', exact: true })).toBeVisible()
+  // No other incentive type leaks into this page.
+  await expect(page.getByRole('button', { name: /WEEKLY #/ })).toHaveCount(0)
+  // All the first-page actions are available: add score type and add step.
+  await expect(page.getByRole('button', { name: '+ Add score type', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '+ Add step', exact: true }).first().click()
   await expect(page.getByRole('dialog')).toBeVisible()
 })
