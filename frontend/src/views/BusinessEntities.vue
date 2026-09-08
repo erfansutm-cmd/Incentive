@@ -352,7 +352,7 @@ onMounted(load)
 
     <div v-else-if="loading" class="card empty">Loading…</div>
 
-    <div v-else class="card table-card">
+    <div v-else class="table-card">
       <div class="toolbar">
         <div class="search-wrap">
           <span class="search-icon">🔎</span>
@@ -373,8 +373,13 @@ onMounted(load)
         </span>
       </div>
 
-      <section v-for="section in sections" :key="section.key" class="entity-section" :aria-labelledby="`${section.key}-heading`">
-        <h2 :id="`${section.key}-heading`" class="section-heading">{{ section.title }} ({{ section.rows.length }})</h2>
+      <section v-for="section in sections" :key="section.key" class="entity-section" :class="section.key" :aria-labelledby="`${section.key}-heading`">
+        <header class="section-header">
+          <h2 :id="`${section.key}-heading`" class="section-heading">
+            {{ section.title }} <span class="section-count">{{ section.rows.length }}</span>
+          </h2>
+          <p class="section-description">{{ section.editable ? 'Current business entities — available to edit or deactivate.' : 'Previously deactivated entities — read-only.' }}</p>
+        </header>
       <div class="table-scroll">
         <table>
           <thead>
@@ -534,7 +539,9 @@ onMounted(load)
   align-items: center;
   gap: 0.75rem;
   padding: 0.85rem 1rem;
-  border-bottom: 1px solid var(--border);
+  border: 1px solid var(--border);
+  border-radius: 0.7rem;
+  margin-bottom: 1rem;
   background: #fbfdfc;
 }
 .search-wrap {
@@ -605,8 +612,44 @@ thead th {
 /* Reserve more space for customer IDs while keeping two-line timestamps compact. */
 thead th.timestamp-col { width: 115px; }
 thead th.include-customer-col { width: 210px; }
-.entity-section + .entity-section { border-top: 2px solid var(--border); margin-top: 1rem; }
-.section-heading { margin: 0; padding: 0.85rem 1rem; font-size: 0.9rem; color: var(--muted); }
+.entity-section {
+  border: 1px solid var(--border);
+  border-radius: 0.8rem;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 3px 12px rgba(20, 40, 30, 0.05);
+}
+.entity-section + .entity-section { margin-top: 2.5rem; }
+.section-header {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  background: var(--accent-soft);
+}
+.deactivated .section-header {
+  background: #eceff0;
+  border-left-color: #879694;
+}
+.section-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text);
+}
+.section-count {
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  background: #fff;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.section-description {
+  margin: 0.4rem 0 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
 
 /* Body: middle alignment for clean rows */
 tbody td {
