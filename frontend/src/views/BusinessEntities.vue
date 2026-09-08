@@ -171,10 +171,9 @@ function formatDate(value) {
   if (!value) return ''
   const d = new Date(value)
   if (isNaN(d)) return value
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(d)
+  const date = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(d)
+  const time = new Intl.DateTimeFormat(undefined, { timeStyle: 'short' }).format(d)
+  return `${date},\n${time}`
 }
 
 function cellText(row, col) {
@@ -387,7 +386,7 @@ onMounted(load)
                   </template>
                   <span v-else class="muted">—</span>
                 </div>
-                <span v-else class="cell-text">{{ cellText(row, c) || '—' }}</span>
+                <span v-else class="cell-text" :class="{ 'timestamp': managedColumns.has(c.name) }">{{ cellText(row, c) || '—' }}</span>
               </td>
               <td class="actions-col">
                 <button class="btn btn-ghost btn-sm" @click="openEdit(row)">Edit</button>
@@ -606,6 +605,10 @@ tbody tr:hover {
   max-width: 100%;
   overflow-wrap: anywhere;
   vertical-align: middle;
+}
+
+.cell-text.timestamp {
+  white-space: pre-line;
 }
 
 /* Chips: all green, aligned left, wrapped */

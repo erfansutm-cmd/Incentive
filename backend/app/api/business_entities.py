@@ -273,6 +273,11 @@ async def add_business_entity(payload: dict):
         values.append(f":{c}")
         params[c] = data[c]
 
+    # Set the audit timestamp on creation too, independent of DB defaults.
+    if any(c["Field"] == "updated_at" for c in cols):
+        names.append("`updated_at`")
+        values.append("CURRENT_TIMESTAMP")
+
     sql = text(f"INSERT INTO {TABLE_SQL} ({', '.join(names)}) VALUES ({', '.join(values)})")
     try:
         with engine.begin() as conn:
