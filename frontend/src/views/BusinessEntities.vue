@@ -41,11 +41,6 @@ const textColumns = computed(() =>
   )
 )
 
-// Columns shown in the table: all except the raw id (kept for actions).
-const tableColumns = computed(() =>
-  columns.value.filter((c) => !(c.key === 'PRI' && (c.extra || '').includes('auto_increment')))
-)
-
 function pkValue(row) {
   const pk = pkColumn.value
   return pk ? row[pk.name] : undefined
@@ -62,14 +57,50 @@ function colLabel(name) {
 function asArray(v) {
   if (Array.isArray(v)) return v
   if (v === null || v === undefined || v === '') return []
+  // numbers like 15300196 -> [15300196]
+  if (typeof v === 'number') return [v]
+
   if (typeof v === 'string') {
-    try {
-      const parsed = JSON.parse(v)
-      if (Array.isArray(parsed)) return parsed
-    } catch {
-      /* fall through */
+    let cur = v.trim()
+    if (cur === '' || cur.toLowerCase() === 'null') return []
+
+    // Unwind up to 3 levels of JSON encoding:
+    // '"[2, 11653225]"' -> "[2, 11653225]" -> [2, 11653225]
+    for (let i = 0; i < 3; i++) {
+      try {
+        const parsed = JSON.parse(cur)
+        if (Array.isArray(parsed)) return parsed
+        if (typeof parsed === 'number') return [parsed]
+        if (typeof parsed === 'string') {
+          const s = parsed.trim()
+          if (s === '' || s.toLowerCase() === 'null') return []
+          cur = s
+          continue
+        }
+        // if parsed is something else, break to fallback
+        break
+      } catch {
+        break
+      }
     }
-    return v.split(',').map((s) => s.trim()).filter(Boolean)
+
+    // Fallback: strip brackets and split by comma
+    let tmp = cur
+    if (tmp.startsWith('[') && tmp.endsWith(']')) {
+      tmp = tmp.slice(1, -1)
+    }
+    return tmp
+      .split(',')
+      .map((s) => s.trim().replace(/^["']|["']$/g, '').trim())
+      .filter(Boolean)
+      .map((s) => {
+        // keep numbers as numbers for nicer display/sorting
+        if (/^-?\d+$/.test(s)) {
+          const n = Number(s)
+          return Number.isFinite(n) ? n : s
+        }
+        return s
+      })
   }
   return [v]
 }
@@ -78,7 +109,11 @@ const categoryColumns = new Set([
   'include_delivery_category',
   'exclude_delivery_category',
 ])
-const customerColumns = new Set(['include_customer_id', 'exclude_customer_id'])
+const customerColumns = new Set([
+  'include_customer_id',
+  'exclude_customer_id',
+  'main_customer_id',
+])
 
 // Suggestion lists are built from known categories + every value already
 // present in the table, so newly typed values stay available later.
@@ -115,9 +150,15 @@ function kindFor(name) {
 const filteredRows = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
   if (!q) return rows.value
-  return rows.value.filter((row) =>
-    ['name', 'fa_name'].some((n) => String(row[n] ?? '').toLowerCase().includes(q))
-  )
+  return rows.value.filter((row) => {
+    // search in name/fa_name
+    if (['name', 'fa_name'].some((n) => String(row[n] ?? '').toLowerCase().includes(q))) return true
+    // also search in main_customer_id and other customer ids for convenience
+    for (const col of ['main_customer_id', 'include_customer_id', 'exclude_customer_id']) {
+      if (asArray(row[col]).some((v) => String(v).toLowerCase().includes(q))) return true
+    }
+    return false
+  })
 })
 
 function cellText(row, col) {
@@ -129,6 +170,30 @@ function cellText(row, col) {
   }
   return String(v)
 }
+
+function chipClass(colName) {
+  if (colName === 'main_customer_id') return 'mini-chip main'
+  if (customerColumns.has(colName)) return 'mini-chip customer'
+  if (categoryColumns.has(colName)) return 'mini-chip category'
+  return 'mini-chip'
+}
+
+// Order columns for better UX: name, fa_name first, then customer ids (include, exclude, main), then categories, then rest
+const tableColumns = computed(() => {
+  const base = columns.value.filter((c) => !(c.key === 'PRI' && (c.extra || '').includes('auto_increment')))
+  const order = ['name', 'fa_name', 'include_customer_id', 'exclude_customer_id', 'main_customer_id', 'include_delivery_category', 'exclude_delivery_category']
+  const ordered = []
+  const remaining = [...base]
+  for (const name of order) {
+    const idx = remaining.findIndex((c) => c.name === name)
+    if (idx !== -1) {
+      ordered.push(remaining[idx])
+      remaining.splice(idx, 1)
+    }
+  }
+  // append any other columns that were not in the predefined order (future columns)
+  return [...ordered, ...remaining]
+})
 
 function showMessage(type, text) {
   message.value = { type, text }
@@ -257,7 +322,7 @@ onMounted(load)
             v-model="searchQuery"
             type="search"
             class="search-input"
-            placeholder="Search by name…"
+            placeholder="Search by name or customer ID…"
           />
         </div>
         <span class="result-count">
@@ -269,22 +334,37 @@ onMounted(load)
         <table>
           <thead>
             <tr>
-              <th v-for="c in tableColumns" :key="c.name">{{ colLabel(c.name) }}</th>
+              <th
+                v-for="c in tableColumns"
+                :key="c.name"
+                :class="c.name === 'main_customer_id' ? 'col-main' : ''"
+                :title="colLabel(c.name)"
+              >
+                {{ colLabel(c.name) }}
+              </th>
               <th class="actions-col">Actions</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="row in filteredRows" :key="pkValue(row)">
-              <td v-for="c in tableColumns" :key="c.name">
+              <td
+                v-for="c in tableColumns"
+                :key="c.name"
+                :class="c.name === 'main_customer_id' ? 'col-main' : ''"
+              >
                 <div v-if="c.json_array" class="cell-chips">
                   <template v-if="asArray(row[c.name]).length">
-                    <span v-for="(v, i) in asArray(row[c.name])" :key="i" class="mini-chip">{{
-                      v
-                    }}</span>
+                    <span
+                      v-for="(v, i) in asArray(row[c.name])"
+                      :key="i"
+                      :class="chipClass(c.name)"
+                      :title="String(v)"
+                      >{{ v }}</span
+                    >
                   </template>
                   <span v-else class="muted">—</span>
                 </div>
-                <span v-else>{{ cellText(row, c) || '—' }}</span>
+                <span v-else class="cell-text">{{ cellText(row, c) || '—' }}</span>
               </td>
               <td class="actions-col">
                 <button class="btn btn-ghost btn-sm" @click="openEdit(row)">Edit</button>
@@ -397,6 +477,7 @@ onMounted(load)
 
 .table-card {
   overflow: hidden;
+  width: 100%;
 }
 
 .toolbar {
@@ -445,44 +526,45 @@ onMounted(load)
   white-space: nowrap;
 }
 
+/* === NO HORIZONTAL SLIDE === */
 .table-scroll {
-  /* table is sized to fit the page width — no horizontal scrolling */
-  overflow-x: hidden;
+  width: 100%;
+  overflow-x: hidden; /* critical: prevent horizontal scroll */
 }
 table {
-  /* fixed layout: columns share the page width and content wraps inside */
   width: 100%;
-  table-layout: fixed;
+  max-width: 100%;
+  table-layout: fixed; /* columns share width, content wraps */
   border-collapse: collapse;
 }
-/* column widths (id is hidden, so: name, fa_name, 4 list columns, actions) */
-thead th:nth-child(1) { width: 13%; }
-thead th:nth-child(2) { width: 14%; }
-thead th:nth-child(3),
-thead th:nth-child(4),
-thead th:nth-child(5),
-thead th:nth-child(6) { width: 15%; }
-thead th.actions-col { width: 13%; }
 
+/* Header: compact, left-aligned, uppercase, with ellipsis */
 thead th {
   text-align: left;
-  padding: 0.75rem 0.8rem;
+  padding: 0.65rem 0.55rem;
   background: var(--surface-2);
   color: #4a6155;
-  font-size: 0.74rem;
+  font-size: 0.7rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.03em;
   border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
 }
+
+/* Body cells: tight padding, top-aligned, wrap anywhere */
 tbody td {
-  padding: 0.7rem 0.8rem;
+  padding: 0.55rem 0.55rem;
   border-bottom: 1px solid #eef2ef;
-  font-size: 0.9rem;
+  font-size: 0.86rem;
   color: var(--text);
   vertical-align: top;
   word-break: break-word;
   overflow-wrap: anywhere;
+  line-height: 1.35;
 }
 tbody tr:last-child td {
   border-bottom: none;
@@ -494,40 +576,119 @@ tbody tr:hover {
   color: var(--muted);
 }
 
+/* Alignment helpers */
+.cell-text {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.col-main {
+  background: #f8fbff; /* subtle highlight for main_customer_id */
+}
+thead th.col-main {
+  background: #eef4ff;
+  color: #1e40af;
+}
+
+/* Chips container: flex wrap, no overflow */
 .cell-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.25rem;
-}
-.mini-chip {
-  display: inline-block;
-  padding: 0.1rem 0.5rem;
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-  border-radius: 999px;
-  font-size: 0.78rem;
-  font-weight: 600;
-  white-space: nowrap;
+  gap: 0.28rem;
+  align-items: flex-start;
+  justify-content: flex-start;
+  max-width: 100%;
 }
 
-.actions-col {
-  text-align: right;
+/* Base chip */
+.mini-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.12rem 0.52rem;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 600;
   white-space: nowrap;
+  line-height: 1.3;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 1px solid transparent;
+}
+/* Customer ID chips - greenish */
+.mini-chip.customer {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  border-color: #cfe3d9;
+}
+/* Delivery category chips - warm */
+.mini-chip.category {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #fde68a;
+}
+/* Main customer ID chips - blue, distinct */
+.mini-chip.main {
+  background: #dbeafe;
+  color: #1e40af;
+  border-color: #bfdbfe;
+  font-weight: 700;
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.08) inset;
+}
+
+/* Actions column: fixed width, centered, no wrap on desktop */
+.actions-col {
+  width: 108px;
+  min-width: 108px;
+  max-width: 108px;
+  text-align: center;
+  white-space: nowrap;
+  vertical-align: top;
+}
+.actions-col .btn {
+  padding: 0.28rem 0.55rem;
+  font-size: 0.78rem;
 }
 .actions-col .btn + .btn {
-  margin-left: 0.4rem;
+  margin-left: 0.3rem;
+}
+
+/* Responsive: shrink further on smaller screens, still no horizontal scroll */
+@media (max-width: 1300px) {
+  thead th {
+    font-size: 0.66rem;
+    padding: 0.5rem 0.4rem;
+  }
+  tbody td {
+    font-size: 0.82rem;
+    padding: 0.45rem 0.4rem;
+  }
+  .mini-chip {
+    font-size: 0.71rem;
+    padding: 0.1rem 0.42rem;
+  }
+  .actions-col {
+    width: 96px;
+    min-width: 96px;
+    max-width: 96px;
+  }
 }
 @media (max-width: 900px) {
+  .table-scroll {
+    overflow-x: auto; /* allow gentle scroll only on very small screens */
+  }
   .actions-col {
     white-space: normal;
   }
   .actions-col .btn {
-    margin-bottom: 0.3rem;
+    margin-bottom: 0.25rem;
+    display: inline-block;
   }
 }
 
 .modal-wide {
-  max-width: 560px;
+  max-width: 600px;
 }
 .field .type {
   margin-left: 0.4rem;
