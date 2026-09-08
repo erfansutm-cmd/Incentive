@@ -175,11 +175,11 @@ function submit() {
           <p class="hint">Leave all three blank for null, or enter three float values.</p>
           <div class="bucket-values">
             <label v-for="(_, index) in form.control_bucket" :key="index" class="field">
-              <span>Value {{ index + 1 }}</span>
+              <span>Group {{ index + 1 }}</span>
               <input
                 :value="form.control_bucket[index]" @input="form.control_bucket[index] = $event.target.value"
                 type="number" step="any" :required="bucketHasValues" placeholder="Not set"
-                :aria-label="`Control bucket value ${index + 1}`"
+                :aria-label="`Control bucket group ${index + 1}`"
               />
             </label>
           </div>

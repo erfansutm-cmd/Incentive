@@ -417,7 +417,7 @@ onMounted(load)
               </td>
               <td v-if="section.editable" class="actions-col">
                 <button class="btn btn-ghost btn-sm" @click="openEdit(row)">Edit</button>
-                <button v-if="row.deactivated_at == null" class="btn btn-danger btn-sm"
+                <button v-if="row.deactivated_at == null" class="btn btn-danger-soft btn-sm"
                   @click="askDeactivate(row)">Deactivate</button>
               </td>
             </tr>

@@ -5,8 +5,13 @@ defineProps({
   deactivated: { type: Boolean, default: false },
 })
 const emit = defineEmits(['deactivate'])
-function formatBucket(value) {
-  return Array.isArray(value) ? `[${value.join(', ')}]` : value ?? '—'
+function formatBucketValue(value) {
+  if (value === null || value === undefined) return '—'
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return String(value)
+    return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(6)))
+  }
+  return String(value)
 }
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 function formatDate(value) {
@@ -36,7 +41,14 @@ function formatDate(value) {
           <th scope="row" class="score-cell"><strong>{{ row.score }}</strong><small>ID {{ row.id }}</small></th>
           <td class="numeric">{{ row.target_increase ?? '—' }}</td>
           <td class="numeric">{{ row.pr_increase ?? '—' }}</td>
-          <td>{{ formatBucket(row.control_bucket) }}</td>
+          <td>
+            <div v-if="Array.isArray(row.control_bucket)" class="bucket">
+              <span v-for="(value, index) in row.control_bucket" :key="index" class="bucket-chip">
+                <span class="bucket-value">{{ formatBucketValue(value) }}</span>
+              </span>
+            </div>
+            <span v-else class="muted">—</span>
+          </td>
           <td class="date-cell">{{ formatDate(row.created_at) }}</td>
           <td v-if="deactivated" class="date-cell">{{ formatDate(row.deactivated_at) }}</td>
           <td v-else class="actions-col">
@@ -59,6 +71,10 @@ tbody tr:hover { background: #f6faf8; }
 .score-cell strong { display: inline-grid; place-items: center; min-width: 1.7rem; padding: 0.2rem 0.35rem; border-radius: 0.4rem; background: var(--accent-soft); color: var(--accent-strong); font-weight: 700; font-variant-numeric: tabular-nums; }
 .score-cell small { display: block; margin-top: 0.25rem; color: var(--muted); white-space: nowrap; font-size: 0.65rem; }
 .numeric { font-variant-numeric: tabular-nums; }
+.bucket { display: inline-flex; align-items: stretch; gap: 0.25rem; flex-wrap: wrap; }
+.bucket-chip { display: inline-flex; align-items: center; overflow: hidden; border: 1px solid var(--border); border-radius: 0.45rem; background: #fbfdfc; }
+.bucket-value { padding: 0.2rem 0.6rem; font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text); }
+.muted { color: var(--muted); }
 .date-cell { white-space: nowrap; color: var(--muted); font-size: 0.78rem; }
 .actions-col { text-align: right; white-space: nowrap; }
 .history { background: #fafbfa; color: var(--inactive-text); }

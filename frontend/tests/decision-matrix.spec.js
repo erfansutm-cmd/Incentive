@@ -8,7 +8,7 @@ test.afterEach(async ({ page }) => {
 const groupButton = (page, name = 'Group A') => page.getByRole('button', { name: `City group ${name}`, exact: true })
 const groupPanel = (page, name = 'Group A') => page.getByRole('region', { name: `${name} decision matrix`, exact: true })
 const scoreInput = (dialog) => dialog.getByRole('spinbutton', { name: /^Score/ })
-const bucketInput = (dialog, index) => dialog.getByRole('spinbutton', { name: `Control bucket value ${index}`, exact: true })
+const bucketInput = (dialog, index) => dialog.getByRole('spinbutton', { name: `Control bucket group ${index}`, exact: true })
 async function openGroup(page, name = 'Group A') {
   const button = groupButton(page, name)
   if (await button.getAttribute('aria-expanded') !== 'true') await button.click()
@@ -264,7 +264,9 @@ test('control bucket is null or exactly three float inputs, never a partial list
   await dialog.getByRole('button', { name: 'Save step', exact: true }).click()
   await expect(dialog).toBeHidden()
   expect(state.writes[0].payload.control_bucket).toEqual([0.125, 0, -2.5])
-  await expect(page.getByRole('region', { name: 'Delivery active steps', exact: true }).getByRole('cell', { name: '[0.125, 0, -2.5]', exact: true })).toBeVisible()
+  const bucketCell = page.getByRole('region', { name: 'Delivery active steps', exact: true }).locator('.bucket')
+  await expect(bucketCell).toBeVisible()
+  await expect(bucketCell.locator('.bucket-value')).toHaveText(['0.125', '0', '-2.5'])
   await groupPanel(page).getByRole('button', { name: '+ Add step', exact: true }).click()
   dialog = page.getByRole('dialog')
   await bucketInput(dialog, 1).fill('1.1')
@@ -531,4 +533,31 @@ test('typing a database key selects its friendly label without creating a custom
   await expect(dialog).toBeHidden()
   expect(state.writes[0].payload.score_type).toBe('order_level_increase')
   await expect(groupPanel(page).getByRole('region', { name: 'Order Level Increase active steps', exact: true })).toBeVisible()
+})
+
+test('each incentive type opens a dedicated page scoped to that type with full actions', async ({ page }) => {
+  await mockDecisionMatrix(page, { rows: [
+    makeStep(),
+    makeStep({ id: 2, score: 2, score_type: 'Weather' }),
+    makeStep({ id: 3, score: 3, deactivated_at: '2026-09-08T13:00:00' }),
+    makeStep({ id: 4, incentive_type: 2, score_type: 'Weather' }),
+  ] })
+  await page.goto('/decision-matrix')
+  await openGroup(page)
+  const openLink = groupPanel(page).getByRole('link', { name: 'Open DAILY in a new tab', exact: true })
+  await expect(openLink).toBeVisible()
+  await expect(openLink).toHaveAttribute('target', '_blank')
+  await expect(openLink).toHaveAttribute('href', '/decision-matrix/type?city_group=Group%20A&type=1')
+  // The dedicated page shows the type + city group and only that type's scores.
+  await page.goto('/decision-matrix/type?city_group=Group%20A&type=1')
+  await expect(page.getByRole('heading', { name: 'DAILY #1', exact: true })).toBeVisible()
+  await expect(page.getByText('City group Group A', { exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Delivery active steps', exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Weather active steps', exact: true })).toBeVisible()
+  // No other incentive type leaks into this page.
+  await expect(page.getByRole('button', { name: /WEEKLY #/ })).toHaveCount(0)
+  // All the first-page actions are available: add score type and add step.
+  await expect(page.getByRole('button', { name: '+ Add score type', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '+ Add step', exact: true }).first().click()
+  await expect(page.getByRole('dialog')).toBeVisible()
 })
