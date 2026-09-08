@@ -6,6 +6,7 @@
         <router-link to="/">Home</router-link>
         <router-link to="/cities">Cities</router-link>
         <router-link to="/business-entities">Business Entities</router-link>
+        <router-link to="/decision-matrix">Decision Matrix</router-link>
       </nav>
     </header>
     <main class="page" :class="{ 'page-wide': $route.meta.wide }">
@@ -208,6 +209,27 @@ button {
 }
 .banner.error p {
   margin: 0.25rem 0 0.75rem;
+}
+
+/* Keep the navigation usable as new sections are added. */
+@media (max-width: 760px) {
+  .topbar {
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    padding: 0.7rem 1rem;
+  }
+  .topbar nav {
+    width: 100%;
+    flex-wrap: wrap;
+    padding-bottom: 0.1rem;
+  }
+  .topbar nav a {
+    flex-shrink: 0;
+    white-space: nowrap;
+    padding: 0.4rem 0.7rem;
+    font-size: 0.82rem;
+  }
+  .page { padding: 1.5rem 1rem 2.5rem; }
 }
 
 /* modal overlay + popups */

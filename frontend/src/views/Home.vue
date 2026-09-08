@@ -37,6 +37,7 @@ onMounted(async () => {
     <div class="links">
       <router-link to="/cities" class="btn btn-primary">Go to Cities →</router-link>
       <router-link to="/business-entities" class="btn btn-ghost">Business Entities →</router-link>
+      <router-link to="/decision-matrix" class="btn btn-ghost">Decision Matrix →</router-link>
     </div>
   </div>
 </template>

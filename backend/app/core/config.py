@@ -10,6 +10,10 @@ DB_NAME = os.getenv("DB_NAME", "")
 # Table names
 DB_CITIES_TABLE = os.getenv("DB_CITIES_TABLE", "cities")
 DB_CITY_MAPPING_TABLE = os.getenv("DB_CITY_MAPPING_TABLE", "mafsho/city_mapping")
+DB_ACTIVE_CITY_TABLE = os.getenv("DB_ACTIVE_CITY_TABLE", "incentive/incentive_active_city")
+DB_DECISION_MATRIX_TABLE = os.getenv(
+    "DB_DECISION_MATRIX_TABLE", "incentive/incentive_decision_matrix"
+)
 
 # Weather API
 WEATHER_API_URL = os.getenv("weather_ENDPOINT", "http://172.21.88.66:5000/severity-forecast")

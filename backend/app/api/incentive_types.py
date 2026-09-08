@@ -11,7 +11,8 @@ from ..core.database import engine, quote_table
 # Lookup table for plan-mapping types:
 #   id | name | created_at
 # Used by the Cities slide-down panel to map incentive_type_id -> name and to
-# fill the "Add plan" type dropdown. Configured like the other tables:
+# fill the "Add plan" type dropdown, and by the Decision Matrix type selector.
+# Configured like the other tables:
 # "table" or "schema/table".
 TABLE_NAME = os.getenv("DB_INCENTIVE_TYPE_TABLE", "mafsho/incentive_type")
 TABLE_SQL = quote_table(TABLE_NAME)  # quoted, may be "schema/table"

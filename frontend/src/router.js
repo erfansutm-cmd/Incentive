@@ -3,6 +3,7 @@ import Home from './views/Home.vue'
 import Cities from './views/Cities.vue'
 import BusinessEntities from './views/BusinessEntities.vue'
 import PlanDetail from './views/PlanDetail.vue'
+import DecisionMatrix from './views/DecisionMatrix.vue'
 
 export default createRouter({
   history: createWebHistory(),
@@ -10,6 +11,12 @@ export default createRouter({
     { path: '/', name: 'home', component: Home },
     { path: '/cities', name: 'cities', component: Cities },
     { path: '/plans/:id', name: 'plan-detail', component: PlanDetail },
+    {
+      path: '/decision-matrix',
+      name: 'decision-matrix',
+      component: DecisionMatrix,
+      meta: { wide: true },
+    },
     {
       path: '/business-entities',
       name: 'business-entities',
