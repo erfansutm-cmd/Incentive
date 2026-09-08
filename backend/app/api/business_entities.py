@@ -63,8 +63,27 @@ def _primary_key(cols):
     return None
 
 
+# Columns that should always be treated as JSON arrays even if their
+# MySQL type is not JSON (e.g. TEXT/VARCHAR storing "[1,2]" or legacy data).
+ARRAY_COLUMNS = {
+    "include_customer_id",
+    "exclude_customer_id",
+    "include_delivery_category",
+    "exclude_delivery_category",
+    "main_customer_id",
+}
+CUSTOMER_ID_COLUMNS = {
+    "include_customer_id",
+    "exclude_customer_id",
+    "main_customer_id",
+}
+
+
 def _is_json_column(col):
-    """True when a SHOW COLUMNS row describes a MySQL JSON column."""
+    """True when a SHOW COLUMNS row describes a MySQL JSON column or a known array column."""
+    field = col.get("Field") or ""
+    if field in ARRAY_COLUMNS:
+        return True
     return "json" in (col.get("Type") or "").lower()
 
 
@@ -82,25 +101,95 @@ def _column_meta(col):
 
 
 def _to_array(value):
-    """Coerce a stored JSON value into a plain list (JSON or comma string)."""
+    """Coerce a stored JSON value into a plain list (JSON or comma string).
+
+    Handles a few real-world quirks seen in this table:
+    - Proper JSON arrays: \"[2, 11653225]\" -> [2, 11653225]
+    - Double-encoded JSON: '\"[2, 11653225]\"' -> [2, 11653225]
+    - Single numbers: \"15300196\" / 15300196 -> [15300196]
+    - Comma strings and bracket-wrapped strings as fallback.
+    """
     if value is None:
         return []
     if isinstance(value, (list, tuple)):
         return list(value)
     if isinstance(value, bytes):
         value = value.decode("utf-8", errors="replace")
+
+    if isinstance(value, (int, float)):
+        return [value]
+
     if isinstance(value, str):
-        value = value.strip()
-        if value in ("", "null"):
+        v = value.strip()
+        if v in ("", "null", "NULL"):
             return []
-        try:
-            parsed = json.loads(value)
-        except (ValueError, TypeError):
-            parsed = None
-        if isinstance(parsed, list):
-            return parsed
-        # Fallback: treat as a comma-separated list of plain values.
-        return [v for v in (s.strip() for s in value.split(",")) if v]
+
+        # Try up to 3 levels of JSON decoding to unwind double-encoded values
+        # e.g. "\"[2, 11653225]\"" -> "[2, 11653225]" -> [2, 11653225]
+        cur = v
+        for _ in range(3):
+            try:
+                parsed = json.loads(cur)
+            except (ValueError, TypeError):
+                break
+
+            if isinstance(parsed, list):
+                return parsed
+            if isinstance(parsed, (int, float)):
+                return [parsed]
+            if isinstance(parsed, str):
+                s = parsed.strip()
+                if s in ("", "null", "NULL"):
+                    return []
+                # If the string itself is a JSON array, loop again to decode it
+                # If it's a plain number string, convert it
+                if s.startswith("[") and s.endswith("]"):
+                    cur = s
+                    continue
+                # numeric string like "15300196"
+                if s.lstrip("-").isdigit():
+                    try:
+                        return [int(s)]
+                    except ValueError:
+                        pass
+                # Check if it's a comma list inside a string
+                cur = s
+                continue
+            # dict or other -> wrap
+            if parsed is not None:
+                return [parsed]
+            break
+
+        # Fallback: strip surrounding brackets/quotes and split by comma
+        # Handles: "[2, 11653225]", "2, 11653225", "\"2\"", etc.
+        tmp = cur
+        # Remove outer brackets if present
+        if tmp.startswith("[") and tmp.endswith("]"):
+            tmp = tmp[1:-1]
+        tmp = tmp.strip()
+        if not tmp:
+            return []
+
+        parts = [p.strip().strip('"').strip("'").strip() for p in tmp.split(",")]
+        parts = [p for p in parts if p not in ("", "null", "NULL")]
+
+        out = []
+        for p in parts:
+            # Try to preserve numbers as numbers
+            try:
+                if p.lstrip("-").isdigit():
+                    out.append(int(p))
+                    continue
+                # float?
+                fv = float(p)
+                # if it's integer-like, keep int version? keep float
+                out.append(fv)
+                continue
+            except ValueError:
+                pass
+            out.append(p)
+        return out
+
     return [value]
 
 
