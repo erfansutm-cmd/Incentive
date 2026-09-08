@@ -1,5 +1,7 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+
+import { scoreTypeLabel, scoreTypeOptions, scoreTypeValue } from '../lib/decisionMatrixScoreTypes'
 
 const props = defineProps({
   id: { type: String, required: true },
@@ -9,7 +11,7 @@ const props = defineProps({
   disabled: { type: Boolean, default: false },
 })
 const emit = defineEmits(['update:modelValue'])
-const suggestions = ['Performance', 'Weather', 'Order Level Increase']
+const text = ref(scoreTypeLabel(props.modelValue))
 const root = ref(null)
 const input = ref(null)
 const open = ref(false)
@@ -17,11 +19,11 @@ const filter = ref('')
 const highlighted = ref(-1)
 const options = computed(() => {
   const query = filter.value.trim().toLowerCase()
-  const items = suggestions
-    .filter((name) => name.toLowerCase().includes(query))
-    .map((name) => ({ value: name, label: name, custom: false }))
-  const custom = props.modelValue.trim()
-  if (custom && !suggestions.some((name) => name.toLowerCase() === custom.toLowerCase())) {
+  const items = scoreTypeOptions
+    .filter((option) => option.label.toLowerCase().includes(query) || option.value.includes(query))
+    .map((option) => ({ ...option, custom: false }))
+  const custom = text.value.trim()
+  if (custom && !scoreTypeOptions.some((option) => option.value === scoreTypeValue(custom))) {
     items.push({ value: custom, label: `Use “${custom}”`, custom: true })
   }
   return items
@@ -31,6 +33,12 @@ const activeDescendant = computed(() =>
   open.value && highlighted.value >= 0 && options.value[highlighted.value]
     ? `${listId.value}-${highlighted.value}` : undefined
 )
+
+// Keep typing/cursor position intact when our own input updates the model.
+// External values and selected options are displayed using their UI captions.
+watch(() => props.modelValue, (value) => {
+  if (scoreTypeValue(text.value) !== value) text.value = scoreTypeLabel(value)
+})
 
 function close() {
   open.value = false
@@ -50,12 +58,14 @@ function toggle() {
   }
 }
 function change(event) {
-  filter.value = event.target.value
-  emit('update:modelValue', event.target.value)
+  text.value = event.target.value
+  filter.value = text.value
+  emit('update:modelValue', scoreTypeValue(text.value))
   highlighted.value = -1
   open.value = true
 }
 function choose(option) {
+  text.value = option.custom ? option.value : option.label
   emit('update:modelValue', option.value)
   filter.value = ''
   close()
@@ -94,7 +104,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', outside))
   <div ref="root" class="score-picker">
     <div class="input-wrap">
       <input
-        :id="id" ref="input" :value="modelValue" type="text" role="combobox" required
+        :id="id" ref="input" :value="text" type="text" role="combobox" required
         :maxlength="maxlength" :autofocus="autofocus" :disabled="disabled"
         :aria-expanded="open" :aria-controls="listId" :aria-activedescendant="activeDescendant"
         aria-autocomplete="list" aria-haspopup="listbox" autocomplete="off"

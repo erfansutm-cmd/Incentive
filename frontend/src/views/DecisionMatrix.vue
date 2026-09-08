@@ -4,6 +4,7 @@ import DecisionMatrixStepForm from '../components/DecisionMatrixStepForm.vue'
 import DecisionMatrixStepsTable from '../components/DecisionMatrixStepsTable.vue'
 import ModalDialog from '../components/ModalDialog.vue'
 import { requestJson } from '../lib/api'
+import { scoreTypeLabel, scoreTypeValue } from '../lib/decisionMatrixScoreTypes'
 
 const groups = ref([])
 const groupsLoading = ref(true)
@@ -60,7 +61,7 @@ const typeNames = computed(() => {
 })
 const validTypeIds = computed(() => new Set(types.value.map((type) => String(type.id))))
 function seriesKey(typeId, scoreType) {
-  return JSON.stringify([String(typeId), String(scoreType)])
+  return JSON.stringify([String(typeId), scoreTypeValue(scoreType)])
 }
 function isActive(row) {
   return row.deactivated_at === null || row.deactivated_at === undefined
@@ -387,7 +388,7 @@ onBeforeUnmount(() => {
                           <p v-if="!type.canAdd && !typesLoading" class="notice">
                             This incentive type is not available in the reference lookup. Active steps can be deactivated, but no new steps can be added.
                           </p>
-                          <section v-for="(item, scoreIndex) in type.scoreTypes" :key="item.key" class="score-card">
+                          <section v-for="(item, scoreIndex) in type.scoreTypes" :key="item.key" class="score-card" :aria-label="`${scoreTypeLabel(item.score_type)} score type`">
                             <h4 class="accordion-heading">
                               <button
                                 class="accordion-trigger score-trigger"
@@ -395,7 +396,7 @@ onBeforeUnmount(() => {
                                 @click="toggleSet(openScores, item.key)"
                               >
                                 <span class="chevron" :class="{ open: openScores.has(item.key) }" aria-hidden="true">›</span>
-                                <span class="score-name">{{ item.score_type }}</span>
+                                <span class="score-name">{{ scoreTypeLabel(item.score_type) }}</span>
                                 <span class="counts">{{ item.active_count }} active <span v-if="item.deactivated_count">· {{ item.deactivated_count }} deactivated</span></span>
                               </button>
                             </h4>
@@ -403,17 +404,17 @@ onBeforeUnmount(() => {
                               <div class="section-toolbar step-toolbar">
                                 <h5 class="steps-heading">Active steps</h5>
                                 <button class="btn btn-primary btn-sm" :disabled="!type.canAdd || typesLoading" @click="openForm('step', type, item)">
-                                  + Add step ({{ item.next_score }})
+                                  + Add step
                                 </button>
                               </div>
                               <p v-if="!item.activeSteps.length" class="steps-empty">
                                 No active steps. Add a new step to start again.
                               </p>
                               <DecisionMatrixStepsTable
-                                v-else :steps="item.activeSteps" :label="`${item.score_type} active steps`"
+                                v-else :steps="item.activeSteps" :label="`${scoreTypeLabel(item.score_type)} active steps`"
                                 @deactivate="askDeactivate(type, item, $event)"
                               />
-                              <section v-if="item.deactivated_count" class="history-section" :aria-label="`${item.score_type} deactivated history`">
+                              <section v-if="item.deactivated_count" class="history-section" :aria-label="`${scoreTypeLabel(item.score_type)} deactivated history`">
                                 <div class="section-toolbar history-toolbar">
                                   <h5 class="steps-heading">Deactivated steps</h5>
                                   <button
@@ -423,7 +424,7 @@ onBeforeUnmount(() => {
                                 </div>
                                 <DecisionMatrixStepsTable
                                   v-if="historyShown.has(item.key)" :steps="item.deactivatedSteps"
-                                  :label="`${item.score_type} deactivated steps`" deactivated
+                                  :label="`${scoreTypeLabel(item.score_type)} deactivated steps`" deactivated
                                 />
                               </section>
                             </div>
@@ -451,7 +452,7 @@ onBeforeUnmount(() => {
     <ModalDialog v-if="deactivateTarget" title-id="deactivate-score-title" :busy="deactivating" @close="closeDeactivate">
       <h2 id="deactivate-score-title">Deactivate score {{ deactivateTarget.row.score }}?</h2>
       <p class="confirm-text">
-        Deactivate this step for <strong>{{ selectedGroup }} / {{ deactivateTarget.typeName }} / {{ deactivateTarget.scoreType }}</strong>?
+        Deactivate this step for <strong>{{ selectedGroup }} / {{ deactivateTarget.typeName }} / {{ scoreTypeLabel(deactivateTarget.scoreType) }}</strong>?
       </p>
       <p class="hint">It will be kept in the deactivated history. Other steps and their score numbers will not change.</p>
       <p v-if="deactivateError" class="banner error" role="alert">{{ deactivateError }}</p>

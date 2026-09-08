@@ -342,6 +342,56 @@ class DecisionMatrixAPITests(unittest.TestCase):
         self.assertEqual(self.client.post(f"{BASE}/{row['id']}/deactivate").status_code, 409)
         self.assertIsNone(self.read()["rows"][0]["deactivated_at"])
 
+    def test_preset_labels_and_keys_save_canonical_database_values(self):
+        for name, expected in [
+            ("Performance", "performance"), ("PERFORMANCE", "performance"),
+            ("weather", "weather"), ("Weather", "weather"),
+            ("Order Level Increase", "order_level_increase"),
+            ("order_level_increase", "order_level_increase"),
+        ]:
+            with self.subTest(name=name):
+                response = self.add(score_type=name)
+                self.assertEqual(response.status_code, 200, response.text)
+                row = response.json()["row"]
+                self.assertEqual(row["score_type"], expected)
+                with self.engine.connect() as conn:
+                    stored = conn.execute(text(
+                        "SELECT score_type FROM incentive.incentive_decision_matrix WHERE id = :id"
+                    ), {"id": row["id"]}).scalar()
+                self.assertEqual(stored, expected)
+        self.assertEqual({item["score_type"] for item in self.read()["series"]}, {
+            "performance", "weather", "order_level_increase",
+        })
+
+    def test_legacy_preset_labels_share_scores_without_rewriting_history(self):
+        legacy = self.add(score_type="order_level_increase", score=5).json()["row"]
+        # Simulate a row saved by an older version; this only touches the test DB.
+        with self.engine.begin() as conn:
+            conn.execute(text(
+                "UPDATE incentive.incentive_decision_matrix SET score_type = 'Order Level Increase' WHERE id = :id"
+            ), {"id": legacy["id"]})
+        self.assertEqual(self.add(score_type="order_level_increase").json()["row"]["score"], 6)
+        self.assertEqual(self.add(score_type="Order Level Increase").json()["row"]["score"], 7)
+        self.assertEqual(self.add(score_type="order_level_increase", score=5).status_code, 409)
+        self.client.post(f"{BASE}/{legacy['id']}/deactivate")
+        data = self.read(include_deactivated=True)
+        self.assertEqual(data["series"], [{
+            "incentive_type": 1, "score_type": "order_level_increase", "next_score": 8,
+            "active_count": 2, "deactivated_count": 1,
+        }])
+        self.assertTrue(all(row["score_type"] == "order_level_increase" for row in data["rows"]))
+        with self.engine.connect() as conn:
+            stored = conn.execute(text(
+                "SELECT score_type FROM incentive.incentive_decision_matrix WHERE id = :id"
+            ), {"id": legacy["id"]}).scalar()
+        self.assertEqual(stored, "Order Level Increase")
+
+    def test_custom_score_names_are_not_reformatted(self):
+        for name in ("Customer Experience", "Some_Custom_Name"):
+            response = self.add(score_type=name)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["row"]["score_type"], name)
+
     def test_group_query_is_required_and_parameterized(self):
         self.assertEqual(self.client.get(BASE).status_code, 422)
         self.assertEqual(self.client.get(BASE, params={"city_group": "  "}).status_code, 400)

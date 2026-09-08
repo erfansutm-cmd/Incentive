@@ -29,6 +29,16 @@ COLUMNS = (
 )
 FLOAT_COLUMNS = ("target_increase", "pr_increase")
 VALUE_COLUMNS = (*FLOAT_COLUMNS, "control_bucket")
+SCORE_TYPE_LABELS = {
+    "performance": "Performance",
+    "weather": "Weather",
+    "order_level_increase": "Order Level Increase",
+}
+SCORE_TYPE_ALIASES = {
+    alias.lower(): value
+    for value, label in SCORE_TYPE_LABELS.items()
+    for alias in (value, label)
+}
 # History still defines the series, but only active rows determine its next score.
 ACTIVE_MAX_SCORE = "COALESCE(MAX(CASE WHEN `deactivated_at` IS NULL THEN `score` END), 0)"
 # MySQL named locks are connection-scoped (not transaction-scoped). Serialize
@@ -59,8 +69,15 @@ def _jsonable(value):
     return value
 
 
+def _score_type_value(value):
+    # Only the known presets have storage keys; never snake-case custom names.
+    return SCORE_TYPE_ALIASES.get(value.strip().lower(), value) if isinstance(value, str) else value
+
+
 def _row_json(row):
     result = {k: _jsonable(v) for k, v in row.items()}
+    if "score_type" in result:
+        result["score_type"] = _score_type_value(result["score_type"])
     # PyMySQL returns JSON/TEXT columns as strings. Keep legacy scalar data
     # readable, but decode the new list representation for the UI.
     bucket = result.get("control_bucket")
@@ -285,16 +302,20 @@ def list_steps(
                 f"FROM {TABLE_SQL} WHERE `city_group` = :city_group "
                 "GROUP BY `incentive_type`, `score_type` ORDER BY `incentive_type`, `score_type`"
             ), params).mappings()
-            series_data = [
-                {
-                    "incentive_type": _jsonable(s["incentive_type"]),
-                    "score_type": _jsonable(s["score_type"]),
-                    "next_score": int(s["next_score"]),
-                    "active_count": int(s["active_count"]),
-                    "deactivated_count": int(s["deactivated_count"]),
-                }
-                for s in series
-            ]
+            # Label-spelled legacy presets and their storage keys represent the
+            # same series. Merge metadata without rewriting historical rows.
+            grouped = {}
+            for s in series:
+                score_type = _score_type_value(_jsonable(s["score_type"]))
+                key = (_jsonable(s["incentive_type"]), score_type)
+                item = grouped.setdefault(key, {
+                    "incentive_type": key[0], "score_type": score_type,
+                    "next_score": 1, "active_count": 0, "deactivated_count": 0,
+                })
+                item["next_score"] = max(item["next_score"], int(s["next_score"]))
+                item["active_count"] += int(s["active_count"])
+                item["deactivated_count"] += int(s["deactivated_count"])
+            series_data = list(grouped.values())
             active_filter = "" if include_deactivated else " AND m.`deactivated_at` IS NULL"
             rows = conn.execute(text(
                 f"SELECT m.*, t.`name` AS incentive_type_name FROM {TABLE_SQL} m "
@@ -328,7 +349,7 @@ def add_step(payload: dict):
             raise MatrixError(f"Fields cannot be set: {', '.join(sorted(unknown))}.")
         city_group = _required_text(payload.get("city_group"), "city_group")
         type_id = _positive_integer(payload.get("incentive_type"), "incentive_type")
-        score_type = _required_text(payload.get("score_type"), "score_type")
+        score_type = _score_type_value(_required_text(payload.get("score_type"), "score_type"))
         requested_score = (
             _positive_integer(payload["score"], "score") if "score" in payload else None
         )
@@ -355,19 +376,23 @@ def add_step(payload: dict):
                 raise MatrixError("Select an existing incentive type from mafsho.incentive_type.")
             params["incentive_type"] = incentive_type[0]
 
-            previous = conn.execute(text(
+            score_filter = "`score_type` = :score_type"
+            if score_type in SCORE_TYPE_LABELS:
+                params["score_type_label"] = SCORE_TYPE_LABELS[score_type].lower()
+                score_filter = "LOWER(TRIM(`score_type`)) IN (:score_type, :score_type_label)"
+            previous = list(conn.execute(text(
                 f"SELECT `score_type`, {ACTIVE_MAX_SCORE} AS max_score FROM {TABLE_SQL} "
                 "WHERE `city_group` = :city_group AND `incentive_type` = :incentive_type "
-                "AND `score_type` = :score_type GROUP BY `score_type`"
-            ), params).mappings().first()
-            next_score = int(previous["max_score"]) + 1 if previous else 1
-            if previous:
-                # Preserve the existing spelling under case-insensitive DB collations.
-                params["score_type"] = previous["score_type"]
+                f"AND {score_filter} GROUP BY `score_type`"
+            ), params).mappings())
+            next_score = max((int(item["max_score"]) for item in previous), default=0) + 1
+            if previous and score_type not in SCORE_TYPE_LABELS:
+                # Custom names keep their existing spelling under CI collations.
+                params["score_type"] = previous[0]["score_type"]
             params["score"] = requested_score if requested_score is not None else next_score
             existing = conn.execute(text(
                 f"SELECT `id` FROM {TABLE_SQL} WHERE `city_group` = :city_group "
-                "AND `incentive_type` = :incentive_type AND `score_type` = :score_type "
+                f"AND `incentive_type` = :incentive_type AND {score_filter} "
                 "AND `score` = :score AND `deactivated_at` IS NULL LIMIT 1"
             ), params).first()
             if existing is not None:

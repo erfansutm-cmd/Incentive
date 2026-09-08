@@ -1,4 +1,9 @@
 // Test-only API fixtures. All /api requests are intercepted; no real DB writes.
+const scoreTypes = new Map([
+  ['performance', 'performance'], ['weather', 'weather'],
+  ['order_level_increase', 'order_level_increase'], ['order level increase', 'order_level_increase'],
+])
+const scoreTypeValue = (name) => scoreTypes.get(String(name).trim().toLowerCase()) ?? name
 export const columns = [
   { name: 'id', type: 'bigint unsigned', key: 'PRI', extra: 'auto_increment' },
   { name: 'incentive_type', type: 'int' },
@@ -48,6 +53,7 @@ export async function mockDecisionMatrix(page, options = {}) {
       if (state.groupDelays[cityGroup]) await state.groupDelays[cityGroup]
       if (state.matrixError) return fail(state.matrixError)
       const allRows = state.rows.filter((row) => row.city_group === cityGroup)
+        .map((row) => ({ ...row, score_type: scoreTypeValue(row.score_type) }))
       const grouped = new Map()
       for (const row of allRows) {
         const key = JSON.stringify([row.incentive_type, row.score_type])
@@ -72,8 +78,9 @@ export async function mockDecisionMatrix(page, options = {}) {
       const payload = request.postDataJSON()
       state.writes.push({ action: 'add', payload })
       if (state.saveError) return fail(state.saveError)
+      const scoreType = scoreTypeValue(payload.score_type)
       const existing = state.rows.filter((row) => row.city_group === payload.city_group &&
-        String(row.incentive_type) === String(payload.incentive_type) && row.score_type === payload.score_type && row.deactivated_at === null)
+        String(row.incentive_type) === String(payload.incentive_type) && scoreTypeValue(row.score_type) === scoreType && row.deactivated_at === null)
       const chosen = payload.score ?? Math.max(0, ...existing.map((row) => row.score)) + 1
       if (existing.some((row) => row.score === chosen)) return fail(`Score ${chosen} is already active for this score type. Choose another score.`, 409)
       const float = (value) => typeof value === 'number' && Number.isFinite(value)
@@ -82,7 +89,7 @@ export async function mockDecisionMatrix(page, options = {}) {
         return fail('Control bucket must be null or three floats.', 400)
       }
       const row = makeStep({
-        ...payload, id: Math.max(0, ...state.rows.map((row) => row.id)) + 1,
+        ...payload, score_type: scoreType, id: Math.max(0, ...state.rows.map((row) => row.id)) + 1,
         incentive_type: Number(payload.incentive_type), score: chosen,
         target_increase: Number(payload.target_increase), pr_increase: Number(payload.pr_increase),
         control_bucket: payload.control_bucket === null ? null : payload.control_bucket,

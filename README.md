@@ -170,7 +170,8 @@ The hierarchy is **City group → Incentive type → Score type → Score steps*
    list; arrow keys and Enter choose an option; Escape closes the dropdown before
    closing the dialog. The table holds one row per step, so creating a type also
    saves its first step rather than an incomplete placeholder row.
-4. **Add step** suggests `MAX(active score) + 1` in the selected city group,
+4. The button reads **+ Add step**, without a number in parentheses. Inside the
+   form, **Score** suggests `MAX(active score) + 1` in the selected city group,
    incentive type, and score type (or **1** if no steps are active). The **Score
    field is editable**: choose any unused positive whole number, including gaps
    or a previously deactivated score. The API rejects an already-active score
@@ -193,6 +194,20 @@ The hierarchy is **City group → Incentive type → Score type → Score steps*
    steps. Neither table has a Status column. Deactivation does not delete or
    renumber old rows; a new row can reuse a deactivated score without changing
    its history.
+
+Preset score types use fixed database/API values with separate UI captions:
+
+| Database/API value | UI label |
+|--------------------|----------|
+| `performance` | Performance |
+| `weather` | Weather |
+| `order_level_increase` | Order Level Increase |
+
+The dropdown, score-type panels, step form, and deactivation confirmation use the
+friendly labels. New preset rows save the canonical database values, whether a
+preset is selected or typed. Custom score-type names retain their spelling. Older
+label-spelled presets are recognized as aliases for reads, score suggestions, and
+duplicate detection without rewriting any existing history.
 
 `id`, `created_at`, and `deactivated_at` are server-managed. The existing matrix
 should have an auto-increment `id`, a positive-integer `score`, and nullable
@@ -236,7 +251,7 @@ Example creation payload (the group and incentive ID must exist in their lookups
 {
   "city_group": "Top 4",
   "incentive_type": 1,
-  "score_type": "Performance",
+  "score_type": "performance",
   "score": 4,
   "target_increase": 0.15,
   "pr_increase": 0.05,
@@ -255,7 +270,7 @@ change indexes or overwrite archived rows to achieve this.
 ### Decision Matrix tests
 
 Backend tests run against an isolated SQLite fixture with attached schemas;
-MySQL column introspection and lock functions are stubbed. They cover sequence
+MySQL column introspection and lock functions are stubbed. They cover preset storage/display names,
 suggested and custom scores, active-score uniqueness, lookup validation,
 required floats, JSON triple round-trips, historical score reuse, deactivation,
 and the named-lock lifecycle. They do **not** connect to the configured database.

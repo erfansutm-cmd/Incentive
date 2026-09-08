@@ -2,6 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import ModalDialog from './ModalDialog.vue'
 import ScoreTypeSelect from './ScoreTypeSelect.vue'
+import { scoreTypeLabel, scoreTypeValue } from '../lib/decisionMatrixScoreTypes'
 
 const props = defineProps({
   context: { type: Object, required: true },
@@ -19,7 +20,7 @@ const floatFields = [
 ]
 const form = reactive({
   incentive_type: props.context.incentiveType ?? '',
-  score_type: String(props.context.scoreType ?? ''),
+  score_type: scoreTypeValue(props.context.scoreType),
   score: String(props.context.nextScore ?? 1),
   target_increase: '',
   pr_increase: '',
@@ -35,7 +36,7 @@ const normalize = (value) => String(value ?? '').trim().toLowerCase()
 const activeSteps = computed(() => props.steps.filter((row) =>
   normalize(row.city_group) === normalize(props.context.cityGroup) &&
   String(row.incentive_type) === String(form.incentive_type) &&
-  normalize(row.score_type) === normalize(form.score_type) &&
+  normalize(scoreTypeValue(row.score_type)) === normalize(scoreTypeValue(form.score_type)) &&
   (row.deactivated_at === null || row.deactivated_at === undefined) &&
   Number.isFinite(Number(row.score)) && Number(row.score) > 0
 ))
@@ -47,7 +48,7 @@ const nearestStep = computed(() => {
   )[0] || null
 })
 const duplicateType = computed(() => props.context.mode === 'scoreType' &&
-  props.existingScoreTypes.some((name) => normalize(name) === normalize(form.score_type))
+  props.existingScoreTypes.some((name) => normalize(scoreTypeValue(name)) === normalize(scoreTypeValue(form.score_type)))
 )
 const scoreConflict = computed(() => validScore.value && activeSteps.value.some((row) => Number(row.score) === score.value))
 const bucketHasValues = computed(() => form.control_bucket.some((value) => String(value).trim() !== ''))
@@ -96,7 +97,7 @@ function submit() {
     const payload = {
       city_group: props.context.cityGroup,
       incentive_type: form.incentive_type,
-      score_type: form.score_type.trim(),
+      score_type: scoreTypeValue(form.score_type),
       score: score.value,
       target_increase: requiredFloat(form.target_increase, 'Target increase'),
       pr_increase: requiredFloat(form.pr_increase, 'PR increase'),
@@ -121,7 +122,7 @@ function submit() {
       <p class="context">
         <strong>{{ context.cityGroup }}</strong>
         <template v-if="context.typeName"> <span aria-hidden="true">/</span> {{ context.typeName }}</template>
-        <template v-if="context.mode === 'step'"> <span aria-hidden="true">/</span> {{ context.scoreType }}</template>
+        <template v-if="context.mode === 'step'"> <span aria-hidden="true">/</span> {{ scoreTypeLabel(context.scoreType) }}</template>
       </p>
       <p v-if="context.mode === 'type'" class="hint intro">Choose an incentive type and save its first score step.</p>
       <p v-else-if="context.mode === 'scoreType'" class="hint intro">Select or write a score type and set its first step.</p>
