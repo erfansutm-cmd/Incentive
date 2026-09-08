@@ -4,7 +4,6 @@ import Cities from './views/Cities.vue'
 import BusinessEntities from './views/BusinessEntities.vue'
 import PlanDetail from './views/PlanDetail.vue'
 import DecisionMatrix from './views/DecisionMatrix.vue'
-import DecisionMatrixTypeDetail from './views/DecisionMatrixTypeDetail.vue'
 
 export default createRouter({
   history: createWebHistory(),
@@ -16,12 +15,6 @@ export default createRouter({
       path: '/decision-matrix',
       name: 'decision-matrix',
       component: DecisionMatrix,
-      meta: { wide: true },
-    },
-    {
-      path: '/decision-matrix/type',
-      name: 'decision-matrix-type',
-      component: DecisionMatrixTypeDetail,
       meta: { wide: true },
     },
     {

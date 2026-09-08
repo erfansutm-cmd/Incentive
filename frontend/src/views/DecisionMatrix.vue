@@ -1,11 +1,13 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import DecisionMatrixStepForm from '../components/DecisionMatrixStepForm.vue'
 import DecisionMatrixStepsTable from '../components/DecisionMatrixStepsTable.vue'
 import ModalDialog from '../components/ModalDialog.vue'
 import { requestJson } from '../lib/api'
 import { scoreTypeLabel, scoreTypeValue } from '../lib/decisionMatrixScoreTypes'
 
+const route = useRoute()
 const groups = ref([])
 const groupsLoading = ref(true)
 const groupsError = ref('')
@@ -20,6 +22,7 @@ const columns = ref([])
 const matrixLoading = ref(false)
 const matrixError = ref('')
 const expandedType = ref(null)
+const focusType = ref(null)
 const openScores = ref(new Set())
 const historyShown = ref(new Set())
 const formContext = ref(null)
@@ -100,12 +103,18 @@ const availableTypes = computed(() => {
   const configured = new Set(configuredTypes.value.map((type) => type.id))
   return types.value.filter((type) => !configured.has(String(type.id)))
 })
-const activeCount = computed(() => configuredTypes.value.reduce((sum, type) => sum + type.activeCount, 0))
+// A single-type focus (opened via "Open ↗") shows the exact same structure but
+// only the chosen incentive type, so the view stays identical and uncluttered.
+const displayedTypes = computed(() => focusType.value
+  ? configuredTypes.value.filter((type) => String(type.id) === focusType.value)
+  : configuredTypes.value)
+const displayedScoreTypes = computed(() => displayedTypes.value.reduce((sum, type) => sum + type.scoreTypes.length, 0))
+const displayedActiveSteps = computed(() => displayedTypes.value.reduce((sum, type) => sum + type.activeCount, 0))
 function countLabel(count, noun) {
   return `${count} ${noun}${count === 1 ? '' : 's'}`
 }
 function typeDetailHref(group, typeId) {
-  return `/decision-matrix/type?city_group=${encodeURIComponent(group)}&type=${encodeURIComponent(String(typeId))}`
+  return `/decision-matrix?city_group=${encodeURIComponent(group)}&type=${encodeURIComponent(String(typeId))}`
 }
 const existingScoreTypes = computed(() => configuredTypes.value
   .find((type) => type.id === String(formContext.value?.incentiveType))
@@ -276,7 +285,34 @@ async function confirmDeactivate() {
   }
 }
 
-onMounted(() => { loadGroups(); loadTypes() })
+// When opened with ?city_group=…&type=… (the "Open ↗" link), preselect the
+// group and narrow the list to that single incentive type. The view, form and
+// add/deactivate flows are identical to the normal matrix — only scoped.
+function applyFocusFromQuery() {
+  const group = String(route.query.city_group ?? '').trim()
+  const type = String(route.query.type ?? '').trim()
+  if (!group) return
+  if (search.value.trim()) search.value = ''
+  focusType.value = type || null
+  if (selectedGroup.value !== group) {
+    selectedGroup.value = group
+    rows.value = []
+    series.value = []
+    columns.value = []
+    expandedType.value = type || null
+    openScores.value = new Set()
+    historyShown.value = new Set()
+    loadMatrix()
+  } else if (type) {
+    expandedType.value = type
+  }
+}
+
+onMounted(async () => {
+  loadTypes()
+  await loadGroups()
+  applyFocusFromQuery()
+})
 onBeforeUnmount(() => {
   disposed = true
   groupsController?.abort()
@@ -347,7 +383,7 @@ onBeforeUnmount(() => {
                     <div>
                       <h3>Incentive types</h3>
                       <p v-if="!matrixLoading && !matrixError" class="hint">
-                        {{ countLabel(configuredTypes.length, 'incentive type') }} · {{ countLabel(series.length, 'score type') }} · {{ countLabel(activeCount, 'active step') }}
+                        {{ countLabel(displayedTypes.length, 'incentive type') }} · {{ countLabel(displayedScoreTypes, 'score type') }} · {{ countLabel(displayedActiveSteps, 'active step') }}
                       </p>
                     </div>
                     <button class="btn btn-primary" :disabled="!canAddType" @click="openForm('type')">+ Add incentive type</button>
@@ -369,7 +405,7 @@ onBeforeUnmount(() => {
                       <p>Use <strong>Add incentive type</strong> to choose a type and create its first score step.</p>
                     </div>
                     <div v-else class="type-list">
-                      <section v-for="(type, typeIndex) in configuredTypes" :key="type.id" class="card type-card">
+                      <section v-for="(type, typeIndex) in displayedTypes" :key="type.id" class="card type-card">
                         <h3 class="accordion-heading type-heading">
                           <button
                             class="accordion-trigger type-trigger"
