@@ -329,3 +329,34 @@ async def update_business_entity(entity_id: str, payload: dict):
             content={"status": "error", "message": "Business entity not found (nothing updated)."},
         )
     return {"status": "ok", "message": "Business entity updated successfully."}
+
+
+@router.post("/{entity_id}/deactivate")
+async def deactivate_business_entity(entity_id: str):
+    try:
+        cols = _columns()
+        pk = _primary_key(cols)
+        fields = {c["Field"] for c in cols}
+        if not pk or "deactivated_at" not in fields:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "Table requires a primary key and deactivated_at to deactivate entities."},
+            )
+        assignments = "`deactivated_at` = CURRENT_TIMESTAMP"
+        if "updated_at" in fields:
+            assignments += ", `updated_at` = CURRENT_TIMESTAMP"
+        with engine.begin() as conn:
+            result = conn.execute(
+                text(f"UPDATE {TABLE_SQL} SET {assignments} "
+                     f"WHERE `{pk}` = :pk_value AND `deactivated_at` IS NULL"),
+                {"pk_value": entity_id},
+            )
+        if result.rowcount == 0:
+            return JSONResponse(
+                status_code=404,
+                content={"status": "error", "message": "Business entity not found or already deactivated."},
+            )
+    except Exception as exc:
+        status, msg = _failure(exc)
+        return JSONResponse(status_code=status, content={"status": "error", "message": msg})
+    return {"status": "ok", "message": "Business entity deactivated successfully."}

@@ -22,6 +22,9 @@ const editing = ref(null)
 const form = ref({})
 const saving = ref(false)
 
+const deactivateTarget = ref(null)
+const deactivating = ref(false)
+const deactivateError = ref('')
 const showDeactivated = ref(false)
 const managedColumns = new Set(['updated_at', 'deactivated_at'])
 const activeRows = computed(() => rows.value.filter((r) => r.deactivated_at == null))
@@ -281,6 +284,35 @@ async function save() {
   }
 }
 
+function askDeactivate(row) {
+  deactivateError.value = ''
+  deactivateTarget.value = row
+}
+
+function cancelDeactivate() {
+  if (!deactivating.value) deactivateTarget.value = null
+}
+
+async function confirmDeactivate() {
+  if (deactivating.value || !deactivateTarget.value) return
+  deactivating.value = true
+  deactivateError.value = ''
+  try {
+    const res = await fetch(`/api/business-entities/${encodeURIComponent(pkValue(deactivateTarget.value))}/deactivate`, {
+      method: 'POST',
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.message || data.detail || 'Deactivation failed')
+    deactivateTarget.value = null
+    showMessage('ok', data.message || 'Business entity deactivated.')
+    await load()
+  } catch (e) {
+    deactivateError.value = e.message
+  } finally {
+    deactivating.value = false
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -334,7 +366,6 @@ onMounted(load)
               >
                 {{ colLabel(c.name) }}
               </th>
-              <th>Status</th>
               <th class="actions-col">Actions</th>
             </tr>
           </thead>
@@ -358,15 +389,14 @@ onMounted(load)
                 </div>
                 <span v-else class="cell-text">{{ cellText(row, c) || '—' }}</span>
               </td>
-              <td><span class="badge" :class="row.deactivated_at == null ? 'active' : 'deactivated'">
-                {{ row.deactivated_at == null ? 'Active' : 'Deactivated' }}
-              </span></td>
               <td class="actions-col">
                 <button class="btn btn-ghost btn-sm" @click="openEdit(row)">Edit</button>
+                <button v-if="row.deactivated_at == null" class="btn btn-danger btn-sm"
+                  @click="askDeactivate(row)">Deactivate</button>
               </td>
             </tr>
             <tr v-if="filteredRows.length === 0">
-              <td class="empty" :colspan="tableColumns.length + 2">
+              <td class="empty" :colspan="tableColumns.length + 1">
                 <template v-if="rows.length === 0">No business entities yet — add the first one.</template>
                 <template v-else>No entities match your search and status filter.</template>
               </td>
@@ -416,29 +446,29 @@ onMounted(load)
       </div>
     </div>
 
+    <div v-if="deactivateTarget" class="overlay" @click.self="cancelDeactivate">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="deactivate-title">
+        <h2 id="deactivate-title">Deactivate business entity</h2>
+        <p class="confirm-text">
+          Deactivate <strong>{{ deactivateTarget.name }}</strong>
+          <em v-if="deactivateTarget.fa_name"> ({{ deactivateTarget.fa_name }})</em>?
+          It will move to the deactivated list. The entity will not be deleted.
+        </p>
+        <p v-if="deactivateError" role="alert">{{ deactivateError }}</p>
+        <div class="actions">
+          <button class="btn btn-ghost" :disabled="deactivating" @click="cancelDeactivate">Cancel</button>
+          <button class="btn btn-danger" :disabled="deactivating" @click="confirmDeactivate">
+            {{ deactivating ? 'Deactivating…' : 'Deactivate' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="message" class="toast" :class="message.type">{{ message.text }}</div>
   </div>
 </template>
 
 <style scoped>
-.badge {
-  display: inline-block;
-  padding: 0.12rem 0.55rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 700;
-  white-space: nowrap;
-}
-.badge.active {
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-}
-.badge.deactivated {
-  background: #eceff0;
-  color: #687876;
-}
-
-
 .entity-counts { font-size: 0.82rem; color: var(--muted); }
 .is-deactivated td { color: var(--muted); }
 
@@ -522,14 +552,14 @@ onMounted(load)
   white-space: nowrap;
 }
 
-/* === NO HORIZONTAL SLIDE + ALIGNMENT === */
+/* Wrap full labels and values; scroll on narrow screens rather than clip. */
 .table-scroll {
   width: 100%;
-  overflow-x: hidden;
+  overflow-x: auto;
 }
 table {
   width: 100%;
-  max-width: 100%;
+  min-width: 1100px;
   table-layout: fixed;
   border-collapse: collapse;
 }
@@ -545,9 +575,8 @@ thead th {
   text-transform: uppercase;
   letter-spacing: 0.03em;
   border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
   vertical-align: middle;
 }
 
@@ -598,11 +627,10 @@ tbody tr:hover {
   border-radius: 999px;
   font-size: 0.76rem;
   font-weight: 600;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
   line-height: 1.3;
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
   background: var(--accent-soft);
   color: var(--accent-strong);
   border: 1px solid #cfe3d9;
@@ -610,9 +638,9 @@ tbody tr:hover {
 
 /* Actions column: fixed width, right-aligned with proper spacing */
 .actions-col {
-  width: 132px;
-  min-width: 132px;
-  max-width: 132px;
+  width: 180px;
+  min-width: 180px;
+  max-width: 180px;
   text-align: right;
   white-space: nowrap;
   vertical-align: middle;
@@ -624,7 +652,7 @@ tbody tr:hover {
   font-size: 0.78rem;
   vertical-align: middle;
 }
-/* delete button needs space to the left */
+/* Separate the edit and deactivate actions. */
 .actions-col .btn + .btn {
   margin-left: 0.75rem;
 }
@@ -643,9 +671,9 @@ tbody tr:hover {
     padding: 0.12rem 0.45rem;
   }
   .actions-col {
-    width: 124px;
-    min-width: 124px;
-    max-width: 124px;
+    width: 180px;
+    min-width: 180px;
+    max-width: 180px;
     padding-right: 0.7rem;
   }
   .actions-col .btn + .btn {
