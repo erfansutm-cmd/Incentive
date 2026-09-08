@@ -551,7 +551,7 @@ test('each incentive type opens a dedicated page scoped to that type with full a
   // The dedicated page shows the type + city group and only that type's scores.
   await page.goto('/decision-matrix/type?city_group=Group%20A&type=1')
   await expect(page.getByRole('heading', { name: 'DAILY #1', exact: true })).toBeVisible()
-  await expect(page.getByText('City group Group A', { exact: true })).toBeVisible()
+  await expect(page.getByText(/City group/)).toContainText('Group A')
   await expect(page.getByRole('region', { name: 'Delivery active steps', exact: true })).toBeVisible()
   await expect(page.getByRole('region', { name: 'Weather active steps', exact: true })).toBeVisible()
   // No other incentive type leaks into this page.

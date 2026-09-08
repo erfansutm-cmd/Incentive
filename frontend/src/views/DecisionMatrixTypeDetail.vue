@@ -123,7 +123,7 @@ function openScoreTypeForm() {
   formError.value = ''
   formContext.value = {
     mode: 'scoreType', cityGroup: cityGroup.value,
-    incentiveType: typeId.value, typeName: typeName.value,
+    incentiveType: Number(typeId.value), typeName: typeName.value,
     scoreType: undefined, nextScore: 1,
   }
 }
@@ -131,7 +131,7 @@ function openStepForm(item) {
   formError.value = ''
   formContext.value = {
     mode: 'step', cityGroup: cityGroup.value,
-    incentiveType: typeId.value, typeName: typeName.value,
+    incentiveType: Number(typeId.value), typeName: typeName.value,
     scoreType: item.score_type, nextScore: item.next_score ?? 1,
   }
 }
