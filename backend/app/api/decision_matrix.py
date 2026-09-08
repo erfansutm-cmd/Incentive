@@ -26,8 +26,10 @@ COLUMNS = (
     "target_increase", "pr_increase", "control_bucket", "created_at", "deactivated_at",
 )
 VALUE_COLUMNS = ("target_increase", "pr_increase", "control_bucket")
+# History still defines the series, but only active rows determine its next score.
+ACTIVE_MAX_SCORE = "COALESCE(MAX(CASE WHEN `deactivated_at` IS NULL THEN `score` END), 0)"
 # MySQL named locks are connection-scoped (not transaction-scoped). Serialize
-# inserts even when the matrix is empty, without changing the user's schema or
+# changes even when the matrix is empty, without changing the user's schema or
 # requiring write/locking permissions on mafsho.incentive_type. A table-wide
 # lock also respects case-insensitive DB collations for city/score type names.
 WRITE_LOCK = "decision-matrix:" + hashlib.sha256(
@@ -74,7 +76,12 @@ def _error(exc):
             status, message = 503, "Database access denied. Check the backend database settings."
         elif code == 1049:
             status, message = 503, "The configured database does not exist."
-        elif code in (1062, 1205, 1213):
+        elif code == 1062:
+            status, message = 409, (
+                "This score conflicts with an existing row. If it is deactivated, "
+                "check that the table's unique constraints allow historical scores to be reused."
+            )
+        elif code in (1205, 1213):
             status, message = 409, "The matrix was changed by another request. Refresh and try again."
         elif code in (1054, 1264, 1265, 1364, 1366, 1406):
             status, message = 400, f"The values do not match the table schema: {args[1]}"
@@ -124,7 +131,7 @@ def _positive_integer(value, name):
     return int(number)
 
 
-def _clean_value(value, col):
+def _clean_value(value, col, *, use_default=True):
     """Respect the existing table's nullability and numeric/text field types.
 
     No percentage conversion or assumed control-bucket range: store the values
@@ -132,7 +139,7 @@ def _clean_value(value, col):
     """
     name = col["Field"]
     if value is None or (isinstance(value, str) and not value.strip()):
-        if col.get("Default") is not None:
+        if use_default and col.get("Default") is not None:
             value = col["Default"]
         elif col.get("Null") == "YES":
             return None
@@ -170,7 +177,7 @@ def _write_transaction():
                 text("SELECT GET_LOCK(:name, 5)"), {"name": WRITE_LOCK}
             ).scalar() == 1
             if not acquired:
-                raise MatrixError("Another step is being saved. Please try again.", 409)
+                raise MatrixError("Another matrix change is in progress. Please try again.", 409)
             yield conn
             # Commit BEFORE releasing the lock, so the next writer sees the new score.
             conn.commit()
@@ -210,8 +217,8 @@ def list_steps(
 ):
     """Return one group's rows and series metadata (counts/next score).
 
-    Series metadata always includes history, even when deactivated rows are
-    hidden. A series with no active steps remains discoverable.
+    Counts include history, even when deactivated rows are hidden. Next scores
+    use active rows only; a history-only series stays discoverable and starts at 1.
     """
     try:
         city_group = _required_text(city_group, "city_group")
@@ -219,7 +226,7 @@ def list_steps(
             cols = _columns(conn)
             params = {"city_group": city_group}
             series = conn.execute(text(
-                "SELECT `incentive_type`, `score_type`, MAX(`score`) + 1 AS next_score, "
+                f"SELECT `incentive_type`, `score_type`, {ACTIVE_MAX_SCORE} + 1 AS next_score, "
                 "SUM(CASE WHEN `deactivated_at` IS NULL THEN 1 ELSE 0 END) AS active_count, "
                 "SUM(CASE WHEN `deactivated_at` IS NOT NULL THEN 1 ELSE 0 END) AS deactivated_count "
                 f"FROM {TABLE_SQL} WHERE `city_group` = :city_group "
@@ -256,10 +263,10 @@ def list_steps(
 
 @router.post("")
 def add_step(payload: dict):
-    """Append MAX(score) + 1 within a (city group, incentive type, score type).
+    """Append MAX(active score) + 1 within a (city group, type, score type).
 
-    An optional score is an optimistic check of the UI's displayed next step,
-    never a user-controlled sequence number. Historical scores are not reused.
+    An optional score checks the UI's displayed next step. No active rows means
+    score 1; a new row may reuse a historical score without modifying that history.
     """
     try:
         allowed = {"city_group", "incentive_type", "score_type", "score", *VALUE_COLUMNS}
@@ -296,7 +303,7 @@ def add_step(payload: dict):
             params["incentive_type"] = incentive_type[0]
 
             previous = conn.execute(text(
-                f"SELECT `score_type`, MAX(`score`) AS max_score FROM {TABLE_SQL} "
+                f"SELECT `score_type`, {ACTIVE_MAX_SCORE} AS max_score FROM {TABLE_SQL} "
                 "WHERE `city_group` = :city_group AND `incentive_type` = :incentive_type "
                 "AND `score_type` = :score_type GROUP BY `score_type`"
             ), params).mappings().first()
@@ -327,11 +334,45 @@ def add_step(payload: dict):
         return _error(exc)
 
 
+@router.put("/{step_id}")
+def update_step(step_id: int, payload: dict):
+    """Update values on an active step only; score, hierarchy and dates stay fixed."""
+    try:
+        unknown = set(payload) - set(VALUE_COLUMNS)
+        if unknown:
+            raise MatrixError(f"Fields cannot be edited: {', '.join(sorted(unknown))}.")
+        if not payload:
+            raise MatrixError("Provide at least one step value to update.")
+        with _write_transaction() as conn:
+            cols = {c["Field"]: c for c in _columns(conn)}
+            # An explicit blank/null clears a nullable field instead of restoring
+            # its insertion default. Fields omitted from this request stay intact.
+            values = {name: _clean_value(value, cols[name], use_default=False)
+                      for name, value in payload.items()}
+            assignments = ", ".join(f"`{name}` = :{name}" for name in values)
+            conn.execute(text(
+                f"UPDATE {TABLE_SQL} SET {assignments} "
+                "WHERE `id` = :id AND `deactivated_at` IS NULL"
+            ), {**values, "id": step_id})
+            row = conn.execute(text(
+                f"SELECT * FROM {TABLE_SQL} WHERE `id` = :id"
+            ), {"id": step_id}).mappings().first()
+            if row is None:
+                raise MatrixError("Score step not found.", 404)
+            if row["deactivated_at"] is not None:
+                raise MatrixError("This step has been deactivated and can no longer be edited.", 409)
+            result = _row_json(row)
+        return {"status": "ok", "message": "Score step updated successfully.", "row": result}
+    except Exception as exc:
+        return _error(exc)
+
+
 @router.post("/{step_id}/deactivate")
 def deactivate_step(step_id: int):
     """Soft deactivate atomically; repeated requests keep the original timestamp."""
     try:
-        with engine.begin() as conn:
+        # Deactivation changes the active maximum, so coordinate with additions.
+        with _write_transaction() as conn:
             updated = conn.execute(text(
                 f"UPDATE {TABLE_SQL} SET `deactivated_at` = NOW() "
                 "WHERE `id` = :id AND `deactivated_at` IS NULL"

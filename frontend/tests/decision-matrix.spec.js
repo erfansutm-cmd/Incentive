@@ -82,16 +82,21 @@ test('adds sequential steps, confirms deactivation, and preserves history after 
   await expect(page.getByRole('rowheader', { name: '2 ID 2', exact: true })).toBeHidden()
   await expect(page.getByRole('button', { name: '+ Add step (4)', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Show deactivated (1)', exact: true }).click()
-  const inactive = page.getByRole('row').filter({ has: page.getByRole('rowheader', { name: '2 ID 2', exact: true }) })
-  await expect(inactive.getByText('Deactivated', { exact: true })).toBeVisible()
-  await expect(inactive.getByRole('button')).toHaveCount(0)
-  await expect(page.getByRole('columnheader', { name: 'Deactivated at' })).toBeVisible()
+  const active = page.getByRole('region', { name: 'Delivery active steps', exact: true })
+  const history = page.getByRole('region', { name: 'Delivery deactivated steps', exact: true })
+  await expect(active.getByRole('rowheader', { name: '2 ID 2', exact: true })).toHaveCount(0)
+  await expect(history.getByRole('rowheader', { name: '2 ID 2', exact: true })).toBeVisible()
+  await expect(history.getByRole('button')).toHaveCount(0)
+  await expect(history.getByRole('columnheader', { name: 'Deactivated at' })).toBeVisible()
+  await expect(page.getByRole('columnheader', { name: 'Status', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: '+ Add step (4)', exact: true }).click()
   dialog = page.getByRole('dialog')
   await fillValues(dialog)
   await dialog.getByRole('button', { name: 'Save step', exact: true }).click()
   await expect(page.getByRole('rowheader')).toHaveCount(4)
-  await expect(page.getByRole('button', { name: 'Hide deactivated' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByRole('button', { name: 'Hide deactivated' })).toHaveAttribute('aria-expanded', 'true')
+  await expect(active.getByRole('rowheader')).toHaveCount(3)
+  await expect(history.getByRole('rowheader')).toHaveCount(1)
   expect(state.rows.map((row) => row.score)).toEqual([1, 2, 3, 4])
 })
 
@@ -129,15 +134,28 @@ test('new score types and incentive types start at one and configured types cann
   await expect(page.getByRole('button', { name: '+ Add incentive type', exact: true })).toBeEnabled()
 })
 
-test('a score type with only deactivated rows is still visible and can append its next step', async ({ page }) => {
-  await mockDecisionMatrix(page, { rows: [makeStep({ deactivated_at: '2026-09-08T13:00:00' })] })
+test('a history-only score type restarts at one while keeping its old row separate', async ({ page }) => {
+  const state = await mockDecisionMatrix(page, { rows: [makeStep({ deactivated_at: '2026-09-08T13:00:00' })] })
   await page.goto('/decision-matrix')
   await openGroup(page)
   await openSeries(page)
-  await expect(page.getByText(/No active steps. Add the next step/)).toBeVisible()
-  await expect(page.getByRole('button', { name: '+ Add step (2)', exact: true })).toBeVisible()
+  await expect(page.getByText('No active steps. Add step 1 to start again.')).toBeVisible()
+  await expect(page.getByRole('button', { name: '+ Add step (1)', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Show deactivated (1)', exact: true }).click()
-  await expect(page.getByRole('rowheader', { name: '1 ID 1', exact: true })).toBeVisible()
+  const history = page.getByRole('region', { name: 'Delivery deactivated steps', exact: true })
+  await expect(history.getByRole('rowheader', { name: '1 ID 1', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '+ Add step (1)', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(scoreInput(dialog)).toHaveValue('1')
+  await fillValues(dialog)
+  await dialog.getByRole('button', { name: 'Save step', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  const active = page.getByRole('region', { name: 'Delivery active steps', exact: true })
+  await expect(active.getByRole('rowheader', { name: '1 ID 2', exact: true })).toBeVisible()
+  await expect(history.getByRole('rowheader', { name: '1 ID 1', exact: true })).toBeVisible()
+  await expect(history.getByRole('button')).toHaveCount(0)
+  expect(state.rows.map((row) => row.score)).toEqual([1, 1])
+  await expect(page.getByRole('columnheader', { name: 'Status', exact: true })).toHaveCount(0)
 })
 
 test('save failures keep entered values and are retryable', async ({ page }) => {
@@ -262,3 +280,158 @@ test('empty incentive lookup disables creation and explains why', async ({ page 
   await expect(page.getByText(/No incentive types are available in the reference table/)).toBeVisible()
   await expect(page.getByRole('button', { name: '+ Add incentive type', exact: true })).toBeDisabled()
 })
+
+
+test('city groups are separate lines ordered by tiers, Tehran, then other groups', async ({ page }) => {
+  await mockDecisionMatrix(page, {
+    groups: ['Other', 'tehran', 'Tier10', 'Tier_2', 'Tier 1', 'Another group', 'Tier3'],
+  })
+  await page.goto('/decision-matrix')
+  const list = page.getByRole('list', { name: 'City groups', exact: true })
+  const buttons = list.getByRole('button')
+  await expect(buttons).toHaveCount(7)
+  expect(await buttons.evaluateAll((elements) => elements.map((el) => el.getAttribute('aria-label')))).toEqual([
+    'Open city group Tier 1', 'Open city group Tier_2', 'Open city group Tier3', 'Open city group Tier10',
+    'Open city group tehran', 'Open city group Another group', 'Open city group Other',
+  ])
+  const boxes = await buttons.evaluateAll((elements) => elements.map((el) => {
+    const { x, y, width, height } = el.getBoundingClientRect()
+    return { x, y, width, height }
+  }))
+  for (let i = 1; i < boxes.length; i++) {
+    expect(boxes[i].x).toBe(boxes[0].x)
+    expect(boxes[i].width).toBe(boxes[0].width)
+    expect(boxes[i].y).toBeGreaterThanOrEqual(boxes[i - 1].y + boxes[i - 1].height)
+  }
+  await expect(page.getByText('Manage incentive rules, one score step at a time.')).toHaveCount(0)
+  await expect(page.getByRole('list', { name: 'Decision Matrix hierarchy', exact: true })).toHaveCount(0)
+  await page.getByLabel('Search city groups').fill('tier')
+  await expect(buttons).toHaveCount(4)
+})
+
+test('deactivating the highest active score allows reuse without mixing history into active steps', async ({ page }) => {
+  const state = await mockDecisionMatrix(page, { rows: [
+    makeStep(), makeStep({ id: 2, score: 2 }),
+    makeStep({ id: 3, score: 9, deactivated_at: '2026-09-08T13:00:00' }),
+  ] })
+  await page.goto('/decision-matrix')
+  await openGroup(page)
+  await openSeries(page)
+  await expect(page.getByRole('button', { name: '+ Add step (3)', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Deactivate score 2', exact: true }).click()
+  await page.getByRole('button', { name: 'Deactivate step', exact: true }).click()
+  await expect(page.getByRole('button', { name: '+ Add step (2)', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Show deactivated (2)', exact: true }).click()
+  const history = page.getByRole('region', { name: 'Delivery deactivated steps', exact: true })
+  await expect(history.getByRole('rowheader')).toHaveCount(2)
+  await page.getByRole('button', { name: '+ Add step (2)', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await fillValues(dialog)
+  await dialog.getByRole('button', { name: 'Save step', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  const active = page.getByRole('region', { name: 'Delivery active steps', exact: true })
+  await expect(active.getByRole('rowheader', { name: '2 ID 4', exact: true })).toBeVisible()
+  await expect(active.getByRole('rowheader')).toHaveCount(2)
+  await expect(history.getByRole('rowheader', { name: '2 ID 2', exact: true })).toBeVisible()
+  expect(state.rows[1].deactivated_at).not.toBeNull()
+  expect(state.rows[3].deactivated_at).toBeNull()
+})
+
+test('a deactivation while adding refreshes the next score downward and preserves input', async ({ page }) => {
+  const state = await mockDecisionMatrix(page, { rows: [makeStep(), makeStep({ id: 2, score: 2 })] })
+  await page.goto('/decision-matrix')
+  await openGroup(page)
+  await openSeries(page)
+  await page.getByRole('button', { name: '+ Add step (3)', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await fillValues(dialog, '0.75', '3.5')
+  state.rows[1].deactivated_at = '2026-09-08T13:00:00'
+  await dialog.getByRole('button', { name: 'Save step', exact: true }).click()
+  await expect(dialog.getByRole('alert')).toContainText('The next score is now 2')
+  await expect(scoreInput(dialog)).toHaveValue('2')
+  await expect(dialog.getByLabel('Target increase', { exact: true })).toHaveValue('0.75')
+  await dialog.getByRole('button', { name: 'Save step', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  expect(state.writes.map((write) => write.payload.score)).toEqual([3, 2])
+})
+
+test('editing an active step prefills values, supports cancel, and updates only those values', async ({ page }) => {
+  const state = await mockDecisionMatrix(page, { rows: [makeStep()] })
+  const original = structuredClone(state.rows[0])
+  await page.goto('/decision-matrix')
+  await openGroup(page)
+  await openSeries(page)
+  await page.getByRole('button', { name: 'Edit score 1', exact: true }).click()
+  let dialog = page.getByRole('dialog', { name: 'Edit score 1', exact: true })
+  await expect(dialog.getByLabel('Target increase', { exact: true })).toHaveValue('0.125')
+  await expect(dialog.getByLabel('PR increase', { exact: true })).toHaveValue('1.75')
+  await expect(dialog.getByLabel(/^Control bucket/)).toHaveValue('0')
+  await expect(scoreInput(dialog)).toHaveValue('1')
+  await expect(scoreInput(dialog)).toHaveAttribute('readonly')
+  await expect(dialog.getByLabel('Score type', { exact: true })).toHaveCount(0)
+  await fillValues(dialog, '0.5', '4.25', '')
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  expect(state.writes).toHaveLength(0)
+  expect(state.rows[0]).toEqual(original)
+  await page.getByRole('button', { name: 'Edit score 1', exact: true }).click()
+  dialog = page.getByRole('dialog')
+  await expect(dialog.getByLabel('Target increase', { exact: true })).toHaveValue('0.125')
+  await fillValues(dialog, '0.5', '4.25', '')
+  await dialog.getByRole('button', { name: 'Save changes', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  expect(state.writes).toEqual([{
+    action: 'edit', id: 1,
+    payload: { target_increase: '0.5', pr_increase: '4.25', control_bucket: null },
+  }])
+  expect(state.rows).toEqual([{ ...original, target_increase: 0.5, pr_increase: 4.25, control_bucket: null }])
+  await expect(page.getByRole('button', { name: '+ Add step (2)', exact: true })).toBeVisible()
+  await page.reload()
+  await openGroup(page)
+  await openSeries(page)
+  const active = page.getByRole('region', { name: 'Delivery active steps', exact: true })
+  await expect(active.getByRole('cell', { name: '0.5', exact: true })).toBeVisible()
+  await expect(active.getByRole('cell', { name: '4.25', exact: true })).toBeVisible()
+})
+
+test('an edit failure preserves the entered changes for retry', async ({ page }) => {
+  const state = await mockDecisionMatrix(page, { rows: [makeStep()], editError: 'Could not save changes.' })
+  await page.goto('/decision-matrix')
+  await openGroup(page)
+  await openSeries(page)
+  await page.getByRole('button', { name: 'Edit score 1', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await fillValues(dialog, '0.6', '4.5', '1')
+  await dialog.getByRole('button', { name: 'Save changes', exact: true }).click()
+  await expect(dialog.getByRole('alert')).toContainText('Could not save changes.')
+  await expect(dialog.getByLabel('Target increase', { exact: true })).toHaveValue('0.6')
+  expect(state.rows[0].target_increase).toBe(0.125)
+  state.editError = ''
+  await dialog.getByRole('button', { name: 'Save changes', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  expect(state.rows[0].target_increase).toBe(0.6)
+})
+
+for (const change of ['deactivated', 'deleted']) {
+  test(`a step ${change} while its edit form is open cannot be saved`, async ({ page }) => {
+    const state = await mockDecisionMatrix(page, { rows: [makeStep()] })
+    await page.goto('/decision-matrix')
+    await openGroup(page)
+    await openSeries(page)
+    await page.getByRole('button', { name: 'Edit score 1', exact: true }).click()
+    const dialog = page.getByRole('dialog')
+    await fillValues(dialog, '0.8', '5.5')
+    if (change === 'deactivated') state.rows[0].deactivated_at = '2026-09-08T13:00:00'
+    else state.rows = []
+    await dialog.getByRole('button', { name: 'Save changes', exact: true }).click()
+    await expect(dialog.getByRole('alert')).toContainText(change === 'deactivated' ? 'can no longer be edited' : 'not found')
+    await expect(dialog.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled()
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Edit score 1', exact: true })).toHaveCount(0)
+    if (change === 'deactivated') {
+      await page.getByRole('button', { name: 'Show deactivated (1)', exact: true }).click()
+      const history = page.getByRole('region', { name: 'Delivery deactivated steps', exact: true })
+      await expect(history.getByRole('button')).toHaveCount(0)
+      expect(state.rows[0].target_increase).toBe(0.125)
+    }
+  })
+}

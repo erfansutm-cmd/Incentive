@@ -153,7 +153,9 @@ The hierarchy is **City group → Incentive type → Score type → Score steps*
 
 1. The first screen lists distinct, non-null/non-blank `city_group` values from
    `incentive.incentive_active_city`. Groups appear even when the matrix is
-   completely empty. Search the list and click a group to configure it.
+   completely empty. Groups appear **one per line**, ordered **tiers first**
+   (naturally, e.g. Tier 2 before Tier 10), then **Tehran**, then other groups.
+   Search the list and click a group to configure it.
 2. Each configured incentive type has its own expandable panel. **Add incentive
    type** selects an existing `id`/`name` from `mafsho.incentive_type`, just like
    the Cities **Add plan** dropdown. The matrix's `incentive_type` column stores
@@ -163,17 +165,24 @@ The hierarchy is **City group → Incentive type → Score type → Score steps*
    new name within that group/type. Since the table holds one row per step,
    adding an incentive type or score type also saves its **first score step**;
    there are no incomplete placeholder rows or separate parent tables.
-4. Expand a score type to see its steps. **Add step** assigns `score = 1` for a
-   new `(city_group, incentive_type, score_type)` combination, then increments
-   by **1**. Enter `target_increase`, `pr_increase`, and `control_bucket` as
-   stored in the table (no implicit percentage conversions). Input types,
-   defaults, and required/optional fields follow the existing MySQL column
+4. Expand a score type to see its **Active steps** table. **Add step** uses
+   `MAX(score) + 1` over **active rows only** (`deactivated_at IS NULL`) within
+   that `(city_group, incentive_type, score_type)`. If no steps are active,
+   the next score is **1**. Enter `target_increase`, `pr_increase`, and
+   `control_bucket` as stored in the table (no implicit percentage conversions).
+   Input types, defaults, and required/optional fields follow the MySQL column
    metadata, including a numeric or text `control_bucket`.
-5. **Deactivate** asks for confirmation, then sets `deactivated_at = NOW()`.
-   **Show deactivated** reveals the history and timestamps. Deactivation never
-   deletes or renumbers steps, and the next score is `MAX(score) + 1` across
-   **all** historical rows, not just active rows. An entirely deactivated score
-   type remains visible and can receive its next step.
+5. **Edit** is available on active steps and changes only `target_increase`,
+   `pr_increase`, and `control_bucket`. The row ID, score, group/type assignment,
+   and timestamps remain unchanged. The API rejects edits to deactivated rows,
+   including a step deactivated while its edit form was open.
+6. **Deactivate** asks for confirmation, then sets `deactivated_at = NOW()`.
+   **Deactivated steps** has its own section and collapsible, read-only history
+   table; these rows never mix into the active table. Neither table has a Status
+   column. Deactivation never deletes or renumbers existing rows. Deactivating
+   the highest active score can allow that number to be reused by a **new row**,
+   while the old row stays unchanged in history. A history-only score type remains
+   visible and starts again at score 1.
 
 `id`, `score`, `created_at`, and `deactivated_at` are server-managed. The existing
 matrix table should have an auto-increment `id`, an integer `score`, and nullable
@@ -200,24 +209,32 @@ name autocomplete's `DB_CITY_MAPPING_TABLE`.
 | Method | Path | Action |
 |--------|------|--------|
 | GET | `/api/decision-matrix/city-groups` | Distinct groups from active cities, independent of matrix contents |
-| GET | `/api/decision-matrix?city_group={group}[&include_deactivated=true]` | Rows and column metadata for one group; per-score-type counts and next scores always include history |
+| GET | `/api/decision-matrix?city_group={group}[&include_deactivated=true]` | Rows and column metadata for one group; counts include history, next scores use active rows only |
 | POST | `/api/decision-matrix` | Save a step with `city_group`, `incentive_type` (ID), `score_type`, `target_increase`, `pr_increase`, `control_bucket` |
+| PUT | `/api/decision-matrix/{id}` | Edit one or more of `target_increase`, `pr_increase`, and `control_bucket` on an active step; other fields cannot be edited |
 | POST | `/api/decision-matrix/{id}/deactivate` | Soft deactivate a step; repeated calls preserve its first deactivation timestamp |
 
 POST optionally accepts `score` as a check of the displayed next score. A stale
 or skipped score returns **409** instead of silently saving a different step.
 The UI refreshes a stale next-step number while retaining the entered values.
-Inserts are serialized with a MySQL named lock, committed before releasing that
-lock, so simultaneous API requests cannot allocate the same score even in an
-empty table. Writers outside this API must coordinate separately; the API does
-not add a database uniqueness constraint to the existing table.
+Additions, edits, and deactivations share a MySQL named lock and commit before
+releasing it. This coordinates changes to the active maximum and prevents two
+API requests from allocating the same **active** score. Writers outside this API
+must coordinate separately. The existing table's uniqueness constraints must
+allow historical rows and a new active row to share a score; the API does not
+change indexes or overwrite archived rows to achieve this.
+
+Edit requests leave omitted value fields unchanged. Explicit null/blank values
+clear nullable fields rather than restoring their insertion defaults; non-nullable
+fields still require a value.
 
 ### Decision Matrix tests
 
 Backend tests run against an isolated SQLite fixture with attached schemas;
 MySQL column introspection and lock functions are stubbed. They cover sequence
-allocation, isolation between groups/types, lookup validation, soft deactivation,
-history, nullability, numeric validation, and the named-lock lifecycle. They do
+allocation from active rows, isolation between groups/types, lookup validation,
+active-only edits, soft deactivation, historical score reuse, nullability,
+numeric validation, and the named-lock lifecycle. They do
 **not** connect to the configured database.
 
 ```bash
@@ -229,8 +246,9 @@ python -m unittest discover -s tests -v
 ```
 
 Browser tests use Playwright with intercepted API responses (no real database
-writes). They cover the empty-table workflow, add/duplicate/error flows,
-concurrent changes, history, navigation, and mobile/keyboard behavior.
+writes). They cover ordered city-group rows, the empty-table workflow,
+add/edit/error flows, concurrent changes, separate history tables, navigation,
+and mobile/keyboard behavior.
 
 ```bash
 cd frontend

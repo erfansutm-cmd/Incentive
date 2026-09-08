@@ -22,17 +22,20 @@ const values = computed(() => Object.entries(valueLabels).map(([name, label]) =>
 const form = reactive({
   incentive_type: props.context.incentiveType ?? '',
   score_type: String(props.context.scoreType ?? ''),
-  ...Object.fromEntries(values.value.map((col) => [col.name, col.default ?? ''])),
+  ...Object.fromEntries(values.value.map((col) => [col.name,
+    props.context.step ? props.context.step[col.name] ?? '' : col.default ?? '',
+  ])),
 })
 const validationError = ref('')
 const title = computed(() => ({
   type: 'Add incentive type',
   scoreType: 'Add score type',
   step: `Add score ${props.context.nextScore}`,
+  edit: `Edit score ${props.context.nextScore}`,
 })[props.context.mode])
 const scoreTypeColumn = computed(() => props.columns.find((col) => col.name === 'score_type'))
 const canSubmit = computed(() =>
-  String(form.incentive_type) !== '' && form.score_type.trim() !== '' &&
+  !props.context.editUnavailable && String(form.incentive_type) !== '' && form.score_type.trim() !== '' &&
   (props.context.mode !== 'type' || props.types.some((type) => String(type.id) === String(form.incentive_type)))
 )
 
@@ -47,7 +50,7 @@ function maxLength(col) {
   return match ? Number(match[1]) : undefined
 }
 function required(col) {
-  return !col.nullable && (col.default === null || col.default === undefined)
+  return !col.nullable && (props.context.mode === 'edit' || col.default === null || col.default === undefined)
 }
 
 function submit() {
@@ -60,12 +63,13 @@ function submit() {
     validationError.value = 'This score type already exists. Open its panel to add the next step.'
     return
   }
-  emit('save', {
+  const stepValues = Object.fromEntries(values.value.map((col) => [col.name, form[col.name] === '' ? null : form[col.name]]))
+  emit('save', props.context.mode === 'edit' ? stepValues : {
     city_group: props.context.cityGroup,
     incentive_type: form.incentive_type,
     score_type: scoreType,
     score: props.context.nextScore,
-    ...Object.fromEntries(values.value.map((col) => [col.name, form[col.name] === '' ? null : form[col.name]])),
+    ...stepValues,
   })
 }
 </script>
@@ -77,7 +81,7 @@ function submit() {
       <p class="context">
         <strong>{{ context.cityGroup }}</strong>
         <template v-if="context.typeName"> <span aria-hidden="true">/</span> {{ context.typeName }}</template>
-        <template v-if="context.mode === 'step'"> <span aria-hidden="true">/</span> {{ context.scoreType }}</template>
+        <template v-if="context.mode === 'step' || context.mode === 'edit'"> <span aria-hidden="true">/</span> {{ context.scoreType }}</template>
       </p>
       <p v-if="context.mode === 'type'" class="hint intro">
         Add an existing incentive type by saving its first score type and score 1.
@@ -86,7 +90,7 @@ function submit() {
         Name the new score type and set the values for its first step.
       </p>
 
-      <fieldset :disabled="saving">
+      <fieldset :disabled="saving || context.editUnavailable">
         <label v-if="context.mode === 'type'" class="field">
           <span>Incentive type</span>
           <select v-model="form.incentive_type" required autofocus>
@@ -97,7 +101,7 @@ function submit() {
           </select>
           <small class="hint">Only existing types are available. The ID is saved, not the name.</small>
         </label>
-        <label v-if="context.mode !== 'step'" class="field">
+        <label v-if="context.mode === 'type' || context.mode === 'scoreType'" class="field">
           <span>Score type</span>
           <input
             v-model="form.score_type"
@@ -113,7 +117,8 @@ function submit() {
           <span>Score</span>
           <input :value="context.nextScore" type="number" readonly aria-describedby="matrix-score-hint" />
           <small id="matrix-score-hint" class="hint">
-            Assigned automatically: starts at 1, then increases by 1. Deactivated scores are not reused.
+            <template v-if="context.mode === 'edit'">The score number cannot be changed.</template>
+            <template v-else>Highest active score + 1, or 1 when no steps are active. Deactivated steps are excluded.</template>
           </small>
         </label>
         <div class="value-fields">
@@ -127,7 +132,7 @@ function submit() {
               :min="/unsigned/i.test(col.type || '') ? 0 : undefined"
               :maxlength="maxLength(col)"
               :required="required(col)"
-              :autofocus="context.mode === 'step' && index === 0"
+              :autofocus="(context.mode === 'step' || context.mode === 'edit') && index === 0"
               :placeholder="col.nullable ? 'Not set' : 'Enter a value'"
             />
           </label>
@@ -137,7 +142,7 @@ function submit() {
       <div class="actions">
         <button type="button" class="btn btn-ghost" :disabled="saving" @click="emit('close')">Cancel</button>
         <button type="submit" class="btn btn-primary" :disabled="saving || !canSubmit">
-          {{ saving ? 'Saving…' : context.mode === 'step' ? 'Save step' : 'Save first step' }}
+          {{ saving ? 'Saving…' : context.mode === 'edit' ? 'Save changes' : context.mode === 'step' ? 'Save step' : 'Save first step' }}
         </button>
       </div>
     </form>

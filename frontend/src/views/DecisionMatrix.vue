@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import DecisionMatrixStepForm from '../components/DecisionMatrixStepForm.vue'
+import DecisionMatrixStepsTable from '../components/DecisionMatrixStepsTable.vue'
 import ModalDialog from '../components/ModalDialog.vue'
 import { requestJson } from '../lib/api'
 
@@ -33,9 +34,21 @@ let typesController
 let matrixController
 let disposed = false
 
-const filteredGroups = computed(() => groups.value.filter((group) =>
-  group.toLowerCase().includes(search.value.trim().toLowerCase())
-))
+const groupCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+function groupRank(group) {
+  const name = group.trim().toLowerCase()
+  if (/^tiers?(?:$|[\s_-]|\d)/.test(name)) return 0
+  if (name === 'tehran' || name === 'تهران') return 1
+  return 2
+}
+function groupSortName(group) {
+  // Sort Tier 2 before Tier 10 even when separators/capitalization differ.
+  return group.trim().replace(/^tiers?[\s_-]*(?=\d)/i, 'Tier ')
+}
+const filteredGroups = computed(() => groups.value
+  .filter((group) => group.toLowerCase().includes(search.value.trim().toLowerCase()))
+  .sort((a, b) => groupRank(a) - groupRank(b) || groupCollator.compare(groupSortName(a), groupSortName(b)))
+)
 const typeNames = computed(() => {
   const names = new Map()
   for (const row of rows.value) {
@@ -68,9 +81,13 @@ const configuredTypes = computed(() => {
     })
     const type = grouped.get(id)
     const key = seriesKey(id, item.score_type)
+    const steps = (stepsBySeries.get(key) || []).sort((a, b) =>
+      Number(a.score) - Number(b.score) || Number(a.id) - Number(b.id)
+    )
     type.scoreTypes.push({
       ...item, key,
-      steps: (stepsBySeries.get(key) || []).sort((a, b) => Number(a.score) - Number(b.score)),
+      activeSteps: steps.filter(isActive),
+      deactivatedSteps: steps.filter((row) => !isActive(row)),
     })
     type.activeCount += item.active_count
     type.deactivatedCount += item.deactivated_count
@@ -82,12 +99,6 @@ const availableTypes = computed(() => {
   return types.value.filter((type) => !configured.has(String(type.id)))
 })
 const activeCount = computed(() => configuredTypes.value.reduce((sum, type) => sum + type.activeCount, 0))
-const activeStage = computed(() => {
-  if (selectedGroup.value === null) return 1
-  if (expandedType.value === null) return 2
-  const type = configuredTypes.value.find((item) => item.id === expandedType.value)
-  return type?.scoreTypes.some((item) => openScores.value.has(item.key)) ? 4 : 3
-})
 function countLabel(count, noun) {
   return `${count} ${noun}${count === 1 ? '' : 's'}`
 }
@@ -101,15 +112,6 @@ const canAddType = computed(() => !busy.value && !matrixError.value && !typesErr
 function toggleSet(state, key) {
   if (state.has(key)) state.delete(key)
   else state.add(key)
-}
-function visibleSteps(item) {
-  return historyShown.value.has(item.key) ? item.steps : item.steps.filter(isActive)
-}
-const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-function formatDate(value) {
-  if (!value) return '—'
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : dateFormat.format(date)
 }
 function showMessage(text) {
   if (disposed) return
@@ -198,34 +200,41 @@ function refresh() {
   else loadMatrix()
 }
 
-function openForm(mode, type = null, item = null) {
+function openForm(mode, type = null, item = null, row = null) {
   formError.value = ''
   formContext.value = {
     mode, cityGroup: selectedGroup.value,
     incentiveType: type?.id, typeName: type?.name,
-    scoreType: item?.score_type, nextScore: item?.next_score ?? 1,
+    scoreType: item?.score_type, nextScore: row?.score ?? item?.next_score ?? 1,
+    step: row ? { ...row } : null,
   }
 }
 function closeForm() {
   if (!saving.value) formContext.value = null
 }
 async function saveStep(payload) {
-  if (saving.value) return
+  if (saving.value || !formContext.value) return
+  const context = formContext.value
+  const isEditing = context.mode === 'edit'
   saving.value = true
   formError.value = ''
   try {
-    const data = await requestJson('/api/decision-matrix', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    const url = isEditing
+      ? `/api/decision-matrix/${encodeURIComponent(context.step.id)}`
+      : '/api/decision-matrix'
+    const data = await requestJson(url, {
+      method: isEditing ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
     })
     if (disposed) return
     formContext.value = null
     expandedType.value = String(data.row.incentive_type)
     openScores.value.add(seriesKey(data.row.incentive_type, data.row.score_type))
-    showMessage(data.message || 'Score step added successfully.')
+    showMessage(data.message || (isEditing ? 'Score step updated successfully.' : 'Score step added successfully.'))
     await loadMatrix()
   } catch (error) {
     formError.value = error.message
-    if (error.status === 409) {
+    if (error.status === 409 || (isEditing && error.status === 404)) {
       // Keep entered values, but refresh a stale next-score preview before retry.
       await loadMatrix()
       const context = formContext.value
@@ -237,6 +246,9 @@ async function saveStep(payload) {
           context.nextScore = updated.next_score
           formError.value = `The matrix changed. The next score is now ${updated.next_score}. Review your values and save again.`
         }
+      } else if (context?.mode === 'edit') {
+        const current = rows.value.find((row) => String(row.id) === String(context.step.id))
+        context.editUnavailable = !current || !isActive(current)
       }
     }
   } finally {
@@ -283,19 +295,9 @@ onBeforeUnmount(() => {
 <template>
   <div class="decision-matrix">
     <div class="head">
-      <div>
-        <h1>Decision Matrix</h1>
-        <p class="sub">Manage incentive rules, one score step at a time.</p>
-      </div>
+      <h1>Decision Matrix</h1>
       <button class="btn btn-ghost" :disabled="busy" @click="refresh">Refresh</button>
     </div>
-
-    <ol class="hierarchy" aria-label="Decision Matrix hierarchy">
-      <li :class="{ current: activeStage === 1 }"><span>1</span> City group</li>
-      <li :class="{ current: activeStage === 2 }"><span>2</span> Incentive type</li>
-      <li :class="{ current: activeStage === 3 }"><span>3</span> Score type</li>
-      <li :class="{ current: activeStage === 4 }"><span>4</span> Score steps</li>
-    </ol>
 
     <div v-if="typesError" class="banner error" role="alert">
       <strong>Incentive type lookup unavailable</strong>
@@ -330,23 +332,15 @@ onBeforeUnmount(() => {
           <p>No city groups match “{{ search }}”.</p>
           <button class="btn btn-ghost btn-sm" @click="search = ''">Clear search</button>
         </div>
-        <div v-else class="group-grid">
-          <button
-            v-for="group in filteredGroups" :key="group"
-            class="group-button" :aria-label="`Open city group ${group}`" @click="selectGroup(group)"
-          >
-            <span class="group-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <rect x="3" y="3" width="7" height="7" rx="1.5" />
-                <rect x="14" y="3" width="7" height="7" rx="1.5" />
-                <rect x="3" y="14" width="7" height="7" rx="1.5" />
-                <rect x="14" y="14" width="7" height="7" rx="1.5" />
-              </svg>
-            </span>
-            <span class="group-label"><strong>{{ group }}</strong><small>View incentive types</small></span>
-            <span class="arrow" aria-hidden="true">→</span>
-          </button>
-        </div>
+        <ul v-else class="group-list" aria-label="City groups">
+          <li v-for="group in filteredGroups" :key="group">
+            <button class="group-button" :aria-label="`Open city group ${group}`" @click="selectGroup(group)">
+              <span class="group-label">{{ group }}</span>
+              <span class="group-hint">View incentive types</span>
+              <span class="arrow" aria-hidden="true">→</span>
+            </button>
+          </li>
+        </ul>
       </section>
     </template>
 
@@ -403,7 +397,7 @@ onBeforeUnmount(() => {
                 </button>
               </div>
               <p v-if="!type.canAdd && !typesLoading" class="notice">
-                This incentive type is not available in the reference lookup. Existing steps are read-only except for deactivation.
+                This incentive type is not available in the reference lookup. Active steps can be edited or deactivated, but no new steps can be added.
               </p>
               <section v-for="(item, scoreIndex) in type.scoreTypes" :key="item.key" class="score-card">
                 <h4 class="accordion-heading">
@@ -419,55 +413,32 @@ onBeforeUnmount(() => {
                 </h4>
                 <div v-if="openScores.has(item.key)" :id="`matrix-score-${typeIndex}-${scoreIndex}`" class="score-body">
                   <div class="section-toolbar step-toolbar">
-                    <p class="hint">Steps increase by 1. Deactivation keeps the original score in history.</p>
-                    <div class="toolbar-actions">
-                      <button
-                        v-if="item.deactivated_count" class="btn btn-ghost btn-sm"
-                        :aria-pressed="historyShown.has(item.key)" @click="toggleSet(historyShown, item.key)"
-                      >{{ historyShown.has(item.key) ? 'Hide deactivated' : `Show deactivated (${item.deactivated_count})` }}</button>
-                      <button class="btn btn-primary btn-sm" :disabled="!type.canAdd || typesLoading" @click="openForm('step', type, item)">
-                        + Add step ({{ item.next_score }})
-                      </button>
-                    </div>
+                    <h5 class="steps-heading">Active steps</h5>
+                    <button class="btn btn-primary btn-sm" :disabled="!type.canAdd || typesLoading" @click="openForm('step', type, item)">
+                      + Add step ({{ item.next_score }})
+                    </button>
                   </div>
-                  <p v-if="!visibleSteps(item).length" class="steps-empty">
-                    No active steps. Add the next step or show deactivated steps to view the history.
+                  <p v-if="!item.activeSteps.length" class="steps-empty">
+                    No active steps. Add step 1 to start again.
                   </p>
-                  <div v-else class="table-scroll" tabindex="0" role="region" :aria-label="`${item.score_type} score steps`">
-                    <table>
-                      <caption class="sr-only">{{ selectedGroup }} / {{ type.name }} / {{ item.score_type }}</caption>
-                      <thead>
-                        <tr>
-                          <th scope="col">Score</th>
-                          <th scope="col">Target increase</th>
-                          <th scope="col">PR increase</th>
-                          <th scope="col">Control bucket</th>
-                          <th scope="col">Created at</th>
-                          <th scope="col">Status</th>
-                          <th v-if="historyShown.has(item.key)" scope="col">Deactivated at</th>
-                          <th scope="col" class="actions-col">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr v-for="row in visibleSteps(item)" :key="row.id" :class="{ deactivated: !isActive(row) }">
-                          <th scope="row" class="score-cell"><strong>{{ row.score }}</strong><small>ID {{ row.id }}</small></th>
-                          <td class="numeric">{{ row.target_increase ?? '—' }}</td>
-                          <td class="numeric">{{ row.pr_increase ?? '—' }}</td>
-                          <td>{{ row.control_bucket ?? '—' }}</td>
-                          <td class="date-cell">{{ formatDate(row.created_at) }}</td>
-                          <td><span class="badge" :class="isActive(row) ? 'active' : 'inactive'">{{ isActive(row) ? 'Active' : 'Deactivated' }}</span></td>
-                          <td v-if="historyShown.has(item.key)" class="date-cell">{{ formatDate(row.deactivated_at) }}</td>
-                          <td class="actions-col">
-                            <button
-                              v-if="isActive(row)" class="btn btn-danger-soft btn-sm"
-                              :aria-label="`Deactivate score ${row.score}`" @click="askDeactivate(type, item, row)"
-                            >Deactivate</button>
-                            <span v-else class="hint">—</span>
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
+                  <DecisionMatrixStepsTable
+                    v-else :steps="item.activeSteps" :label="`${item.score_type} active steps`"
+                    @edit="openForm('edit', type, item, $event)"
+                    @deactivate="askDeactivate(type, item, $event)"
+                  />
+                  <section v-if="item.deactivated_count" class="history-section" :aria-label="`${item.score_type} deactivated history`">
+                    <div class="section-toolbar history-toolbar">
+                      <h5 class="steps-heading">Deactivated steps</h5>
+                      <button
+                        class="btn btn-ghost btn-sm" :aria-expanded="historyShown.has(item.key)"
+                        @click="toggleSet(historyShown, item.key)"
+                      >{{ historyShown.has(item.key) ? 'Hide deactivated' : `Show deactivated (${item.deactivated_count})` }}</button>
+                    </div>
+                    <DecisionMatrixStepsTable
+                      v-if="historyShown.has(item.key)" :steps="item.deactivatedSteps"
+                      :label="`${item.score_type} deactivated steps`" deactivated
+                    />
+                  </section>
                 </div>
               </section>
             </div>
@@ -513,27 +484,20 @@ onBeforeUnmount(() => {
 h1 { margin: 0; font-size: 1.5rem; }
 h2 { margin: 0; font-size: 1.2rem; overflow-wrap: anywhere; }
 h3 { font-size: 1.05rem; }
-.sub { margin: 0.3rem 0 0; color: var(--muted); }
 .hint { margin: 0; font-size: 0.83rem; line-height: 1.5; color: var(--muted); }
 .eyebrow { margin: 0 0 0.25rem; color: var(--muted); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
-.hierarchy { display: flex; flex-wrap: wrap; gap: 0.6rem 1.4rem; list-style: none; padding: 0; margin: 0 0 1.6rem; }
-.hierarchy li { display: flex; align-items: center; gap: 0.5rem; color: var(--muted); font-size: 0.82rem; }
-.hierarchy li > span { display: grid; place-items: center; width: 1.6rem; height: 1.6rem; background: var(--surface-2); border: 1px solid var(--border); border-radius: 50%; font-weight: 600; }
-.hierarchy .current { color: var(--accent-strong); font-weight: 600; }
-.hierarchy .current > span { background: var(--accent-soft); border-color: #bed8ca; }
 .group-directory { padding: 1.3rem; }
 .directory-head { margin-bottom: 1rem; }
 .directory-head .hint { margin-top: 0.35rem; }
 .search-field { display: block; max-width: 360px; margin-bottom: 1.1rem; }
 .search-field input { width: 100%; padding: 0.65rem 0.8rem; font: inherit; font-size: 0.9rem; border: 1px solid var(--border); border-radius: 0.55rem; background: #fbfdfc; color: var(--text); }
-.group-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 0.85rem; }
-.group-button { display: flex; align-items: center; gap: 0.8rem; padding: 1.1rem; border: 1px solid var(--border); border-radius: 0.7rem; background: #fff; text-align: left; color: var(--text); transition: border-color 0.15s, background 0.15s; }
-.group-button:hover { border-color: #a8cdbb; background: #f6faf8; }
-.group-icon { display: grid; place-items: center; padding: 0.6rem; border-radius: 0.65rem; background: var(--accent-soft); color: var(--accent); }
-.group-icon svg { width: 22px; height: 22px; }
-.group-label { flex: 1; min-width: 0; }
-.group-label strong { display: block; font-size: 0.95rem; overflow-wrap: anywhere; }
-.group-label small { display: block; margin-top: 0.3rem; color: var(--muted); font-size: 0.77rem; }
+.group-list { list-style: none; padding: 0; margin: 0; }
+.group-button { display: flex; align-items: center; gap: 1rem; width: 100%; padding: 1rem 0.7rem; border: 0; border-bottom: 1px solid var(--border); background: transparent; text-align: left; color: var(--text); transition: background 0.15s; }
+.group-list li:last-child .group-button { border-bottom: 0; }
+.group-button:hover { background: #f6faf8; }
+.group-button:focus-visible { outline-offset: -3px; }
+.group-label { flex: 1; min-width: 0; font-size: 0.95rem; font-weight: 600; overflow-wrap: anywhere; }
+.group-hint { color: var(--muted); font-size: 0.8rem; }
 .arrow { color: var(--accent); font-size: 1.15rem; }
 .empty { padding: 3.5rem 1.2rem; text-align: center; color: var(--muted); }
 .empty h3 { color: var(--text); margin: 0.8rem 0 0.4rem; }
@@ -565,42 +529,25 @@ h3 { font-size: 1.05rem; }
 .score-name { font-weight: 600; overflow-wrap: anywhere; min-width: 0; }
 .score-body { border-top: 1px solid var(--border); }
 .step-toolbar { margin: 0; padding: 0.9rem 1rem; }
-.step-toolbar .hint { flex: 1; min-width: 190px; max-width: 390px; }
-.toolbar-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-left: auto; }
+.steps-heading { margin: 0; color: var(--text); font-size: 0.85rem; font-weight: 600; }
+.history-section { margin-top: 0.8rem; border-top: 1px solid var(--border); background: #fafbfa; }
+.history-toolbar { margin: 0; padding: 0.9rem 1rem; }
 .steps-empty { margin: 0; padding: 1.5rem 1rem; text-align: center; color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--border); }
-.table-scroll { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
-thead th { padding: 0.75rem 0.9rem; text-align: left; background: var(--surface-2); color: #4a6155; font-size: 0.72rem; letter-spacing: 0.03em; text-transform: uppercase; white-space: nowrap; }
-tbody td, tbody th { padding: 0.8rem 0.9rem; border-top: 1px solid var(--border); text-align: left; font-weight: 400; }
-tbody tr:hover { background: #f6faf8; }
-.score-cell { min-width: 75px; }
-.score-cell strong { display: inline-grid; place-items: center; min-width: 1.7rem; padding: 0.2rem 0.35rem; border-radius: 0.4rem; background: var(--accent-soft); color: var(--accent-strong); font-weight: 700; font-variant-numeric: tabular-nums; }
-.score-cell small { display: block; margin-top: 0.25rem; color: var(--muted); white-space: nowrap; font-size: 0.65rem; }
-.numeric { font-variant-numeric: tabular-nums; }
-.date-cell { white-space: nowrap; color: var(--muted); font-size: 0.78rem; }
-.actions-col { text-align: right; white-space: nowrap; }
 .badge { display: inline-block; padding: 0.22rem 0.6rem; border-radius: 999px; font-size: 0.74rem; font-weight: 600; background: var(--surface-2); color: var(--muted); white-space: nowrap; }
-.badge.active { background: var(--accent-soft); color: var(--accent-strong); }
-.badge.inactive { background: #eceff0; color: #687876; }
-.deactivated { background: #fafbfa; color: var(--inactive-text); }
-.deactivated .score-cell strong { background: var(--surface-2); color: var(--inactive-text); }
 .notice { padding: 0.8rem 1rem; background: var(--warning-soft); color: #886027; border-radius: 0.6rem; font-size: 0.85rem; line-height: 1.5; }
 .all-added { text-align: center; }
 .confirm-text { line-height: 1.6; overflow-wrap: anywhere; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-button:focus-visible, input:focus-visible, .table-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .accordion-trigger:focus-visible { outline-offset: -3px; }
 @media (max-width: 640px) {
   .head, .group-head, .directory-head { align-items: flex-start; flex-wrap: wrap; }
-  .hierarchy { gap: 0.7rem 1rem; }
-  .hierarchy li { font-size: 0.75rem; }
-  .group-grid { grid-template-columns: 1fr; }
   .group-directory, .type-body { padding: 0.9rem; }
   .group-head > .btn { width: 100%; }
   .accordion-trigger { flex-wrap: wrap; gap: 0.5rem; }
   .counts { width: 100%; margin-left: 1.1rem; }
   .type-trigger { padding: 1rem; }
-  .toolbar-actions { margin-left: 0; }
-  .step-toolbar { padding: 0.8rem; }
+  .step-toolbar, .history-toolbar { padding: 0.8rem; }
+  .group-hint { display: none; }
 }
 </style>

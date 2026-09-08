@@ -27,7 +27,7 @@ export async function mockDecisionMatrix(page, options = {}) {
     rows: structuredClone(options.rows || []),
     groups: ['Group A', 'Group B', "O'Hare / A&B"],
     types: [...incentiveTypes], columns: structuredClone(columns),
-    writes: [], reads: [], groupError: '', typeError: '', matrixError: '', saveError: '', deactivateError: '',
+    writes: [], reads: [], groupError: '', typeError: '', matrixError: '', saveError: '', editError: '', deactivateError: '',
     groupDelays: {},
     ...options,
   }
@@ -56,9 +56,10 @@ export async function mockDecisionMatrix(page, options = {}) {
           next_score: 1, active_count: 0, deactivated_count: 0,
         })
         const item = grouped.get(key)
-        item.next_score = Math.max(item.next_score, row.score + 1)
-        if (row.deactivated_at === null) item.active_count++
-        else item.deactivated_count++
+        if (row.deactivated_at === null) {
+          item.next_score = Math.max(item.next_score, row.score + 1)
+          item.active_count++
+        } else item.deactivated_count++
       }
       return reply({
         city_group: cityGroup, columns: state.columns, series: [...grouped.values()],
@@ -72,7 +73,7 @@ export async function mockDecisionMatrix(page, options = {}) {
       state.writes.push({ action: 'add', payload })
       if (state.saveError) return fail(state.saveError)
       const existing = state.rows.filter((row) => row.city_group === payload.city_group &&
-        String(row.incentive_type) === String(payload.incentive_type) && row.score_type === payload.score_type)
+        String(row.incentive_type) === String(payload.incentive_type) && row.score_type === payload.score_type && row.deactivated_at === null)
       const next = Math.max(0, ...existing.map((row) => row.score)) + 1
       if (next !== payload.score) return fail(`The next score for this score type is ${next}. Refresh and try again.`, 409)
       const row = makeStep({
@@ -83,6 +84,20 @@ export async function mockDecisionMatrix(page, options = {}) {
       })
       state.rows.push(row)
       return reply({ status: 'ok', message: `Score ${next} added successfully.`, row })
+    }
+    const edit = /^\/api\/decision-matrix\/(\d+)$/.exec(url.pathname)
+    if (edit && request.method() === 'PUT') {
+      const payload = request.postDataJSON()
+      state.writes.push({ action: 'edit', id: Number(edit[1]), payload })
+      if (state.editError) return fail(state.editError)
+      const row = state.rows.find((row) => row.id === Number(edit[1]))
+      if (!row) return fail('Score step not found.', 404)
+      if (row.deactivated_at !== null) return fail('This step has been deactivated and can no longer be edited.', 409)
+      for (const [name, value] of Object.entries(payload)) {
+        const numeric = /^(int|decimal)/.test(state.columns.find((col) => col.name === name)?.type || '')
+        row[name] = value === null ? null : numeric ? Number(value) : value
+      }
+      return reply({ status: 'ok', message: 'Score step updated successfully.', row })
     }
     const deactivate = /^\/api\/decision-matrix\/(\d+)\/deactivate$/.exec(url.pathname)
     if (deactivate && request.method() === 'POST') {
