@@ -42,6 +42,8 @@ configured through a root `.env` file:
 | `DB_CITY_PLAN_MAPPING_TABLE` | `incentive/incentive_city_plan_mapping` |
 | `DB_INCENTIVE_TYPE_TABLE` | `mafsho/incentive_type` |
 | `DB_CITY_MAPPING_TABLE` | `mafsho/city_mapping` |
+| `DB_DECISION_MATRIX_TABLE` | `incentive/incentive_decision_matrix` |
+| `DB_ACTIVE_CITY_TABLE` | `incentive/incentive_active_city` |
 
 ```bash
 cp .env.example .env   # then fill in DB_PASSWORD
@@ -140,6 +142,107 @@ the *Add plan* form picks the type from `mafsho.incentive_type` and the
 business entity from `incentive.business_entities` (both are dropdowns —
 nothing new can be added there), and every active row has
 a *Deactivate* button behind a confirmation popup.
+
+## Decision Matrix
+
+Open **Decision Matrix** in the navigation or go to `/decision-matrix`. The
+page manages the existing `incentive.incentive_decision_matrix` table through
+`backend/app/api/decision_matrix.py`.
+
+The hierarchy is **City group → Incentive type → Score type → Score steps**:
+
+1. The first screen lists distinct, non-null/non-blank `city_group` values from
+   `incentive.incentive_active_city`. Groups appear even when the matrix is
+   completely empty. Search the list and click a group to configure it.
+2. Each configured incentive type has its own expandable panel. **Add incentive
+   type** selects an existing `id`/`name` from `mafsho.incentive_type`, just like
+   the Cities **Add plan** dropdown. The matrix's `incentive_type` column stores
+   the **ID**, while the UI shows the **name**. Arbitrary IDs/types cannot be
+   added through the API, and the lookup table is never modified.
+3. Expand an incentive type to see its score types. **Add score type** accepts a
+   new name within that group/type. Since the table holds one row per step,
+   adding an incentive type or score type also saves its **first score step**;
+   there are no incomplete placeholder rows or separate parent tables.
+4. Expand a score type to see its steps. **Add step** assigns `score = 1` for a
+   new `(city_group, incentive_type, score_type)` combination, then increments
+   by **1**. Enter `target_increase`, `pr_increase`, and `control_bucket` as
+   stored in the table (no implicit percentage conversions). Input types,
+   defaults, and required/optional fields follow the existing MySQL column
+   metadata, including a numeric or text `control_bucket`.
+5. **Deactivate** asks for confirmation, then sets `deactivated_at = NOW()`.
+   **Show deactivated** reveals the history and timestamps. Deactivation never
+   deletes or renumbers steps, and the next score is `MAX(score) + 1` across
+   **all** historical rows, not just active rows. An entirely deactivated score
+   type remains visible and can receive its next step.
+
+`id`, `score`, `created_at`, and `deactivated_at` are server-managed. The existing
+matrix table should have an auto-increment `id`, an integer `score`, and nullable
+`deactivated_at`. Its expected columns are:
+
+```
+id, incentive_type, city_group, score_type, score,
+target_increase, pr_increase, control_bucket, created_at, deactivated_at
+```
+
+No migration, seeding, or table creation is performed. Configure the table names
+with the same `schema/table` convention used elsewhere:
+
+```dotenv
+DB_DECISION_MATRIX_TABLE=incentive/incentive_decision_matrix
+DB_ACTIVE_CITY_TABLE=incentive/incentive_active_city
+DB_INCENTIVE_TYPE_TABLE=mafsho/incentive_type
+```
+
+Both development and production Compose files pass these settings to the
+backend. The city-group source is independent of `DB_CITIES_TABLE` and the city
+name autocomplete's `DB_CITY_MAPPING_TABLE`.
+
+| Method | Path | Action |
+|--------|------|--------|
+| GET | `/api/decision-matrix/city-groups` | Distinct groups from active cities, independent of matrix contents |
+| GET | `/api/decision-matrix?city_group={group}[&include_deactivated=true]` | Rows and column metadata for one group; per-score-type counts and next scores always include history |
+| POST | `/api/decision-matrix` | Save a step with `city_group`, `incentive_type` (ID), `score_type`, `target_increase`, `pr_increase`, `control_bucket` |
+| POST | `/api/decision-matrix/{id}/deactivate` | Soft deactivate a step; repeated calls preserve its first deactivation timestamp |
+
+POST optionally accepts `score` as a check of the displayed next score. A stale
+or skipped score returns **409** instead of silently saving a different step.
+The UI refreshes a stale next-step number while retaining the entered values.
+Inserts are serialized with a MySQL named lock, committed before releasing that
+lock, so simultaneous API requests cannot allocate the same score even in an
+empty table. Writers outside this API must coordinate separately; the API does
+not add a database uniqueness constraint to the existing table.
+
+### Decision Matrix tests
+
+Backend tests run against an isolated SQLite fixture with attached schemas;
+MySQL column introspection and lock functions are stubbed. They cover sequence
+allocation, isolation between groups/types, lookup validation, soft deactivation,
+history, nullability, numeric validation, and the named-lock lifecycle. They do
+**not** connect to the configured database.
+
+```bash
+cd backend
+python -m venv .venv
+. .venv/bin/activate
+pip install -r requirements-dev.txt
+python -m unittest discover -s tests -v
+```
+
+Browser tests use Playwright with intercepted API responses (no real database
+writes). They cover the empty-table workflow, add/duplicate/error flows,
+concurrent changes, history, navigation, and mobile/keyboard behavior.
+
+```bash
+cd frontend
+npm ci
+npx playwright install --with-deps chromium
+npm run test:e2e
+npm run build
+```
+
+The tests start Vite automatically, or reuse it when already running. An
+existing Chromium installation can be used by setting
+`PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`.
 
 ## Business Entities CRUD
 
