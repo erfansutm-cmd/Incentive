@@ -172,9 +172,7 @@ function cellText(row, col) {
 }
 
 function chipClass(colName) {
-  if (colName === 'main_customer_id') return 'mini-chip main'
-  if (customerColumns.has(colName)) return 'mini-chip customer'
-  if (categoryColumns.has(colName)) return 'mini-chip category'
+  // keep all chips green as requested
   return 'mini-chip'
 }
 
@@ -337,7 +335,6 @@ onMounted(load)
               <th
                 v-for="c in tableColumns"
                 :key="c.name"
-                :class="c.name === 'main_customer_id' ? 'col-main' : ''"
                 :title="colLabel(c.name)"
               >
                 {{ colLabel(c.name) }}
@@ -350,7 +347,6 @@ onMounted(load)
               <td
                 v-for="c in tableColumns"
                 :key="c.name"
-                :class="c.name === 'main_customer_id' ? 'col-main' : ''"
               >
                 <div v-if="c.json_array" class="cell-chips">
                   <template v-if="asArray(row[c.name]).length">
@@ -526,22 +522,22 @@ onMounted(load)
   white-space: nowrap;
 }
 
-/* === NO HORIZONTAL SLIDE === */
+/* === NO HORIZONTAL SLIDE + ALIGNMENT === */
 .table-scroll {
   width: 100%;
-  overflow-x: hidden; /* critical: prevent horizontal scroll */
+  overflow-x: hidden;
 }
 table {
   width: 100%;
   max-width: 100%;
-  table-layout: fixed; /* columns share width, content wraps */
+  table-layout: fixed;
   border-collapse: collapse;
 }
 
-/* Header: compact, left-aligned, uppercase, with ellipsis */
+/* Header: consistent alignment, centered vertically */
 thead th {
   text-align: left;
-  padding: 0.65rem 0.55rem;
+  padding: 0.7rem 0.6rem;
   background: var(--surface-2);
   color: #4a6155;
   font-size: 0.7rem;
@@ -552,19 +548,19 @@ thead th {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  vertical-align: bottom;
+  vertical-align: middle;
 }
 
-/* Body cells: tight padding, top-aligned, wrap anywhere */
+/* Body: middle alignment for clean rows */
 tbody td {
-  padding: 0.55rem 0.55rem;
+  padding: 0.6rem 0.6rem;
   border-bottom: 1px solid #eef2ef;
   font-size: 0.86rem;
   color: var(--text);
-  vertical-align: top;
+  vertical-align: middle;
   word-break: break-word;
   overflow-wrap: anywhere;
-  line-height: 1.35;
+  line-height: 1.4;
 }
 tbody tr:last-child td {
   border-bottom: none;
@@ -576,36 +572,29 @@ tbody tr:hover {
   color: var(--muted);
 }
 
-/* Alignment helpers */
 .cell-text {
   display: inline-block;
   max-width: 100%;
   overflow-wrap: anywhere;
-}
-.col-main {
-  background: #f8fbff; /* subtle highlight for main_customer_id */
-}
-thead th.col-main {
-  background: #eef4ff;
-  color: #1e40af;
+  vertical-align: middle;
 }
 
-/* Chips container: flex wrap, no overflow */
+/* Chips: all green, aligned left, wrapped */
 .cell-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.28rem;
-  align-items: flex-start;
+  gap: 0.3rem;
+  align-items: center;
   justify-content: flex-start;
   max-width: 100%;
 }
 
-/* Base chip */
+/* All chips green as requested */
 .mini-chip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0.12rem 0.52rem;
+  padding: 0.14rem 0.55rem;
   border-radius: 999px;
   font-size: 0.76rem;
   font-weight: 600;
@@ -614,76 +603,64 @@ thead th.col-main {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
-  border: 1px solid transparent;
-}
-/* Customer ID chips - greenish */
-.mini-chip.customer {
   background: var(--accent-soft);
   color: var(--accent-strong);
-  border-color: #cfe3d9;
-}
-/* Delivery category chips - warm */
-.mini-chip.category {
-  background: #fef3c7;
-  color: #92400e;
-  border-color: #fde68a;
-}
-/* Main customer ID chips - blue, distinct */
-.mini-chip.main {
-  background: #dbeafe;
-  color: #1e40af;
-  border-color: #bfdbfe;
-  font-weight: 700;
-  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.08) inset;
+  border: 1px solid #cfe3d9;
 }
 
-/* Actions column: fixed width, centered, no wrap on desktop */
+/* Actions column: fixed width, right-aligned with proper spacing */
 .actions-col {
-  width: 108px;
-  min-width: 108px;
-  max-width: 108px;
-  text-align: center;
+  width: 132px;
+  min-width: 132px;
+  max-width: 132px;
+  text-align: right;
   white-space: nowrap;
-  vertical-align: top;
+  vertical-align: middle;
+  padding-right: 0.9rem;
+  padding-left: 0.6rem;
 }
 .actions-col .btn {
-  padding: 0.28rem 0.55rem;
+  padding: 0.32rem 0.65rem;
   font-size: 0.78rem;
+  vertical-align: middle;
 }
+/* delete button needs space to the left */
 .actions-col .btn + .btn {
-  margin-left: 0.3rem;
+  margin-left: 0.75rem;
 }
 
-/* Responsive: shrink further on smaller screens, still no horizontal scroll */
 @media (max-width: 1300px) {
   thead th {
     font-size: 0.66rem;
-    padding: 0.5rem 0.4rem;
+    padding: 0.55rem 0.45rem;
   }
   tbody td {
     font-size: 0.82rem;
-    padding: 0.45rem 0.4rem;
+    padding: 0.5rem 0.45rem;
   }
   .mini-chip {
     font-size: 0.71rem;
-    padding: 0.1rem 0.42rem;
+    padding: 0.12rem 0.45rem;
   }
   .actions-col {
-    width: 96px;
-    min-width: 96px;
-    max-width: 96px;
+    width: 124px;
+    min-width: 124px;
+    max-width: 124px;
+    padding-right: 0.7rem;
+  }
+  .actions-col .btn + .btn {
+    margin-left: 0.6rem;
   }
 }
 @media (max-width: 900px) {
   .table-scroll {
-    overflow-x: auto; /* allow gentle scroll only on very small screens */
+    overflow-x: auto;
   }
   .actions-col {
     white-space: normal;
   }
   .actions-col .btn {
     margin-bottom: 0.25rem;
-    display: inline-block;
   }
 }
 
