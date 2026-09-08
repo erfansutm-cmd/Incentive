@@ -373,8 +373,8 @@ onMounted(load)
         </span>
       </div>
 
-      <section v-for="section in sections" :key="section.key" class="entity-section" :class="section.key" :aria-labelledby="`${section.key}-heading`">
-        <header class="section-header">
+      <section v-for="section in sections" :key="section.key" class="entity-section" :class="section.key" :aria-labelledby="section.editable ? undefined : `${section.key}-heading`" :aria-label="section.editable ? 'Active entities' : undefined">
+        <header v-if="!section.editable" class="section-header">
           <h2 :id="`${section.key}-heading`" class="section-heading">
             {{ section.title }} <span class="section-count">{{ section.rows.length }}</span>
           </h2>
