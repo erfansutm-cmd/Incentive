@@ -104,6 +104,9 @@ const activeCount = computed(() => configuredTypes.value.reduce((sum, type) => s
 function countLabel(count, noun) {
   return `${count} ${noun}${count === 1 ? '' : 's'}`
 }
+function typeDetailHref(group, typeId) {
+  return `/decision-matrix/type?city_group=${encodeURIComponent(group)}&type=${encodeURIComponent(String(typeId))}`
+}
 const existingScoreTypes = computed(() => configuredTypes.value
   .find((type) => type.id === String(formContext.value?.incentiveType))
   ?.scoreTypes.map((item) => item.score_type) || []
@@ -367,7 +370,7 @@ onBeforeUnmount(() => {
                     </div>
                     <div v-else class="type-list">
                       <section v-for="(type, typeIndex) in configuredTypes" :key="type.id" class="card type-card">
-                        <h3 class="accordion-heading">
+                        <h3 class="accordion-heading type-heading">
                           <button
                             class="accordion-trigger type-trigger"
                             :aria-expanded="expandedType === type.id" :aria-controls="`matrix-type-${groupIndex}-${typeIndex}`"
@@ -377,6 +380,16 @@ onBeforeUnmount(() => {
                             <span class="type-label">{{ type.name }} <small>#{{ type.id }}</small></span>
                             <span class="counts">{{ countLabel(type.scoreTypes.length, 'score type') }} <span aria-hidden="true">·</span> {{ countLabel(type.activeCount, 'active step') }}</span>
                           </button>
+                          <a
+                            class="btn btn-ghost btn-sm open-type"
+                            :href="typeDetailHref(selectedGroup, type.id)"
+                            target="_blank" rel="noopener"
+                            :aria-label="`Open ${type.name} in a new tab`"
+                            title="Open in a new tab"
+                            @click.stop
+                          >
+                            Open <span aria-hidden="true">↗</span>
+                          </a>
                         </h3>
                         <div v-if="expandedType === type.id" :id="`matrix-type-${groupIndex}-${typeIndex}`" class="type-body">
                           <div class="section-toolbar">
@@ -511,6 +524,9 @@ h3 { font-size: 1.05rem; }
 .accordion-heading { margin: 0; font-size: 1rem; }
 .accordion-trigger { width: 100%; display: flex; align-items: center; gap: 0.8rem; border: 0; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
 .type-trigger { padding: 1.1rem 1.25rem; }
+.type-heading { display: flex; align-items: stretch; gap: 0.5rem; }
+.type-heading .type-trigger { flex: 1 1 auto; width: auto; min-width: 0; }
+.open-type { align-self: center; margin-right: 1rem; white-space: nowrap; flex-shrink: 0; text-decoration: none; }
 .accordion-trigger:hover { background: #f6faf8; }
 .accordion-trigger[aria-expanded="true"] { background: #f6faf8; }
 .chevron { color: var(--muted); font-size: 1.5rem; line-height: 1; transition: transform 0.15s; }
@@ -545,6 +561,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   .accordion-trigger { flex-wrap: wrap; gap: 0.5rem; }
   .counts { width: 100%; margin-left: 1.1rem; }
   .type-trigger { padding: 1rem; }
+  .open-type { margin-right: 0.65rem; }
   .step-toolbar, .history-toolbar { padding: 0.8rem; }
   .group-hint { display: none; }
 }
