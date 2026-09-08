@@ -42,7 +42,7 @@ test('navigation, city search, and first step work with a completely empty matri
   await page.getByRole('button', { name: '+ Add incentive type', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Add incentive type', exact: true })
   await expect(dialog.getByRole('button', { name: 'Save first step' })).toBeDisabled()
-  await dialog.getByRole('combobox').selectOption('1')
+  await dialog.getByRole('combobox', { name: /^Incentive type/ }).selectOption('1')
   await dialog.getByLabel('Score type', { exact: true }).fill(' Delivery ')
   await expect(scoreInput(dialog)).toHaveValue('1')
   await expect(scoreInput(dialog)).toHaveAttribute('readonly')
@@ -118,8 +118,8 @@ test('new score types and incentive types start at one and configured types cann
   await expect(dialog).toBeHidden()
   await page.getByRole('button', { name: '+ Add incentive type', exact: true }).click()
   dialog = page.getByRole('dialog')
-  await expect(dialog.locator('option')).toHaveText(['Select an incentive type…', 'WEEKLY (#2)'])
-  await dialog.getByRole('combobox').selectOption('2')
+  await expect(dialog.getByRole('combobox', { name: /^Incentive type/ }).locator('option')).toHaveText(['Select an incentive type…', 'WEEKLY (#2)'])
+  await dialog.getByRole('combobox', { name: /^Incentive type/ }).selectOption('2')
   await dialog.getByLabel('Score type', { exact: true }).fill('Delivery')
   await fillValues(dialog)
   await dialog.getByRole('button', { name: 'Save first step' }).click()
@@ -164,7 +164,7 @@ test('save failures keep entered values and are retryable', async ({ page }) => 
   await openGroup(page)
   await page.getByRole('button', { name: '+ Add incentive type', exact: true }).click()
   const dialog = page.getByRole('dialog')
-  await dialog.getByRole('combobox').selectOption('1')
+  await dialog.getByRole('combobox', { name: /^Incentive type/ }).selectOption('1')
   await dialog.getByLabel('Score type', { exact: true }).fill('Delivery')
   // Required database fields are also required in the browser.
   await dialog.getByRole('button', { name: 'Save first step' }).click()
@@ -282,17 +282,17 @@ test('empty incentive lookup disables creation and explains why', async ({ page 
 })
 
 
-test('city groups are separate lines ordered by tiers, Tehran, then other groups', async ({ page }) => {
+test('city groups are separate lines ordered by Top 4, tiers, Tehran, then other groups', async ({ page }) => {
   await mockDecisionMatrix(page, {
-    groups: ['Other', 'tehran', 'Tier10', 'Tier_2', 'Tier 1', 'Another group', 'Tier3'],
+    groups: ['Other', 'tehran', 'Top40', 'Tier10', 'Tier_2', 'Tier 1', 'Another group', 'Tier3', 'Top 4'],
   })
   await page.goto('/decision-matrix')
   const list = page.getByRole('list', { name: 'City groups', exact: true })
   const buttons = list.getByRole('button')
-  await expect(buttons).toHaveCount(7)
+  await expect(buttons).toHaveCount(9)
   expect(await buttons.evaluateAll((elements) => elements.map((el) => el.getAttribute('aria-label')))).toEqual([
-    'Open city group Tier 1', 'Open city group Tier_2', 'Open city group Tier3', 'Open city group Tier10',
-    'Open city group tehran', 'Open city group Another group', 'Open city group Other',
+    'Open city group Top 4', 'Open city group Tier 1', 'Open city group Tier_2', 'Open city group Tier3', 'Open city group Tier10',
+    'Open city group tehran', 'Open city group Another group', 'Open city group Other', 'Open city group Top40',
   ])
   const boxes = await buttons.evaluateAll((elements) => elements.map((el) => {
     const { x, y, width, height } = el.getBoundingClientRect()
@@ -435,3 +435,70 @@ for (const change of ['deactivated', 'deleted']) {
     }
   })
 }
+
+
+test('Top 4 priority handles capitalization and separators without changing stored group names', async ({ page }) => {
+  const state = await mockDecisionMatrix(page)
+  for (const top4 of ['top4', 'TOP_4', 'Top-4']) {
+    state.groups = ['Other', 'Tehran', 'Tier 1', top4]
+    await page.goto('/decision-matrix')
+    const buttons = page.getByRole('list', { name: 'City groups', exact: true }).getByRole('button')
+    await expect(buttons.first()).toHaveAttribute('aria-label', `Open city group ${top4}`)
+    await openGroup(page, top4)
+    expect(state.reads.at(-1)).toBe(top4)
+  }
+})
+
+async function scoreTypePicker(dialog) {
+  const input = dialog.getByRole('combobox', { name: 'Score type', exact: true })
+  await expect(input).toHaveAttribute('list', 'matrix-score-type-options')
+  expect(await input.evaluate((el) => Array.from(el.list.options, (option) => option.value))).toEqual([
+    'Performance', 'Weather', 'Order Level Increase',
+  ])
+  return input
+}
+
+test('the first score type offers the presets and saves the selected name', async ({ page }) => {
+  const state = await mockDecisionMatrix(page)
+  await page.goto('/decision-matrix')
+  await openGroup(page)
+  await page.getByRole('button', { name: '+ Add incentive type', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByRole('combobox', { name: /^Incentive type/ }).selectOption('1')
+  const input = await scoreTypePicker(dialog)
+  await input.fill('Performance')
+  await fillValues(dialog)
+  await dialog.getByRole('button', { name: 'Save first step', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  expect(state.writes[0].payload.score_type).toBe('Performance')
+  await expect(page.getByRole('region', { name: 'Performance active steps', exact: true })).toBeVisible()
+})
+
+test('new score types accept preset or custom names and still reject duplicates', async ({ page }) => {
+  const state = await mockDecisionMatrix(page, { rows: [makeStep({ score_type: 'Performance' })] })
+  await page.goto('/decision-matrix')
+  await openGroup(page)
+  await openSeries(page, 'Performance')
+  await page.getByRole('button', { name: '+ Add score type', exact: true }).click()
+  let dialog = page.getByRole('dialog')
+  const input = await scoreTypePicker(dialog)
+  await input.fill('Performance')
+  await fillValues(dialog)
+  await dialog.getByRole('button', { name: 'Save first step', exact: true }).click()
+  await expect(dialog.getByRole('alert')).toContainText('This score type already exists')
+  expect(state.writes).toHaveLength(0)
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+
+  for (const name of ['Weather', 'Order Level Increase', '  Customer Experience  ']) {
+    await page.getByRole('button', { name: '+ Add score type', exact: true }).click()
+    dialog = page.getByRole('dialog')
+    await (await scoreTypePicker(dialog)).fill(name)
+    await fillValues(dialog)
+    await dialog.getByRole('button', { name: 'Save first step', exact: true }).click()
+    await expect(dialog).toBeHidden()
+    await expect(page.getByRole('region', { name: `${name.trim()} active steps`, exact: true })).toBeVisible()
+  }
+  expect(state.writes.map((write) => write.payload.score_type)).toEqual([
+    'Weather', 'Order Level Increase', 'Customer Experience',
+  ])
+})

@@ -37,6 +37,7 @@ let disposed = false
 const groupCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
 function groupRank(group) {
   const name = group.trim().toLowerCase()
+  if (/^top[\s_-]*4$/.test(name)) return -1
   if (/^tiers?(?:$|[\s_-]|\d)/.test(name)) return 0
   if (name === 'tehran' || name === 'تهران') return 1
   return 2

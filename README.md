@@ -153,16 +153,21 @@ The hierarchy is **City group → Incentive type → Score type → Score steps*
 
 1. The first screen lists distinct, non-null/non-blank `city_group` values from
    `incentive.incentive_active_city`. Groups appear even when the matrix is
-   completely empty. Groups appear **one per line**, ordered **tiers first**
-   (naturally, e.g. Tier 2 before Tier 10), then **Tehran**, then other groups.
+   completely empty. Groups appear **one per line**, ordered **Top 4 first**,
+   then **tiers** (naturally, e.g. Tier 2 before Tier 10), then **Tehran**, then
+   other groups. Top 4 matching ignores case and accepts spaces, underscores,
+   or hyphens (e.g. `Top 4`, `top4`, `TOP_4`).
    Search the list and click a group to configure it.
 2. Each configured incentive type has its own expandable panel. **Add incentive
    type** selects an existing `id`/`name` from `mafsho.incentive_type`, just like
    the Cities **Add plan** dropdown. The matrix's `incentive_type` column stores
    the **ID**, while the UI shows the **name**. Arbitrary IDs/types cannot be
    added through the API, and the lookup table is never modified.
-3. Expand an incentive type to see its score types. **Add score type** accepts a
-   new name within that group/type. Since the table holds one row per step,
+3. Expand an incentive type to see its score types. The score-type field in
+   **Add incentive type** and **Add score type** offers **Performance**,
+   **Weather**, and **Order Level Increase** as selectable suggestions. You can
+   also type a custom name; this list is not a restriction on valid score types.
+   Since the table holds one row per step,
    adding an incentive type or score type also saves its **first score step**;
    there are no incomplete placeholder rows or separate parent tables.
 4. Expand a score type to see its **Active steps** table. **Add step** uses

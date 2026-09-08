@@ -11,6 +11,7 @@ const props = defineProps({
   error: { type: String, default: '' },
 })
 const emit = defineEmits(['save', 'close'])
+const scoreTypeSuggestions = ['Performance', 'Weather', 'Order Level Increase']
 const valueLabels = {
   target_increase: 'Target increase',
   pr_increase: 'PR increase',
@@ -109,9 +110,13 @@ function submit() {
             required
             :maxlength="maxLength(scoreTypeColumn)"
             :autofocus="context.mode === 'scoreType'"
-            placeholder="Enter a score type"
+            placeholder="Select or type a score type"
+            list="matrix-score-type-options"
             autocomplete="off"
           />
+          <datalist id="matrix-score-type-options">
+            <option v-for="name in scoreTypeSuggestions" :key="name" :value="name" />
+          </datalist>
         </label>
         <label class="field">
           <span>Score</span>
