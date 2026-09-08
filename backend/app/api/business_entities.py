@@ -211,7 +211,7 @@ def _clean_payload(payload, cols):
     serialized to a JSON string if they arrive as a list (or comma string).
     """
     json_cols = {c["Field"] for c in cols if _is_json_column(c)}
-    allowed = {c["Field"] for c in cols}
+    allowed = {c["Field"] for c in cols} - {"updated_at", "deactivated_at"}
     data = {}
     for key, value in payload.items():
         if key not in allowed:
@@ -311,6 +311,8 @@ async def update_business_entity(entity_id: str, payload: dict):
         )
 
     set_clause = ", ".join(f"`{c}` = :{c}" for c in data)
+    if any(c["Field"] == "updated_at" for c in cols):
+        set_clause += ", `updated_at` = CURRENT_TIMESTAMP"
     params = dict(data)
     params["pk_value"] = entity_id
     sql = text(f"UPDATE {TABLE_SQL} SET {set_clause} WHERE `{pk}` = :pk_value")
@@ -327,37 +329,3 @@ async def update_business_entity(entity_id: str, payload: dict):
             content={"status": "error", "message": "Business entity not found (nothing updated)."},
         )
     return {"status": "ok", "message": "Business entity updated successfully."}
-
-
-@router.delete("/{entity_id}")
-async def delete_business_entity(entity_id: str):
-    try:
-        cols = _columns()
-    except Exception as exc:
-        status, msg = _failure(exc)
-        return JSONResponse(status_code=status, content={"status": "error", "message": msg})
-
-    pk = _primary_key(cols)
-    if not pk:
-        return JSONResponse(
-            status_code=400,
-            content={
-                "status": "error",
-                "message": f"Table '{TABLE_NAME}' has no primary key; cannot delete rows.",
-            },
-        )
-
-    sql = text(f"DELETE FROM {TABLE_SQL} WHERE `{pk}` = :pk_value")
-    try:
-        with engine.begin() as conn:
-            result = conn.execute(sql, {"pk_value": entity_id})
-    except Exception as exc:
-        status, msg = _failure(exc)
-        return JSONResponse(status_code=status, content={"status": "error", "message": msg})
-
-    if result.rowcount == 0:
-        return JSONResponse(
-            status_code=404,
-            content={"status": "error", "message": "Business entity not found (nothing deleted)."},
-        )
-    return {"status": "ok", "message": "Business entity deleted successfully."}

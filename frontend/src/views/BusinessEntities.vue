@@ -22,9 +22,10 @@ const editing = ref(null)
 const form = ref({})
 const saving = ref(false)
 
-const showDelete = ref(false)
-const deletingRow = ref(null)
-const deleting = ref(false)
+const showDeactivated = ref(false)
+const managedColumns = new Set(['updated_at', 'deactivated_at'])
+const activeRows = computed(() => rows.value.filter((r) => r.deactivated_at == null))
+const deactivatedRows = computed(() => rows.value.filter((r) => r.deactivated_at != null))
 
 const message = ref(null)
 let msgTimer = null
@@ -37,6 +38,7 @@ const textColumns = computed(() =>
   columns.value.filter(
     (c) =>
       !c.json_array &&
+      !managedColumns.has(c.name) &&
       !(c.key === 'PRI' && (c.extra || '').includes('auto_increment'))
   )
 )
@@ -149,8 +151,9 @@ function kindFor(name) {
 
 const filteredRows = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
-  if (!q) return rows.value
-  return rows.value.filter((row) => {
+  const visible = showDeactivated.value ? [...activeRows.value, ...deactivatedRows.value] : activeRows.value
+  if (!q) return visible
+  return visible.filter((row) => {
     // search in name/fa_name
     if (['name', 'fa_name'].some((n) => String(row[n] ?? '').toLowerCase().includes(q))) return true
     // also search in main_customer_id and other customer ids for convenience
@@ -161,9 +164,20 @@ const filteredRows = computed(() => {
   })
 })
 
+function formatDate(value) {
+  if (!value) return ''
+  const d = new Date(value)
+  if (isNaN(d)) return value
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(d)
+}
+
 function cellText(row, col) {
   const v = row[col.name]
   if (v === null || v === undefined || v === '') return ''
+  if (managedColumns.has(col.name)) return formatDate(v)
   if (col.json_array) {
     const list = asArray(v)
     return list.length ? list.join(', ') : ''
@@ -178,7 +192,7 @@ function chipClass(colName) {
 
 // Order columns for better UX: name, fa_name first, then customer ids (include, exclude, main), then categories, then rest
 const tableColumns = computed(() => {
-  const base = columns.value.filter((c) => !(c.key === 'PRI' && (c.extra || '').includes('auto_increment')))
+  const base = columns.value.filter((c) => (c.name !== 'deactivated_at' || showDeactivated.value) && !(c.key === 'PRI' && (c.extra || '').includes('auto_increment')))
   const order = ['name', 'fa_name', 'include_customer_id', 'exclude_customer_id', 'main_customer_id', 'include_delivery_category', 'exclude_delivery_category']
   const ordered = []
   const remaining = [...base]
@@ -219,7 +233,7 @@ function openAdd() {
   editing.value = null
   form.value = {}
   for (const c of columns.value) {
-    if (c.key === 'PRI' && (c.extra || '').includes('auto_increment')) continue
+    if (managedColumns.has(c.name) || (c.key === 'PRI' && (c.extra || '').includes('auto_increment'))) continue
     form.value[c.name] = c.json_array ? [] : c.default ?? ''
   }
   showModal.value = true
@@ -229,7 +243,7 @@ function openEdit(row) {
   editing.value = row
   form.value = {}
   for (const c of columns.value) {
-    if (c.key === 'PRI' && (c.extra || '').includes('auto_increment')) continue
+    if (managedColumns.has(c.name) || (c.key === 'PRI' && (c.extra || '').includes('auto_increment'))) continue
     form.value[c.name] = c.json_array ? asArray(row[c.name]) : row[c.name] ?? ''
   }
   showModal.value = true
@@ -240,7 +254,7 @@ async function save() {
   try {
     const payload = {}
     for (const c of columns.value) {
-      if (c.key === 'PRI' && (c.extra || '').includes('auto_increment')) continue
+      if (managedColumns.has(c.name) || (c.key === 'PRI' && (c.extra || '').includes('auto_increment'))) continue
       payload[c.name] = c.json_array ? form.value[c.name] || [] : form.value[c.name]
     }
 
@@ -264,30 +278,6 @@ async function save() {
     showMessage('error', e.message)
   } finally {
     saving.value = false
-  }
-}
-
-function askDelete(row) {
-  deletingRow.value = row
-  showDelete.value = true
-}
-
-async function confirmDelete() {
-  deleting.value = true
-  try {
-    const res = await fetch(
-      `/api/business-entities/${encodeURIComponent(pkValue(deletingRow.value))}`,
-      { method: 'DELETE' }
-    )
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.message || data.detail || 'Delete failed')
-    showDelete.value = false
-    showMessage('ok', data.message || 'Deleted')
-    await load()
-  } catch (e) {
-    showMessage('error', e.message)
-  } finally {
-    deleting.value = false
   }
 }
 
@@ -323,6 +313,11 @@ onMounted(load)
             placeholder="Search by name or customer ID…"
           />
         </div>
+        <span class="entity-counts">{{ activeRows.length }} active · {{ deactivatedRows.length }} deactivated</span>
+        <button v-if="deactivatedRows.length" class="btn btn-ghost btn-sm"
+          :aria-pressed="showDeactivated" @click="showDeactivated = !showDeactivated">
+          {{ showDeactivated ? 'Hide deactivated' : `Show deactivated (${deactivatedRows.length})` }}
+        </button>
         <span class="result-count">
           {{ filteredRows.length }} of {{ rows.length }} entities
         </span>
@@ -339,11 +334,12 @@ onMounted(load)
               >
                 {{ colLabel(c.name) }}
               </th>
+              <th>Status</th>
               <th class="actions-col">Actions</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in filteredRows" :key="pkValue(row)">
+            <tr v-for="row in filteredRows" :key="pkValue(row)" :class="{ 'is-deactivated': row.deactivated_at != null }">
               <td
                 v-for="c in tableColumns"
                 :key="c.name"
@@ -362,15 +358,17 @@ onMounted(load)
                 </div>
                 <span v-else class="cell-text">{{ cellText(row, c) || '—' }}</span>
               </td>
+              <td><span class="badge" :class="row.deactivated_at == null ? 'active' : 'deactivated'">
+                {{ row.deactivated_at == null ? 'Active' : 'Deactivated' }}
+              </span></td>
               <td class="actions-col">
                 <button class="btn btn-ghost btn-sm" @click="openEdit(row)">Edit</button>
-                <button class="btn btn-danger btn-sm" @click="askDelete(row)">Delete</button>
               </td>
             </tr>
             <tr v-if="filteredRows.length === 0">
-              <td class="empty" :colspan="tableColumns.length + 1">
+              <td class="empty" :colspan="tableColumns.length + 2">
                 <template v-if="rows.length === 0">No business entities yet — add the first one.</template>
-                <template v-else>No entities match your search.</template>
+                <template v-else>No entities match your search and status filter.</template>
               </td>
             </tr>
           </tbody>
@@ -418,30 +416,32 @@ onMounted(load)
       </div>
     </div>
 
-    <!-- delete confirmation -->
-    <div v-if="showDelete" class="overlay" @click.self="showDelete = false">
-      <div class="modal">
-        <h2>Delete business entity</h2>
-        <p class="confirm-text">
-          Are you sure you want to delete
-          <strong>{{ deletingRow?.name }}</strong>
-          <em v-if="deletingRow?.fa_name"> ({{ deletingRow.fa_name }})</em>?
-          This cannot be undone.
-        </p>
-        <div class="actions">
-          <button class="btn btn-ghost" @click="showDelete = false">Cancel</button>
-          <button class="btn btn-danger" :disabled="deleting" @click="confirmDelete">
-            {{ deleting ? 'Deleting…' : 'Delete' }}
-          </button>
-        </div>
-      </div>
-    </div>
-
     <div v-if="message" class="toast" :class="message.type">{{ message.text }}</div>
   </div>
 </template>
 
 <style scoped>
+.badge {
+  display: inline-block;
+  padding: 0.12rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.badge.active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+.badge.deactivated {
+  background: #eceff0;
+  color: #687876;
+}
+
+
+.entity-counts { font-size: 0.82rem; color: var(--muted); }
+.is-deactivated td { color: var(--muted); }
+
 .head {
   display: flex;
   align-items: flex-end;
