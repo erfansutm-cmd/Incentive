@@ -22,9 +22,13 @@ const editing = ref(null)
 const form = ref({})
 const saving = ref(false)
 
-const showDelete = ref(false)
-const deletingRow = ref(null)
-const deleting = ref(false)
+const deactivateTarget = ref(null)
+const deactivating = ref(false)
+const deactivateError = ref('')
+const showDeactivated = ref(false)
+const managedColumns = new Set(['updated_at', 'deactivated_at'])
+const activeRows = computed(() => rows.value.filter((r) => r.deactivated_at == null))
+const deactivatedRows = computed(() => rows.value.filter((r) => r.deactivated_at != null))
 
 const message = ref(null)
 let msgTimer = null
@@ -37,6 +41,7 @@ const textColumns = computed(() =>
   columns.value.filter(
     (c) =>
       !c.json_array &&
+      !managedColumns.has(c.name) &&
       !(c.key === 'PRI' && (c.extra || '').includes('auto_increment'))
   )
 )
@@ -147,10 +152,10 @@ function kindFor(name) {
   return customerColumns.has(name) ? 'number' : 'text'
 }
 
-const filteredRows = computed(() => {
+function filterRows(visible) {
   const q = searchQuery.value.trim().toLowerCase()
-  if (!q) return rows.value
-  return rows.value.filter((row) => {
+  if (!q) return visible
+  return visible.filter((row) => {
     // search in name/fa_name
     if (['name', 'fa_name'].some((n) => String(row[n] ?? '').toLowerCase().includes(q))) return true
     // also search in main_customer_id and other customer ids for convenience
@@ -159,11 +164,21 @@ const filteredRows = computed(() => {
     }
     return false
   })
-})
+}
+
+function formatDate(value) {
+  if (!value) return ''
+  const d = new Date(value)
+  if (isNaN(d)) return value
+  const date = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(d)
+  const time = new Intl.DateTimeFormat(undefined, { timeStyle: 'short' }).format(d)
+  return `${date},\n${time}`
+}
 
 function cellText(row, col) {
   const v = row[col.name]
   if (v === null || v === undefined || v === '') return ''
+  if (managedColumns.has(col.name)) return formatDate(v)
   if (col.json_array) {
     const list = asArray(v)
     return list.length ? list.join(', ') : ''
@@ -178,7 +193,7 @@ function chipClass(colName) {
 
 // Order columns for better UX: name, fa_name first, then customer ids (include, exclude, main), then categories, then rest
 const tableColumns = computed(() => {
-  const base = columns.value.filter((c) => !(c.key === 'PRI' && (c.extra || '').includes('auto_increment')))
+  const base = columns.value.filter((c) => c.name !== 'deactivated_at' && !(c.key === 'PRI' && (c.extra || '').includes('auto_increment')))
   const order = ['name', 'fa_name', 'include_customer_id', 'exclude_customer_id', 'main_customer_id', 'include_delivery_category', 'exclude_delivery_category']
   const ordered = []
   const remaining = [...base]
@@ -192,6 +207,25 @@ const tableColumns = computed(() => {
   // append any other columns that were not in the predefined order (future columns)
   return [...ordered, ...remaining]
 })
+
+const sections = computed(() => {
+  const active = { key: 'active', title: 'Active entities', rows: filterRows(activeRows.value), columns: tableColumns.value, editable: true }
+  if (!showDeactivated.value) return [active]
+  const deactivatedAt = columns.value.find((c) => c.name === 'deactivated_at')
+  return [active, {
+    key: 'deactivated', title: 'Deactivated entities', rows: filterRows(deactivatedRows.value),
+    columns: deactivatedAt ? [...tableColumns.value, deactivatedAt] : tableColumns.value,
+    editable: false,
+  }]
+})
+const visibleCount = computed(() => sections.value.reduce((count, section) => count + section.rows.length, 0))
+
+function columnClass(name) {
+  return {
+    'timestamp-col': managedColumns.has(name),
+    'include-customer-col': name === 'include_customer_id',
+  }
+}
 
 function showMessage(type, text) {
   message.value = { type, text }
@@ -219,17 +253,18 @@ function openAdd() {
   editing.value = null
   form.value = {}
   for (const c of columns.value) {
-    if (c.key === 'PRI' && (c.extra || '').includes('auto_increment')) continue
+    if (managedColumns.has(c.name) || (c.key === 'PRI' && (c.extra || '').includes('auto_increment'))) continue
     form.value[c.name] = c.json_array ? [] : c.default ?? ''
   }
   showModal.value = true
 }
 
 function openEdit(row) {
+  if (row.deactivated_at != null) return
   editing.value = row
   form.value = {}
   for (const c of columns.value) {
-    if (c.key === 'PRI' && (c.extra || '').includes('auto_increment')) continue
+    if (managedColumns.has(c.name) || (c.key === 'PRI' && (c.extra || '').includes('auto_increment'))) continue
     form.value[c.name] = c.json_array ? asArray(row[c.name]) : row[c.name] ?? ''
   }
   showModal.value = true
@@ -240,7 +275,7 @@ async function save() {
   try {
     const payload = {}
     for (const c of columns.value) {
-      if (c.key === 'PRI' && (c.extra || '').includes('auto_increment')) continue
+      if (managedColumns.has(c.name) || (c.key === 'PRI' && (c.extra || '').includes('auto_increment'))) continue
       payload[c.name] = c.json_array ? form.value[c.name] || [] : form.value[c.name]
     }
 
@@ -267,27 +302,32 @@ async function save() {
   }
 }
 
-function askDelete(row) {
-  deletingRow.value = row
-  showDelete.value = true
+function askDeactivate(row) {
+  deactivateError.value = ''
+  deactivateTarget.value = row
 }
 
-async function confirmDelete() {
-  deleting.value = true
+function cancelDeactivate() {
+  if (!deactivating.value) deactivateTarget.value = null
+}
+
+async function confirmDeactivate() {
+  if (deactivating.value || !deactivateTarget.value) return
+  deactivating.value = true
+  deactivateError.value = ''
   try {
-    const res = await fetch(
-      `/api/business-entities/${encodeURIComponent(pkValue(deletingRow.value))}`,
-      { method: 'DELETE' }
-    )
+    const res = await fetch(`/api/business-entities/${encodeURIComponent(pkValue(deactivateTarget.value))}/deactivate`, {
+      method: 'POST',
+    })
     const data = await res.json()
-    if (!res.ok) throw new Error(data.message || data.detail || 'Delete failed')
-    showDelete.value = false
-    showMessage('ok', data.message || 'Deleted')
+    if (!res.ok) throw new Error(data.message || data.detail || 'Deactivation failed')
+    deactivateTarget.value = null
+    showMessage('ok', data.message || 'Business entity deactivated.')
     await load()
   } catch (e) {
-    showMessage('error', e.message)
+    deactivateError.value = e.message
   } finally {
-    deleting.value = false
+    deactivating.value = false
   }
 }
 
@@ -312,7 +352,7 @@ onMounted(load)
 
     <div v-else-if="loading" class="card empty">Loading…</div>
 
-    <div v-else class="card table-card">
+    <div v-else class="table-card">
       <div class="toolbar">
         <div class="search-wrap">
           <span class="search-icon">🔎</span>
@@ -323,29 +363,42 @@ onMounted(load)
             placeholder="Search by name or customer ID…"
           />
         </div>
+        <span class="entity-counts">{{ activeRows.length }} active · {{ deactivatedRows.length }} deactivated</span>
+        <button v-if="deactivatedRows.length" class="btn btn-ghost btn-sm"
+          :aria-pressed="showDeactivated" @click="showDeactivated = !showDeactivated">
+          {{ showDeactivated ? 'Hide deactivated' : `Show deactivated (${deactivatedRows.length})` }}
+        </button>
         <span class="result-count">
-          {{ filteredRows.length }} of {{ rows.length }} entities
+          {{ visibleCount }} of {{ rows.length }} entities
         </span>
       </div>
 
+      <section v-for="section in sections" :key="section.key" class="entity-section" :class="section.key" :aria-labelledby="section.editable ? undefined : `${section.key}-heading`" :aria-label="section.editable ? 'Active entities' : undefined">
+        <header v-if="!section.editable" class="section-header">
+          <h2 :id="`${section.key}-heading`" class="section-heading">
+            {{ section.title }} <span class="section-count">{{ section.rows.length }}</span>
+          </h2>
+          <p class="section-description">{{ section.editable ? 'Current business entities — available to edit or deactivate.' : 'Previously deactivated entities — read-only.' }}</p>
+        </header>
       <div class="table-scroll">
         <table>
           <thead>
             <tr>
               <th
-                v-for="c in tableColumns"
+                v-for="c in section.columns"
                 :key="c.name"
                 :title="colLabel(c.name)"
+                :class="columnClass(c.name)"
               >
                 {{ colLabel(c.name) }}
               </th>
-              <th class="actions-col">Actions</th>
+              <th v-if="section.editable" class="actions-col">Actions</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in filteredRows" :key="pkValue(row)">
+            <tr v-for="row in section.rows" :key="pkValue(row)" :class="{ 'is-deactivated': row.deactivated_at != null }">
               <td
-                v-for="c in tableColumns"
+                v-for="c in section.columns"
                 :key="c.name"
               >
                 <div v-if="c.json_array" class="cell-chips">
@@ -360,22 +413,24 @@ onMounted(load)
                   </template>
                   <span v-else class="muted">—</span>
                 </div>
-                <span v-else class="cell-text">{{ cellText(row, c) || '—' }}</span>
+                <span v-else class="cell-text" :class="{ 'timestamp': managedColumns.has(c.name) }">{{ cellText(row, c) || '—' }}</span>
               </td>
-              <td class="actions-col">
+              <td v-if="section.editable" class="actions-col">
                 <button class="btn btn-ghost btn-sm" @click="openEdit(row)">Edit</button>
-                <button class="btn btn-danger btn-sm" @click="askDelete(row)">Delete</button>
+                <button v-if="row.deactivated_at == null" class="btn btn-danger btn-sm"
+                  @click="askDeactivate(row)">Deactivate</button>
               </td>
             </tr>
-            <tr v-if="filteredRows.length === 0">
-              <td class="empty" :colspan="tableColumns.length + 1">
+            <tr v-if="section.rows.length === 0">
+              <td class="empty" :colspan="section.columns.length + (section.editable ? 1 : 0)">
                 <template v-if="rows.length === 0">No business entities yet — add the first one.</template>
-                <template v-else>No entities match your search.</template>
+                <template v-else>No entities match your search and status filter.</template>
               </td>
             </tr>
           </tbody>
         </table>
       </div>
+      </section>
     </div>
 
     <!-- add / edit popup -->
@@ -418,20 +473,19 @@ onMounted(load)
       </div>
     </div>
 
-    <!-- delete confirmation -->
-    <div v-if="showDelete" class="overlay" @click.self="showDelete = false">
-      <div class="modal">
-        <h2>Delete business entity</h2>
+    <div v-if="deactivateTarget" class="overlay" @click.self="cancelDeactivate">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="deactivate-title">
+        <h2 id="deactivate-title">Deactivate business entity</h2>
         <p class="confirm-text">
-          Are you sure you want to delete
-          <strong>{{ deletingRow?.name }}</strong>
-          <em v-if="deletingRow?.fa_name"> ({{ deletingRow.fa_name }})</em>?
-          This cannot be undone.
+          Deactivate <strong>{{ deactivateTarget.name }}</strong>
+          <em v-if="deactivateTarget.fa_name"> ({{ deactivateTarget.fa_name }})</em>?
+          It will move to the deactivated list. The entity will not be deleted.
         </p>
+        <p v-if="deactivateError" role="alert">{{ deactivateError }}</p>
         <div class="actions">
-          <button class="btn btn-ghost" @click="showDelete = false">Cancel</button>
-          <button class="btn btn-danger" :disabled="deleting" @click="confirmDelete">
-            {{ deleting ? 'Deleting…' : 'Delete' }}
+          <button class="btn btn-ghost" :disabled="deactivating" @click="cancelDeactivate">Cancel</button>
+          <button class="btn btn-danger" :disabled="deactivating" @click="confirmDeactivate">
+            {{ deactivating ? 'Deactivating…' : 'Deactivate' }}
           </button>
         </div>
       </div>
@@ -442,6 +496,9 @@ onMounted(load)
 </template>
 
 <style scoped>
+.entity-counts { font-size: 0.82rem; color: var(--muted); }
+.is-deactivated td { color: var(--muted); }
+
 .head {
   display: flex;
   align-items: flex-end;
@@ -482,7 +539,9 @@ onMounted(load)
   align-items: center;
   gap: 0.75rem;
   padding: 0.85rem 1rem;
-  border-bottom: 1px solid var(--border);
+  border: 1px solid var(--border);
+  border-radius: 0.7rem;
+  margin-bottom: 1rem;
   background: #fbfdfc;
 }
 .search-wrap {
@@ -522,14 +581,14 @@ onMounted(load)
   white-space: nowrap;
 }
 
-/* === NO HORIZONTAL SLIDE + ALIGNMENT === */
+/* Wrap full labels and values; scroll on narrow screens rather than clip. */
 .table-scroll {
   width: 100%;
-  overflow-x: hidden;
+  overflow-x: auto;
 }
 table {
   width: 100%;
-  max-width: 100%;
+  min-width: 1100px;
   table-layout: fixed;
   border-collapse: collapse;
 }
@@ -545,10 +604,51 @@ thead th {
   text-transform: uppercase;
   letter-spacing: 0.03em;
   border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
   vertical-align: middle;
+}
+
+/* Reserve more space for customer IDs while keeping two-line timestamps compact. */
+thead th.timestamp-col { width: 115px; }
+thead th.include-customer-col { width: 210px; }
+.entity-section {
+  border: 1px solid var(--border);
+  border-radius: 0.8rem;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 3px 12px rgba(20, 40, 30, 0.05);
+}
+.entity-section + .entity-section { margin-top: 2.5rem; }
+.section-header {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  background: var(--accent-soft);
+}
+.deactivated .section-header {
+  background: #eceff0;
+  border-left-color: #879694;
+}
+.section-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text);
+}
+.section-count {
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  background: #fff;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.section-description {
+  margin: 0.4rem 0 0;
+  font-size: 0.82rem;
+  color: var(--muted);
 }
 
 /* Body: middle alignment for clean rows */
@@ -579,6 +679,10 @@ tbody tr:hover {
   vertical-align: middle;
 }
 
+.cell-text.timestamp {
+  white-space: pre-line;
+}
+
 /* Chips: all green, aligned left, wrapped */
 .cell-chips {
   display: flex;
@@ -598,11 +702,10 @@ tbody tr:hover {
   border-radius: 999px;
   font-size: 0.76rem;
   font-weight: 600;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
   line-height: 1.3;
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
   background: var(--accent-soft);
   color: var(--accent-strong);
   border: 1px solid #cfe3d9;
@@ -610,9 +713,9 @@ tbody tr:hover {
 
 /* Actions column: fixed width, right-aligned with proper spacing */
 .actions-col {
-  width: 132px;
-  min-width: 132px;
-  max-width: 132px;
+  width: 180px;
+  min-width: 180px;
+  max-width: 180px;
   text-align: right;
   white-space: nowrap;
   vertical-align: middle;
@@ -624,7 +727,7 @@ tbody tr:hover {
   font-size: 0.78rem;
   vertical-align: middle;
 }
-/* delete button needs space to the left */
+/* Separate the edit and deactivate actions. */
 .actions-col .btn + .btn {
   margin-left: 0.75rem;
 }
@@ -643,9 +746,9 @@ tbody tr:hover {
     padding: 0.12rem 0.45rem;
   }
   .actions-col {
-    width: 124px;
-    min-width: 124px;
-    max-width: 124px;
+    width: 180px;
+    min-width: 180px;
+    max-width: 180px;
     padding-right: 0.7rem;
   }
   .actions-col .btn + .btn {

@@ -211,7 +211,7 @@ def _clean_payload(payload, cols):
     serialized to a JSON string if they arrive as a list (or comma string).
     """
     json_cols = {c["Field"] for c in cols if _is_json_column(c)}
-    allowed = {c["Field"] for c in cols}
+    allowed = {c["Field"] for c in cols} - {"updated_at", "deactivated_at"}
     data = {}
     for key, value in payload.items():
         if key not in allowed:
@@ -273,6 +273,11 @@ async def add_business_entity(payload: dict):
         values.append(f":{c}")
         params[c] = data[c]
 
+    # Set the audit timestamp on creation too, independent of DB defaults.
+    if any(c["Field"] == "updated_at" for c in cols):
+        names.append("`updated_at`")
+        values.append("CURRENT_TIMESTAMP")
+
     sql = text(f"INSERT INTO {TABLE_SQL} ({', '.join(names)}) VALUES ({', '.join(values)})")
     try:
         with engine.begin() as conn:
@@ -311,9 +316,13 @@ async def update_business_entity(entity_id: str, payload: dict):
         )
 
     set_clause = ", ".join(f"`{c}` = :{c}" for c in data)
+    if any(c["Field"] == "updated_at" for c in cols):
+        set_clause += ", `updated_at` = CURRENT_TIMESTAMP"
     params = dict(data)
     params["pk_value"] = entity_id
-    sql = text(f"UPDATE {TABLE_SQL} SET {set_clause} WHERE `{pk}` = :pk_value")
+    # Deactivated entities are read-only, including for direct API requests.
+    active_only = " AND `deactivated_at` IS NULL" if any(c["Field"] == "deactivated_at" for c in cols) else ""
+    sql = text(f"UPDATE {TABLE_SQL} SET {set_clause} WHERE `{pk}` = :pk_value{active_only}")
     try:
         with engine.begin() as conn:
             result = conn.execute(sql, params)
@@ -324,40 +333,37 @@ async def update_business_entity(entity_id: str, payload: dict):
     if result.rowcount == 0:
         return JSONResponse(
             status_code=404,
-            content={"status": "error", "message": "Business entity not found (nothing updated)."},
+            content={"status": "error", "message": "Business entity not found, deactivated, or unchanged."},
         )
     return {"status": "ok", "message": "Business entity updated successfully."}
 
 
-@router.delete("/{entity_id}")
-async def delete_business_entity(entity_id: str):
+@router.post("/{entity_id}/deactivate")
+async def deactivate_business_entity(entity_id: str):
     try:
         cols = _columns()
-    except Exception as exc:
-        status, msg = _failure(exc)
-        return JSONResponse(status_code=status, content={"status": "error", "message": msg})
-
-    pk = _primary_key(cols)
-    if not pk:
-        return JSONResponse(
-            status_code=400,
-            content={
-                "status": "error",
-                "message": f"Table '{TABLE_NAME}' has no primary key; cannot delete rows.",
-            },
-        )
-
-    sql = text(f"DELETE FROM {TABLE_SQL} WHERE `{pk}` = :pk_value")
-    try:
+        pk = _primary_key(cols)
+        fields = {c["Field"] for c in cols}
+        if not pk or "deactivated_at" not in fields:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "Table requires a primary key and deactivated_at to deactivate entities."},
+            )
+        assignments = "`deactivated_at` = CURRENT_TIMESTAMP"
+        if "updated_at" in fields:
+            assignments += ", `updated_at` = CURRENT_TIMESTAMP"
         with engine.begin() as conn:
-            result = conn.execute(sql, {"pk_value": entity_id})
+            result = conn.execute(
+                text(f"UPDATE {TABLE_SQL} SET {assignments} "
+                     f"WHERE `{pk}` = :pk_value AND `deactivated_at` IS NULL"),
+                {"pk_value": entity_id},
+            )
+        if result.rowcount == 0:
+            return JSONResponse(
+                status_code=404,
+                content={"status": "error", "message": "Business entity not found or already deactivated."},
+            )
     except Exception as exc:
         status, msg = _failure(exc)
         return JSONResponse(status_code=status, content={"status": "error", "message": msg})
-
-    if result.rowcount == 0:
-        return JSONResponse(
-            status_code=404,
-            content={"status": "error", "message": "Business entity not found (nothing deleted)."},
-        )
-    return {"status": "ok", "message": "Business entity deleted successfully."}
+    return {"status": "ok", "message": "Business entity deactivated successfully."}

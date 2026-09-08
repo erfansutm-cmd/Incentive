@@ -70,10 +70,14 @@ def _primary_key(cols):
 
 @router.get("")
 def list_types():
-    """List all incentive types (id, name, created_at) ordered by id."""
+    """Return only active incentive types for the Add Plan selector."""
     try:
         cols = _columns()
         pk = _primary_key(cols)
+        # Older lookup tables have no lifecycle column; all their types are active.
+        where = " WHERE `deactivated_at` IS NULL" if any(
+            c["Field"] == "deactivated_at" for c in cols
+        ) else ""
         if pk:
             order = f" ORDER BY `{pk}`"
         elif "id" in {c["Field"] for c in cols}:
@@ -81,7 +85,7 @@ def list_types():
         else:
             order = ""
         with engine.connect() as conn:
-            rows = conn.execute(text(f"SELECT * FROM {TABLE_SQL}{order}"))
+            rows = conn.execute(text(f"SELECT * FROM {TABLE_SQL}{where}{order}"))
             data = [{k: _jsonable(v) for k, v in r._mapping.items()} for r in rows]
     except Exception as exc:
         status, msg = _failure(exc)
