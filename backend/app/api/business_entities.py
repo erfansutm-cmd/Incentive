@@ -320,7 +320,9 @@ async def update_business_entity(entity_id: str, payload: dict):
         set_clause += ", `updated_at` = CURRENT_TIMESTAMP"
     params = dict(data)
     params["pk_value"] = entity_id
-    sql = text(f"UPDATE {TABLE_SQL} SET {set_clause} WHERE `{pk}` = :pk_value")
+    # Deactivated entities are read-only, including for direct API requests.
+    active_only = " AND `deactivated_at` IS NULL" if any(c["Field"] == "deactivated_at" for c in cols) else ""
+    sql = text(f"UPDATE {TABLE_SQL} SET {set_clause} WHERE `{pk}` = :pk_value{active_only}")
     try:
         with engine.begin() as conn:
             result = conn.execute(sql, params)
@@ -331,7 +333,7 @@ async def update_business_entity(entity_id: str, payload: dict):
     if result.rowcount == 0:
         return JSONResponse(
             status_code=404,
-            content={"status": "error", "message": "Business entity not found (nothing updated)."},
+            content={"status": "error", "message": "Business entity not found, deactivated, or unchanged."},
         )
     return {"status": "ok", "message": "Business entity updated successfully."}
 

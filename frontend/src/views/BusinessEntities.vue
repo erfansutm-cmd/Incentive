@@ -152,9 +152,8 @@ function kindFor(name) {
   return customerColumns.has(name) ? 'number' : 'text'
 }
 
-const filteredRows = computed(() => {
+function filterRows(visible) {
   const q = searchQuery.value.trim().toLowerCase()
-  const visible = showDeactivated.value ? [...activeRows.value, ...deactivatedRows.value] : activeRows.value
   if (!q) return visible
   return visible.filter((row) => {
     // search in name/fa_name
@@ -165,7 +164,7 @@ const filteredRows = computed(() => {
     }
     return false
   })
-})
+}
 
 function formatDate(value) {
   if (!value) return ''
@@ -194,7 +193,7 @@ function chipClass(colName) {
 
 // Order columns for better UX: name, fa_name first, then customer ids (include, exclude, main), then categories, then rest
 const tableColumns = computed(() => {
-  const base = columns.value.filter((c) => (c.name !== 'deactivated_at' || showDeactivated.value) && !(c.key === 'PRI' && (c.extra || '').includes('auto_increment')))
+  const base = columns.value.filter((c) => c.name !== 'deactivated_at' && !(c.key === 'PRI' && (c.extra || '').includes('auto_increment')))
   const order = ['name', 'fa_name', 'include_customer_id', 'exclude_customer_id', 'main_customer_id', 'include_delivery_category', 'exclude_delivery_category']
   const ordered = []
   const remaining = [...base]
@@ -208,6 +207,25 @@ const tableColumns = computed(() => {
   // append any other columns that were not in the predefined order (future columns)
   return [...ordered, ...remaining]
 })
+
+const sections = computed(() => {
+  const active = { key: 'active', title: 'Active entities', rows: filterRows(activeRows.value), columns: tableColumns.value, editable: true }
+  if (!showDeactivated.value) return [active]
+  const deactivatedAt = columns.value.find((c) => c.name === 'deactivated_at')
+  return [active, {
+    key: 'deactivated', title: 'Deactivated entities', rows: filterRows(deactivatedRows.value),
+    columns: deactivatedAt ? [...tableColumns.value, deactivatedAt] : tableColumns.value,
+    editable: false,
+  }]
+})
+const visibleCount = computed(() => sections.value.reduce((count, section) => count + section.rows.length, 0))
+
+function columnClass(name) {
+  return {
+    'timestamp-col': managedColumns.has(name),
+    'include-customer-col': name === 'include_customer_id',
+  }
+}
 
 function showMessage(type, text) {
   message.value = { type, text }
@@ -242,6 +260,7 @@ function openAdd() {
 }
 
 function openEdit(row) {
+  if (row.deactivated_at != null) return
   editing.value = row
   form.value = {}
   for (const c of columns.value) {
@@ -350,28 +369,31 @@ onMounted(load)
           {{ showDeactivated ? 'Hide deactivated' : `Show deactivated (${deactivatedRows.length})` }}
         </button>
         <span class="result-count">
-          {{ filteredRows.length }} of {{ rows.length }} entities
+          {{ visibleCount }} of {{ rows.length }} entities
         </span>
       </div>
 
+      <section v-for="section in sections" :key="section.key" class="entity-section" :aria-labelledby="`${section.key}-heading`">
+        <h2 :id="`${section.key}-heading`" class="section-heading">{{ section.title }} ({{ section.rows.length }})</h2>
       <div class="table-scroll">
         <table>
           <thead>
             <tr>
               <th
-                v-for="c in tableColumns"
+                v-for="c in section.columns"
                 :key="c.name"
                 :title="colLabel(c.name)"
+                :class="columnClass(c.name)"
               >
                 {{ colLabel(c.name) }}
               </th>
-              <th class="actions-col">Actions</th>
+              <th v-if="section.editable" class="actions-col">Actions</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in filteredRows" :key="pkValue(row)" :class="{ 'is-deactivated': row.deactivated_at != null }">
+            <tr v-for="row in section.rows" :key="pkValue(row)" :class="{ 'is-deactivated': row.deactivated_at != null }">
               <td
-                v-for="c in tableColumns"
+                v-for="c in section.columns"
                 :key="c.name"
               >
                 <div v-if="c.json_array" class="cell-chips">
@@ -388,14 +410,14 @@ onMounted(load)
                 </div>
                 <span v-else class="cell-text" :class="{ 'timestamp': managedColumns.has(c.name) }">{{ cellText(row, c) || '—' }}</span>
               </td>
-              <td class="actions-col">
+              <td v-if="section.editable" class="actions-col">
                 <button class="btn btn-ghost btn-sm" @click="openEdit(row)">Edit</button>
                 <button v-if="row.deactivated_at == null" class="btn btn-danger btn-sm"
                   @click="askDeactivate(row)">Deactivate</button>
               </td>
             </tr>
-            <tr v-if="filteredRows.length === 0">
-              <td class="empty" :colspan="tableColumns.length + 1">
+            <tr v-if="section.rows.length === 0">
+              <td class="empty" :colspan="section.columns.length + (section.editable ? 1 : 0)">
                 <template v-if="rows.length === 0">No business entities yet — add the first one.</template>
                 <template v-else>No entities match your search and status filter.</template>
               </td>
@@ -403,6 +425,7 @@ onMounted(load)
           </tbody>
         </table>
       </div>
+      </section>
     </div>
 
     <!-- add / edit popup -->
@@ -578,6 +601,12 @@ thead th {
   overflow-wrap: anywhere;
   vertical-align: middle;
 }
+
+/* Reserve more space for customer IDs while keeping two-line timestamps compact. */
+thead th.timestamp-col { width: 115px; }
+thead th.include-customer-col { width: 210px; }
+.entity-section + .entity-section { border-top: 2px solid var(--border); margin-top: 1rem; }
+.section-heading { margin: 0; padding: 0.85rem 1rem; font-size: 0.9rem; color: var(--muted); }
 
 /* Body: middle alignment for clean rows */
 tbody td {
