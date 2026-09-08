@@ -1,4 +1,4 @@
-"""City group -> incentive type -> score type -> sequential score steps.
+"""City group -> incentive type -> score type -> score steps.
 
 Parents are derived from matrix rows. Creating a type also creates its first
 step; no placeholder rows or additional tables are needed for an empty matrix.
@@ -7,6 +7,8 @@ step; no placeholder rows or additional tables are needed for an empty matrix.
 import datetime
 import decimal
 import hashlib
+import json
+import math
 import re
 from contextlib import contextmanager
 
@@ -25,7 +27,8 @@ COLUMNS = (
     "id", "incentive_type", "city_group", "score_type", "score",
     "target_increase", "pr_increase", "control_bucket", "created_at", "deactivated_at",
 )
-VALUE_COLUMNS = ("target_increase", "pr_increase", "control_bucket")
+FLOAT_COLUMNS = ("target_increase", "pr_increase")
+VALUE_COLUMNS = (*FLOAT_COLUMNS, "control_bucket")
 # History still defines the series, but only active rows determine its next score.
 ACTIVE_MAX_SCORE = "COALESCE(MAX(CASE WHEN `deactivated_at` IS NULL THEN `score` END), 0)"
 # MySQL named locks are connection-scoped (not transaction-scoped). Serialize
@@ -57,7 +60,18 @@ def _jsonable(value):
 
 
 def _row_json(row):
-    return {k: _jsonable(v) for k, v in row.items()}
+    result = {k: _jsonable(v) for k, v in row.items()}
+    # PyMySQL returns JSON/TEXT columns as strings. Keep legacy scalar data
+    # readable, but decode the new list representation for the UI.
+    bucket = result.get("control_bucket")
+    if isinstance(bucket, str):
+        try:
+            decoded = json.loads(bucket)
+            if decoded is None or isinstance(decoded, list):
+                result["control_bucket"] = decoded
+        except (ValueError, TypeError):
+            pass
+    return result
 
 
 def _error(exc):
@@ -132,11 +146,7 @@ def _positive_integer(value, name):
 
 
 def _clean_value(value, col, *, use_default=True):
-    """Respect the existing table's nullability and numeric/text field types.
-
-    No percentage conversion or assumed control-bucket range: store the values
-    entered by the user. Bind numeric values as strings to preserve decimals.
-    """
+    """Validate scalar identifiers/names and the serialized bucket against the schema."""
     name = col["Field"]
     if value is None or (isinstance(value, str) and not value.strip()):
         if use_default and col.get("Default") is not None:
@@ -166,6 +176,49 @@ def _clean_value(value, col, *, use_default=True):
     if length and len(value) > int(length[1]):
         raise MatrixError(f"'{name}' must be at most {length[1]} characters.")
     return value
+
+
+def _finite_float(value, name, *, allow_string=True):
+    allowed = (int, float, decimal.Decimal, str) if allow_string else (int, float, decimal.Decimal)
+    if isinstance(value, bool) or not isinstance(value, allowed):
+        raise MatrixError(f"'{name}' must be a non-null finite number.")
+    try:
+        number = float(value)
+    except (ValueError, OverflowError):
+        raise MatrixError(f"'{name}' must be a non-null finite number.") from None
+    if not math.isfinite(number):
+        raise MatrixError(f"'{name}' must be a non-null finite number.")
+    return number
+
+
+def _control_bucket(value):
+    if value is None:
+        return None
+    if not isinstance(value, list) or len(value) != 3:
+        raise MatrixError("'control_bucket' must be null or a list of exactly 3 finite numbers.")
+    return [_finite_float(item, "control_bucket", allow_string=False) for item in value]
+
+
+def _value_params(payload, cols):
+    # These are business rules, not optional defaults inferred from the DB:
+    # target/PR are always required floats; a bucket is NULL or a JSON triple.
+    values = {name: _finite_float(payload.get(name), name) for name in FLOAT_COLUMNS}
+    bucket = _control_bucket(payload.get("control_bucket"))
+    for name in FLOAT_COLUMNS:
+        if not re.match(r"^(float|double|real|decimal|numeric)\b", cols[name]["Type"].lower()):
+            raise MatrixError(f"'{name}' must use a floating-point or decimal database column.")
+    bucket_col = cols["control_bucket"]
+    if bucket_col.get("Null") != "YES":
+        raise MatrixError("The 'control_bucket' database column must allow NULL.")
+    if bucket is None:
+        values["control_bucket"] = None
+    else:
+        if not re.match(r"^(json|(?:tiny|medium|long)?text|(?:var)?char)\b", bucket_col["Type"].lower()):
+            raise MatrixError("The 'control_bucket' database column must be JSON or text to store a list.")
+        values["control_bucket"] = _clean_value(
+            json.dumps(bucket, allow_nan=False, separators=(",", ":")), bucket_col,
+        )
+    return values
 
 
 @contextmanager
@@ -263,10 +316,10 @@ def list_steps(
 
 @router.post("")
 def add_step(payload: dict):
-    """Append MAX(active score) + 1 within a (city group, type, score type).
+    """Create a step at a chosen positive score, or default to MAX(active) + 1.
 
-    An optional score checks the UI's displayed next step. No active rows means
-    score 1; a new row may reuse a historical score without modifying that history.
+    Scores must be unique among active rows in the same group/type/score type.
+    Historical scores may be reused without modifying their archived rows.
     """
     try:
         allowed = {"city_group", "incentive_type", "score_type", "score", *VALUE_COLUMNS}
@@ -276,7 +329,7 @@ def add_step(payload: dict):
         city_group = _required_text(payload.get("city_group"), "city_group")
         type_id = _positive_integer(payload.get("incentive_type"), "incentive_type")
         score_type = _required_text(payload.get("score_type"), "score_type")
-        expected_score = (
+        requested_score = (
             _positive_integer(payload["score"], "score") if "score" in payload else None
         )
 
@@ -286,7 +339,7 @@ def add_step(payload: dict):
                 "city_group": _clean_value(city_group, cols["city_group"]),
                 "incentive_type": type_id,
                 "score_type": _clean_value(score_type, cols["score_type"]),
-                **{name: _clean_value(payload.get(name), cols[name]) for name in VALUE_COLUMNS},
+                **_value_params(payload, cols),
             }
             group = conn.execute(text(
                 f"SELECT `city_group` FROM {ACTIVE_CITY_SQL} "
@@ -308,16 +361,20 @@ def add_step(payload: dict):
                 "AND `score_type` = :score_type GROUP BY `score_type`"
             ), params).mappings().first()
             next_score = int(previous["max_score"]) + 1 if previous else 1
-            if expected_score is not None and expected_score != next_score:
-                raise MatrixError(
-                    f"The next score for this score type is {next_score}. "
-                    "Refresh the matrix and add the next step from its score type panel.",
-                    409,
-                )
             if previous:
                 # Preserve the existing spelling under case-insensitive DB collations.
                 params["score_type"] = previous["score_type"]
-            params["score"] = next_score
+            params["score"] = requested_score if requested_score is not None else next_score
+            existing = conn.execute(text(
+                f"SELECT `id` FROM {TABLE_SQL} WHERE `city_group` = :city_group "
+                "AND `incentive_type` = :incentive_type AND `score_type` = :score_type "
+                "AND `score` = :score AND `deactivated_at` IS NULL LIMIT 1"
+            ), params).first()
+            if existing is not None:
+                raise MatrixError(
+                    f"Score {params['score']} is already active for this score type. Choose another score.",
+                    409,
+                )
             insert = conn.execute(text(
                 f"INSERT INTO {TABLE_SQL} "
                 "(`city_group`, `incentive_type`, `score_type`, `score`, "
@@ -329,40 +386,7 @@ def add_step(payload: dict):
                 f"SELECT * FROM {TABLE_SQL} WHERE `id` = :id"
             ), {"id": insert.lastrowid}).mappings().one()
             result = _row_json(row)
-        return {"status": "ok", "message": f"Score {next_score} added successfully.", "row": result}
-    except Exception as exc:
-        return _error(exc)
-
-
-@router.put("/{step_id}")
-def update_step(step_id: int, payload: dict):
-    """Update values on an active step only; score, hierarchy and dates stay fixed."""
-    try:
-        unknown = set(payload) - set(VALUE_COLUMNS)
-        if unknown:
-            raise MatrixError(f"Fields cannot be edited: {', '.join(sorted(unknown))}.")
-        if not payload:
-            raise MatrixError("Provide at least one step value to update.")
-        with _write_transaction() as conn:
-            cols = {c["Field"]: c for c in _columns(conn)}
-            # An explicit blank/null clears a nullable field instead of restoring
-            # its insertion default. Fields omitted from this request stay intact.
-            values = {name: _clean_value(value, cols[name], use_default=False)
-                      for name, value in payload.items()}
-            assignments = ", ".join(f"`{name}` = :{name}" for name in values)
-            conn.execute(text(
-                f"UPDATE {TABLE_SQL} SET {assignments} "
-                "WHERE `id` = :id AND `deactivated_at` IS NULL"
-            ), {**values, "id": step_id})
-            row = conn.execute(text(
-                f"SELECT * FROM {TABLE_SQL} WHERE `id` = :id"
-            ), {"id": step_id}).mappings().first()
-            if row is None:
-                raise MatrixError("Score step not found.", 404)
-            if row["deactivated_at"] is not None:
-                raise MatrixError("This step has been deactivated and can no longer be edited.", 409)
-            result = _row_json(row)
-        return {"status": "ok", "message": "Score step updated successfully.", "row": result}
+        return {"status": "ok", "message": f"Score {params['score']} added successfully.", "row": result}
     except Exception as exc:
         return _error(exc)
 

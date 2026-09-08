@@ -152,54 +152,67 @@ page manages the existing `incentive.incentive_decision_matrix` table through
 The hierarchy is **City group → Incentive type → Score type → Score steps**:
 
 1. The first screen lists distinct, non-null/non-blank `city_group` values from
-   `incentive.incentive_active_city`. Groups appear even when the matrix is
-   completely empty. Groups appear **one per line**, ordered **Top 4 first**,
-   then **tiers** (naturally, e.g. Tier 2 before Tier 10), then **Tehran**, then
-   other groups. Top 4 matching ignores case and accepts spaces, underscores,
-   or hyphens (e.g. `Top 4`, `top4`, `TOP_4`).
-   Search the list and click a group to configure it.
+   `incentive.incentive_active_city`, even when the matrix is empty. Groups appear
+   **one per line**: **Top 4**, then **tiers** (Tier 2 before Tier 10), then
+   **Tehran**, then other groups. Top 4 matching ignores case and accepts spaces,
+   underscores, or hyphens (e.g. `Top 4`, `top4`, `TOP_4`). Clicking a group slides
+   its panel open **directly under that row**, keeping the group list on screen.
+   Clicking it again collapses it; choosing another group closes the previous
+   one. No page, route, or browser tab is opened by group selection.
 2. Each configured incentive type has its own expandable panel. **Add incentive
    type** selects an existing `id`/`name` from `mafsho.incentive_type`, just like
    the Cities **Add plan** dropdown. The matrix's `incentive_type` column stores
-   the **ID**, while the UI shows the **name**. Arbitrary IDs/types cannot be
-   added through the API, and the lookup table is never modified.
-3. Expand an incentive type to see its score types. The score-type field in
-   **Add incentive type** and **Add score type** offers **Performance**,
-   **Weather**, and **Order Level Increase** as selectable suggestions. You can
-   also type a custom name; this list is not a restriction on valid score types.
-   Since the table holds one row per step,
-   adding an incentive type or score type also saves its **first score step**;
-   there are no incomplete placeholder rows or separate parent tables.
-4. Expand a score type to see its **Active steps** table. **Add step** uses
-   `MAX(score) + 1` over **active rows only** (`deactivated_at IS NULL`) within
-   that `(city_group, incentive_type, score_type)`. If no steps are active,
-   the next score is **1**. Enter `target_increase`, `pr_increase`, and
-   `control_bucket` as stored in the table (no implicit percentage conversions).
-   Input types, defaults, and required/optional fields follow the MySQL column
-   metadata, including a numeric or text `control_bucket`.
-5. **Edit** is available on active steps and changes only `target_increase`,
-   `pr_increase`, and `control_bucket`. The row ID, score, group/type assignment,
-   and timestamps remain unchanged. The API rejects edits to deactivated rows,
-   including a step deactivated while its edit form was open.
-6. **Deactivate** asks for confirmation, then sets `deactivated_at = NOW()`.
-   **Deactivated steps** has its own section and collapsible, read-only history
-   table; these rows never mix into the active table. Neither table has a Status
-   column. Deactivation never deletes or renumbers existing rows. Deactivating
-   the highest active score can allow that number to be reused by a **new row**,
-   while the old row stays unchanged in history. A history-only score type remains
-   visible and starts again at score 1.
+   the **ID**, while the UI shows the **name**. Arbitrary incentive types cannot
+   be added through the API, and the lookup table is never modified.
+3. **Add incentive type** and **Add score type** use an in-page, keyboard-accessible
+   dropdown for score types. Choose **Performance**, **Weather**, or **Order Level
+   Increase**, or write a custom name and select **Use “…”**. The arrow opens the
+   list; arrow keys and Enter choose an option; Escape closes the dropdown before
+   closing the dialog. The table holds one row per step, so creating a type also
+   saves its first step rather than an incomplete placeholder row.
+4. **Add step** suggests `MAX(active score) + 1` in the selected city group,
+   incentive type, and score type (or **1** if no steps are active). The **Score
+   field is editable**: choose any unused positive whole number, including gaps
+   or a previously deactivated score. The API rejects an already-active score
+   with **409** and never silently substitutes another score.
+5. `target_increase` and `pr_increase` are **required finite floats**. The form
+   initially copies them from the nearest **active** step in the same
+   group/incentive/score type, measured by absolute score distance; a tie picks
+   the lower score. Changing the score updates untouched defaults. Manual values
+   are preserved, and **Use its values** explicitly copies the current nearest
+   step again. With no active neighbor, both fields start blank and must be filled.
+   They cannot be null, even if the underlying table has nullable columns/defaults.
+6. `control_bucket` is **null or a list of exactly three finite floats**. Leave
+   all three inputs blank for null, or fill all three. A partial list, scalar,
+   boolean, non-numeric member, NaN, or infinity is rejected. **Clear control
+   bucket** restores null. Arrays are stored as JSON and decoded on read; the UI
+   shows them as lists, e.g. `[0.1, 0.2, 0.3]`.
+7. Existing steps have **no Edit action or update endpoint**. **Deactivate** asks
+   for confirmation, then sets `deactivated_at = NOW()`. Deactivated steps remain
+   in their own collapsible, read-only history table, never mixed into active
+   steps. Neither table has a Status column. Deactivation does not delete or
+   renumber old rows; a new row can reuse a deactivated score without changing
+   its history.
 
-`id`, `score`, `created_at`, and `deactivated_at` are server-managed. The existing
-matrix table should have an auto-increment `id`, an integer `score`, and nullable
-`deactivated_at`. Its expected columns are:
+`id`, `created_at`, and `deactivated_at` are server-managed. The existing matrix
+should have an auto-increment `id`, a positive-integer `score`, and nullable
+`deactivated_at`. The expected columns are:
 
 ```
 id, incentive_type, city_group, score_type, score,
 target_increase, pr_increase, control_bucket, created_at, deactivated_at
 ```
 
-No migration, seeding, or table creation is performed. Configure the table names
-with the same `schema/table` convention used elsewhere:
+**Value column storage:** `target_increase` and `pr_increase` need floating-point
+or decimal columns (for example `DOUBLE NOT NULL`). `control_bucket` needs a
+**nullable JSON or text column**, not a scalar numeric column, to store triples.
+The API checks incompatible column types and returns an actionable error instead
+of allowing a list or fractional value to be silently truncated. If your existing
+schema differs, migrate it deliberately after reviewing any legacy null/scalar
+values. No migration, data rewriting, seeding, or table creation is performed by
+the app. Existing history remains readable and is never automatically rewritten.
+
+Configure table names using the same `schema/table` convention used elsewhere:
 
 ```dotenv
 DB_DECISION_MATRIX_TABLE=incentive/incentive_decision_matrix
@@ -207,40 +220,45 @@ DB_ACTIVE_CITY_TABLE=incentive/incentive_active_city
 DB_INCENTIVE_TYPE_TABLE=mafsho/incentive_type
 ```
 
-Both development and production Compose files pass these settings to the
-backend. The city-group source is independent of `DB_CITIES_TABLE` and the city
-name autocomplete's `DB_CITY_MAPPING_TABLE`.
+Both development and production Compose files pass these settings to the backend.
+The city-group source is independent of `DB_CITIES_TABLE` and `DB_CITY_MAPPING_TABLE`.
 
 | Method | Path | Action |
 |--------|------|--------|
 | GET | `/api/decision-matrix/city-groups` | Distinct groups from active cities, independent of matrix contents |
-| GET | `/api/decision-matrix?city_group={group}[&include_deactivated=true]` | Rows and column metadata for one group; counts include history, next scores use active rows only |
-| POST | `/api/decision-matrix` | Save a step with `city_group`, `incentive_type` (ID), `score_type`, `target_increase`, `pr_increase`, `control_bucket` |
-| PUT | `/api/decision-matrix/{id}` | Edit one or more of `target_increase`, `pr_increase`, and `control_bucket` on an active step; other fields cannot be edited |
+| GET | `/api/decision-matrix?city_group={group}[&include_deactivated=true]` | Rows and metadata for one group; counts include history, suggested scores use active rows only |
+| POST | `/api/decision-matrix` | Create a step with a chosen score (or default to the next active score), required target/PR floats, and an optional three-float bucket |
 | POST | `/api/decision-matrix/{id}/deactivate` | Soft deactivate a step; repeated calls preserve its first deactivation timestamp |
 
-POST optionally accepts `score` as a check of the displayed next score. A stale
-or skipped score returns **409** instead of silently saving a different step.
-The UI refreshes a stale next-step number while retaining the entered values.
-Additions, edits, and deactivations share a MySQL named lock and commit before
-releasing it. This coordinates changes to the active maximum and prevents two
-API requests from allocating the same **active** score. Writers outside this API
-must coordinate separately. The existing table's uniqueness constraints must
+Example creation payload (the group and incentive ID must exist in their lookups):
+
+```json
+{
+  "city_group": "Top 4",
+  "incentive_type": 1,
+  "score_type": "Performance",
+  "score": 4,
+  "target_increase": 0.15,
+  "pr_increase": 0.05,
+  "control_bucket": [0.1, 0.2, 0.3]
+}
+```
+
+The UI retains the chosen score and reviewed values on a failed save, including
+concurrent duplicate-score conflicts. Additions and deactivations share a MySQL
+named lock and commit before releasing it, coordinating changes to the active
+maximum and preventing duplicate **active** scores through this API. Writers
+outside this API must coordinate separately. Table uniqueness constraints must
 allow historical rows and a new active row to share a score; the API does not
 change indexes or overwrite archived rows to achieve this.
-
-Edit requests leave omitted value fields unchanged. Explicit null/blank values
-clear nullable fields rather than restoring their insertion defaults; non-nullable
-fields still require a value.
 
 ### Decision Matrix tests
 
 Backend tests run against an isolated SQLite fixture with attached schemas;
 MySQL column introspection and lock functions are stubbed. They cover sequence
-allocation from active rows, isolation between groups/types, lookup validation,
-active-only edits, soft deactivation, historical score reuse, nullability,
-numeric validation, and the named-lock lifecycle. They do
-**not** connect to the configured database.
+suggested and custom scores, active-score uniqueness, lookup validation,
+required floats, JSON triple round-trips, historical score reuse, deactivation,
+and the named-lock lifecycle. They do **not** connect to the configured database.
 
 ```bash
 cd backend
@@ -251,9 +269,9 @@ python -m unittest discover -s tests -v
 ```
 
 Browser tests use Playwright with intercepted API responses (no real database
-writes). They cover ordered city-group rows, the empty-table workflow,
-add/edit/error flows, concurrent changes, separate history tables, navigation,
-and mobile/keyboard behavior.
+writes). They cover inline city-group accordions, the custom score-type picker,
+nearest-step prefill, editable creation scores, required float values, nullable
+three-value buckets, concurrent changes, separate history, and mobile/keyboard behavior.
 
 ```bash
 cd frontend

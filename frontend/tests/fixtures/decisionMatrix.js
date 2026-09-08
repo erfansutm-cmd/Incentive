@@ -7,7 +7,7 @@ export const columns = [
   { name: 'score', type: 'int unsigned' },
   { name: 'target_increase', type: 'decimal(10,4)', nullable: false, default: null },
   { name: 'pr_increase', type: 'decimal(10,4)', nullable: false, default: null },
-  { name: 'control_bucket', type: 'int unsigned', nullable: true, default: null },
+  { name: 'control_bucket', type: 'json', nullable: true, default: null },
   { name: 'created_at', type: 'datetime' },
   { name: 'deactivated_at', type: 'datetime', nullable: true },
 ]
@@ -16,7 +16,7 @@ export const incentiveTypes = [{ id: 1, name: 'DAILY' }, { id: 2, name: 'WEEKLY'
 export function makeStep(overrides = {}) {
   return {
     id: 1, incentive_type: 1, city_group: 'Group A', score_type: 'Delivery', score: 1,
-    target_increase: 0.125, pr_increase: 1.75, control_bucket: 0,
+    target_increase: 0.125, pr_increase: 1.75, control_bucket: null,
     created_at: '2026-09-08T12:00:00', deactivated_at: null,
     ...overrides,
   }
@@ -27,7 +27,7 @@ export async function mockDecisionMatrix(page, options = {}) {
     rows: structuredClone(options.rows || []),
     groups: ['Group A', 'Group B', "O'Hare / A&B"],
     types: [...incentiveTypes], columns: structuredClone(columns),
-    writes: [], reads: [], groupError: '', typeError: '', matrixError: '', saveError: '', editError: '', deactivateError: '',
+    writes: [], reads: [], groupError: '', typeError: '', matrixError: '', saveError: '', deactivateError: '',
     groupDelays: {},
     ...options,
   }
@@ -74,30 +74,21 @@ export async function mockDecisionMatrix(page, options = {}) {
       if (state.saveError) return fail(state.saveError)
       const existing = state.rows.filter((row) => row.city_group === payload.city_group &&
         String(row.incentive_type) === String(payload.incentive_type) && row.score_type === payload.score_type && row.deactivated_at === null)
-      const next = Math.max(0, ...existing.map((row) => row.score)) + 1
-      if (next !== payload.score) return fail(`The next score for this score type is ${next}. Refresh and try again.`, 409)
+      const chosen = payload.score ?? Math.max(0, ...existing.map((row) => row.score)) + 1
+      if (existing.some((row) => row.score === chosen)) return fail(`Score ${chosen} is already active for this score type. Choose another score.`, 409)
+      const float = (value) => typeof value === 'number' && Number.isFinite(value)
+      if (!float(payload.target_increase) || !float(payload.pr_increase)) return fail('Target and PR must be non-null floats.', 400)
+      if (payload.control_bucket !== null && (!Array.isArray(payload.control_bucket) || payload.control_bucket.length !== 3 || !payload.control_bucket.every(float))) {
+        return fail('Control bucket must be null or three floats.', 400)
+      }
       const row = makeStep({
         ...payload, id: Math.max(0, ...state.rows.map((row) => row.id)) + 1,
-        incentive_type: Number(payload.incentive_type), score: next,
+        incentive_type: Number(payload.incentive_type), score: chosen,
         target_increase: Number(payload.target_increase), pr_increase: Number(payload.pr_increase),
         control_bucket: payload.control_bucket === null ? null : payload.control_bucket,
       })
       state.rows.push(row)
-      return reply({ status: 'ok', message: `Score ${next} added successfully.`, row })
-    }
-    const edit = /^\/api\/decision-matrix\/(\d+)$/.exec(url.pathname)
-    if (edit && request.method() === 'PUT') {
-      const payload = request.postDataJSON()
-      state.writes.push({ action: 'edit', id: Number(edit[1]), payload })
-      if (state.editError) return fail(state.editError)
-      const row = state.rows.find((row) => row.id === Number(edit[1]))
-      if (!row) return fail('Score step not found.', 404)
-      if (row.deactivated_at !== null) return fail('This step has been deactivated and can no longer be edited.', 409)
-      for (const [name, value] of Object.entries(payload)) {
-        const numeric = /^(int|decimal)/.test(state.columns.find((col) => col.name === name)?.type || '')
-        row[name] = value === null ? null : numeric ? Number(value) : value
-      }
-      return reply({ status: 'ok', message: 'Score step updated successfully.', row })
+      return reply({ status: 'ok', message: `Score ${chosen} added successfully.`, row })
     }
     const deactivate = /^\/api\/decision-matrix\/(\d+)\/deactivate$/.exec(url.pathname)
     if (deactivate && request.method() === 'POST') {

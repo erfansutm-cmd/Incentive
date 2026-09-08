@@ -4,7 +4,10 @@ defineProps({
   label: { type: String, required: true },
   deactivated: { type: Boolean, default: false },
 })
-const emit = defineEmits(['edit', 'deactivate'])
+const emit = defineEmits(['deactivate'])
+function formatBucket(value) {
+  return Array.isArray(value) ? `[${value.join(', ')}]` : value ?? '—'
+}
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 function formatDate(value) {
   if (!value) return '—'
@@ -33,11 +36,10 @@ function formatDate(value) {
           <th scope="row" class="score-cell"><strong>{{ row.score }}</strong><small>ID {{ row.id }}</small></th>
           <td class="numeric">{{ row.target_increase ?? '—' }}</td>
           <td class="numeric">{{ row.pr_increase ?? '—' }}</td>
-          <td>{{ row.control_bucket ?? '—' }}</td>
+          <td>{{ formatBucket(row.control_bucket) }}</td>
           <td class="date-cell">{{ formatDate(row.created_at) }}</td>
           <td v-if="deactivated" class="date-cell">{{ formatDate(row.deactivated_at) }}</td>
           <td v-else class="actions-col">
-            <button class="btn btn-ghost btn-sm" :aria-label="`Edit score ${row.score}`" @click="emit('edit', row)">Edit</button>
             <button class="btn btn-danger-soft btn-sm" :aria-label="`Deactivate score ${row.score}`" @click="emit('deactivate', row)">Deactivate</button>
           </td>
         </tr>
@@ -59,7 +61,6 @@ tbody tr:hover { background: #f6faf8; }
 .numeric { font-variant-numeric: tabular-nums; }
 .date-cell { white-space: nowrap; color: var(--muted); font-size: 0.78rem; }
 .actions-col { text-align: right; white-space: nowrap; }
-.actions-col .btn + .btn { margin-left: 0.4rem; }
 .history { background: #fafbfa; color: var(--inactive-text); }
 .history .score-cell strong { background: var(--surface-2); color: var(--inactive-text); }
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }

@@ -32,7 +32,7 @@ COLUMNS = [
     column("id", "bigint unsigned"), column("incentive_type", "int"),
     column("city_group"), column("score_type"), column("score", "int unsigned"),
     column("target_increase", "decimal(10,4)"), column("pr_increase", "decimal(10,4)"),
-    column("control_bucket", "int unsigned", nullable=True),
+    column("control_bucket", "json", nullable=True),
     column("created_at", "datetime"), column("deactivated_at", "datetime", nullable=True),
 ]
 BASE = "/api/decision-matrix"
@@ -71,8 +71,8 @@ class DecisionMatrixAPITests(unittest.TestCase):
                 CREATE TABLE incentive.incentive_decision_matrix (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, incentive_type INTEGER NOT NULL,
                     city_group TEXT COLLATE NOCASE NOT NULL, score_type TEXT COLLATE NOCASE NOT NULL,
-                    score INTEGER NOT NULL, target_increase NUMERIC NOT NULL, pr_increase NUMERIC NOT NULL,
-                    control_bucket INTEGER, created_at TEXT NOT NULL, deactivated_at TEXT
+                    score INTEGER NOT NULL, target_increase REAL NOT NULL, pr_increase REAL NOT NULL,
+                    control_bucket TEXT, created_at TEXT NOT NULL, deactivated_at TEXT
                 )
             """))
         self.lock_events.clear()
@@ -107,7 +107,7 @@ class DecisionMatrixAPITests(unittest.TestCase):
     def add(self, **overrides):
         payload = {
             "city_group": "Group A", "incentive_type": 1, "score_type": "Delivery",
-            "target_increase": "0.125", "pr_increase": "1.75", "control_bucket": 0,
+            "target_increase": "0.125", "pr_increase": "1.75", "control_bucket": None,
             **overrides,
         }
         return self.client.post(BASE, json=payload)
@@ -138,7 +138,7 @@ class DecisionMatrixAPITests(unittest.TestCase):
         self.assertEqual(row["score"], 1)
         self.assertEqual(row["target_increase"], 0.125)
         self.assertEqual(row["pr_increase"], 1.75)
-        self.assertEqual(row["control_bucket"], 0)
+        self.assertIsNone(row["control_bucket"])
         self.assertEqual(row["created_at"], self.now)
         self.assertIsNone(row["deactivated_at"])
         data = self.read()
@@ -166,7 +166,6 @@ class DecisionMatrixAPITests(unittest.TestCase):
         self.assertEqual(data["series"][0]["next_score"], 2)
         self.assertEqual(data["series"][0]["deactivated_count"], 2)
         self.assertEqual(self.read(include_deactivated=True)["series"][0]["next_score"], 2)
-        self.assertEqual(self.add(score=4).status_code, 409)
         self.now = "2026-09-08T14:00:00"
         replacement = self.add(score=2).json()["row"]
         self.assertEqual(replacement["score"], 2)
@@ -202,13 +201,15 @@ class DecisionMatrixAPITests(unittest.TestCase):
         self.assertNotEqual(replacement["id"], row["id"])
         self.assertEqual(len(self.read(include_deactivated=True)["rows"]), 2)
 
-    def test_stale_or_skipped_score_is_rejected_without_an_insert(self):
-        self.assertEqual(self.add(score=3).status_code, 409)
-        self.assertEqual(self.add(score=1).status_code, 200)
-        stale = self.add(score=1)
-        self.assertEqual(stale.status_code, 409)
-        self.assertIn("next score for this score type is 2", stale.json()["message"])
-        self.assertEqual(len(self.read()["rows"]), 1)
+    def test_custom_positive_scores_are_saved_and_only_active_duplicates_are_rejected(self):
+        self.assertEqual(self.add(score=7).json()["row"]["score"], 7)
+        self.assertEqual(self.add(score=3).json()["row"]["score"], 3)
+        self.assertEqual(self.read()["series"][0]["next_score"], 8)
+        duplicate = self.add(score=3)
+        self.assertEqual(duplicate.status_code, 409)
+        self.assertIn("already active", duplicate.json()["message"])
+        self.assertEqual(len(self.read()["rows"]), 2)
+        self.assertEqual(self.add().json()["row"]["score"], 8)
 
     def test_case_insensitive_series_keeps_original_name(self):
         self.add(score_type="Delivery")
@@ -248,14 +249,71 @@ class DecisionMatrixAPITests(unittest.TestCase):
                 self.assertEqual(self.add(**{field: "anything"}).status_code, 400)
         self.assertEqual(self.read()["rows"], [])
 
-    def test_nullability_defaults_and_text_control_bucket_follow_schema(self):
-        self.columns[6]["Default"] = "0"
-        self.columns[7]["Type"] = "varchar(30)"
-        response = self.add(pr_increase="", control_bucket="holdout-A")
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()["row"]["pr_increase"], 0)
-        self.assertEqual(response.json()["row"]["control_bucket"], "holdout-A")
+    def test_target_and_pr_are_required_floats_even_with_nullable_columns_or_defaults(self):
+        for col in self.columns:
+            if col["Field"] in ("target_increase", "pr_increase"):
+                col.update(Null="YES", Default="0")
+        for name in ("target_increase", "pr_increase"):
+            for invalid in (None, "", "  ", "NaN", "Infinity", "1e999", False, [], {}):
+                with self.subTest(field=name, value=invalid):
+                    self.assertEqual(self.add(**{name: invalid}).status_code, 400)
+            payload = {"city_group": "Group A", "incentive_type": 1, "score_type": "Delivery",
+                       "target_increase": 0.25, "pr_increase": 1.5}
+            del payload[name]
+            self.assertEqual(self.client.post(BASE, json=payload).status_code, 400)
+        row = self.add(target_increase=0, pr_increase="-0.125").json()["row"]
+        self.assertEqual(row["target_increase"], 0.0)
+        self.assertEqual(row["pr_increase"], -0.125)
+        self.assertIsInstance(row["target_increase"], float)
+        self.assertIsInstance(row["pr_increase"], float)
+
+    def test_control_bucket_round_trips_null_or_three_floats_as_json(self):
+        for value in (None, [0.125, 0.25, 0.625], [0, 1, -2.5]):
+            with self.subTest(value=value):
+                response = self.add(control_bucket=value)
+                self.assertEqual(response.status_code, 200, response.text)
+                saved = response.json()["row"]
+                expected = None if value is None else [float(v) for v in value]
+                self.assertEqual(saved["control_bucket"], expected)
+                if expected is not None:
+                    self.assertTrue(all(isinstance(v, float) for v in saved["control_bucket"]))
+                read = next(row for row in self.read()["rows"] if row["id"] == saved["id"])
+                self.assertEqual(read["control_bucket"], expected)
+        with self.engine.connect() as conn:
+            stored = conn.execute(text("SELECT control_bucket FROM incentive.incentive_decision_matrix WHERE id = 2")).scalar()
+            self.assertEqual(stored, "[0.125,0.25,0.625]")
+
+    def test_control_bucket_rejects_scalars_wrong_lengths_and_non_float_members(self):
+        invalid = (0, 1.5, "", "[0.1,0.2,0.3]", {}, [], [0.1], [0.1, 0.2], [0, 1, 2, 3],
+                   [0.1, None, 0.3], [True, 0.2, 0.3], ["0.1", 0.2, 0.3], [[0.1], 0.2, 0.3])
+        for value in invalid:
+            with self.subTest(value=value):
+                response = self.add(control_bucket=value)
+                self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(self.read()["rows"], [])
+
+    def test_nullable_bucket_ignores_defaults_and_also_supports_json_in_text_columns(self):
+        self.columns[7].update(Type="varchar(100)", Default="[0.1,0.2,0.3]")
         self.assertIsNone(self.add(control_bucket=None).json()["row"]["control_bucket"])
+        self.assertEqual(self.add(control_bucket=[0.1, 0.2, 0.3]).json()["row"]["control_bucket"], [0.1, 0.2, 0.3])
+        payload = {"city_group": "Group A", "incentive_type": 1, "score_type": "Quality",
+                   "target_increase": 0.1, "pr_increase": 0.2}
+        self.assertIsNone(self.client.post(BASE, json=payload).json()["row"]["control_bucket"])
+
+    def test_incompatible_database_column_types_have_clear_errors(self):
+        self.columns[7]["Type"] = "int"
+        response = self.add(control_bucket=[0.1, 0.2, 0.3])
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("JSON or text", response.json()["message"])
+        self.columns[7].update(Type="json", Null="NO")
+        response = self.add()
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("allow NULL", response.json()["message"])
+        self.columns[7]["Null"] = "YES"
+        self.columns[5]["Type"] = "int"
+        response = self.add()
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("floating-point or decimal", response.json()["message"])
 
     def test_deactivation_is_idempotent_and_preserves_other_values(self):
         before = self.add().json()["row"]
@@ -272,81 +330,17 @@ class DecisionMatrixAPITests(unittest.TestCase):
             self.assertEqual(before[key], after[key])
         self.assertEqual(self.client.post(f"{BASE}/999/deactivate").status_code, 404)
 
-    def test_edit_active_step_changes_only_values_and_is_idempotent(self):
-        before = self.add().json()["row"]
-        self.now = "2026-09-09T12:00:00"
-        self.lock_events.clear()
-        values = {"target_increase": "0.5", "pr_increase": "3.75", "control_bucket": "1"}
-        response = self.client.put(f"{BASE}/{before['id']}", json=values)
-        self.assertEqual(response.status_code, 200, response.text)
-        after = response.json()["row"]
-        self.assertEqual(after["target_increase"], 0.5)
-        self.assertEqual(after["pr_increase"], 3.75)
-        self.assertEqual(after["control_bucket"], 1)
-        for name in ["id", "city_group", "incentive_type", "score_type", "score", "created_at", "deactivated_at"]:
-            self.assertEqual(after[name], before[name])
-        self.assertEqual(self.lock_events, ["acquire", "commit", "release", "commit"])
-        self.assertEqual(self.client.put(f"{BASE}/{before['id']}", json=values).status_code, 200)
-        data = self.read()
-        self.assertEqual(len(data["rows"]), 1)
-        self.assertEqual(data["series"][0]["next_score"], 2)
-
-    def test_edit_cannot_change_score_hierarchy_or_managed_fields(self):
-        before = self.add().json()["row"]
-        for name in ["id", "score", "city_group", "incentive_type", "score_type", "created_at", "deactivated_at", "unknown"]:
-            with self.subTest(field=name):
-                response = self.client.put(f"{BASE}/{before['id']}", json={name: "changed", "pr_increase": 9})
-                self.assertEqual(response.status_code, 400, response.text)
-        after = self.read()["rows"][0]
-        for name, value in before.items():
-            self.assertEqual(after[name], value)
-
-    def test_edit_validates_values_and_clears_nullable_defaults(self):
-        self.columns[7]["Default"] = "0"
+    def test_edit_endpoint_is_removed_and_cannot_change_existing_steps(self):
         row = self.add().json()["row"]
-        url = f"{BASE}/{row['id']}"
-        invalid = [{}, {"target_increase": ""}, {"pr_increase": None}, {"pr_increase": "NaN"},
-                   {"control_bucket": -1}, {"control_bucket": 1.5}, {"target_increase": []}]
-        for payload in invalid:
-            with self.subTest(payload=payload):
-                self.assertEqual(self.client.put(url, json=payload).status_code, 400)
-        response = self.client.put(url, json={"control_bucket": None})
-        self.assertEqual(response.status_code, 200)
-        self.assertIsNone(response.json()["row"]["control_bucket"])
-        self.assertEqual(response.json()["row"]["target_increase"], row["target_increase"])
-        self.assertEqual(response.json()["row"]["pr_increase"], row["pr_increase"])
+        response = self.client.put(f"{BASE}/{row['id']}", json={"target_increase": 9.5})
+        self.assertIn(response.status_code, (404, 405))
+        self.assertEqual(self.read()["rows"][0]["target_increase"], row["target_increase"])
 
-    def test_deactivated_steps_cannot_be_edited_and_missing_steps_return_404(self):
-        row = self.add().json()["row"]
-        self.client.post(f"{BASE}/{row['id']}/deactivate")
-        before = self.read(include_deactivated=True)["rows"][0]
-        response = self.client.put(f"{BASE}/{row['id']}", json={"target_increase": "99"})
-        self.assertEqual(response.status_code, 409)
-        self.assertIn("can no longer be edited", response.json()["message"])
-        self.assertEqual(self.read(include_deactivated=True)["rows"][0], before)
-        self.assertEqual(self.client.put(f"{BASE}/999", json={"pr_increase": 1}).status_code, 404)
-
-    def test_editing_a_reused_active_score_does_not_modify_its_history(self):
-        original = self.add().json()["row"]
-        self.client.post(f"{BASE}/{original['id']}/deactivate")
-        replacement = self.add(score=1).json()["row"]
-        response = self.client.put(f"{BASE}/{replacement['id']}", json={"pr_increase": "9.5"})
-        self.assertEqual(response.status_code, 200)
-        rows = {row["id"]: row for row in self.read(include_deactivated=True)["rows"]}
-        self.assertEqual(rows[original["id"]]["pr_increase"], original["pr_increase"])
-        self.assertEqual(rows[replacement["id"]]["pr_increase"], 9.5)
-        self.assertEqual(rows[original["id"]]["score"], rows[replacement["id"]]["score"])
-        self.assertIsNotNone(rows[original["id"]]["deactivated_at"])
-        self.assertIsNone(rows[replacement["id"]]["deactivated_at"])
-
-    def test_deactivation_and_edit_use_the_same_lock_as_score_allocation(self):
+    def test_deactivation_uses_the_same_lock_as_score_allocation(self):
         row = self.add().json()["row"]
         self.lock_result = 0
         self.assertEqual(self.client.post(f"{BASE}/{row['id']}/deactivate").status_code, 409)
-        self.assertEqual(self.client.put(f"{BASE}/{row['id']}", json={"pr_increase": 9}).status_code, 409)
-        current = self.read()["rows"][0]
-        self.assertEqual(current["pr_increase"], row["pr_increase"])
-        self.assertIsNone(current["deactivated_at"])
+        self.assertIsNone(self.read()["rows"][0]["deactivated_at"])
 
     def test_group_query_is_required_and_parameterized(self):
         self.assertEqual(self.client.get(BASE).status_code, 422)
@@ -382,6 +376,14 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(matrix._jsonable(decimal.Decimal("0.125")), 0.125)
         self.assertEqual(matrix._jsonable(datetime.datetime(2026, 9, 8, 12)), "2026-09-08T12:00:00")
         self.assertEqual(matrix._jsonable(b"DAILY"), "DAILY")
+
+    def test_non_finite_float_and_bucket_members_are_rejected(self):
+        for number in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(number=number):
+                with self.assertRaises(matrix.MatrixError):
+                    matrix._finite_float(number, "target_increase")
+                with self.assertRaises(matrix.MatrixError):
+                    matrix._control_bucket([number, 0.2, 0.3])
 
     def test_schema_introspection_checks_required_columns(self):
         conn = MagicMock()

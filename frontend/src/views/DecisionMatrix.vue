@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import DecisionMatrixStepForm from '../components/DecisionMatrixStepForm.vue'
 import DecisionMatrixStepsTable from '../components/DecisionMatrixStepsTable.vue'
 import ModalDialog from '../components/ModalDialog.vue'
@@ -179,6 +179,10 @@ async function loadMatrix() {
   }
 }
 function selectGroup(group) {
+  if (selectedGroup.value === group) {
+    collapseGroup()
+    return
+  }
   selectedGroup.value = group
   rows.value = []
   series.value = []
@@ -188,7 +192,7 @@ function selectGroup(group) {
   historyShown.value = new Set()
   loadMatrix()
 }
-function showGroups() {
+function collapseGroup() {
   matrixController?.abort()
   selectedGroup.value = null
   expandedType.value = null
@@ -197,17 +201,20 @@ function showGroups() {
 }
 function refresh() {
   loadTypes()
-  if (selectedGroup.value === null) loadGroups()
-  else loadMatrix()
+  loadGroups()
+  if (selectedGroup.value !== null) loadMatrix()
 }
+watch(filteredGroups, (visible) => {
+  if (selectedGroup.value !== null && !visible.includes(selectedGroup.value)) collapseGroup()
+})
 
-function openForm(mode, type = null, item = null, row = null) {
+function openForm(mode, type = null, item = null) {
+  if (selectedGroup.value === null) return
   formError.value = ''
   formContext.value = {
     mode, cityGroup: selectedGroup.value,
     incentiveType: type?.id, typeName: type?.name,
-    scoreType: item?.score_type, nextScore: row?.score ?? item?.next_score ?? 1,
-    step: row ? { ...row } : null,
+    scoreType: item?.score_type, nextScore: item?.next_score ?? 1,
   }
 }
 function closeForm() {
@@ -215,42 +222,24 @@ function closeForm() {
 }
 async function saveStep(payload) {
   if (saving.value || !formContext.value) return
-  const context = formContext.value
-  const isEditing = context.mode === 'edit'
   saving.value = true
   formError.value = ''
   try {
-    const url = isEditing
-      ? `/api/decision-matrix/${encodeURIComponent(context.step.id)}`
-      : '/api/decision-matrix'
-    const data = await requestJson(url, {
-      method: isEditing ? 'PUT' : 'POST',
+    const data = await requestJson('/api/decision-matrix', {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
     })
     if (disposed) return
     formContext.value = null
     expandedType.value = String(data.row.incentive_type)
     openScores.value.add(seriesKey(data.row.incentive_type, data.row.score_type))
-    showMessage(data.message || (isEditing ? 'Score step updated successfully.' : 'Score step added successfully.'))
+    showMessage(data.message || 'Score step added successfully.')
     await loadMatrix()
   } catch (error) {
     formError.value = error.message
-    if (error.status === 409 || (isEditing && error.status === 404)) {
-      // Keep entered values, but refresh a stale next-score preview before retry.
+    if (error.status === 409) {
+      // Refresh occupied scores, but never replace the user's chosen score or values.
       await loadMatrix()
-      const context = formContext.value
-      if (context?.mode === 'step') {
-        const updated = series.value.find((item) =>
-          seriesKey(item.incentive_type, item.score_type) === seriesKey(context.incentiveType, context.scoreType)
-        )
-        if (updated && updated.next_score !== context.nextScore) {
-          context.nextScore = updated.next_score
-          formError.value = `The matrix changed. The next score is now ${updated.next_score}. Review your values and save again.`
-        }
-      } else if (context?.mode === 'edit') {
-        const current = rows.value.find((row) => String(row.id) === String(context.step.id))
-        context.editUnavailable = !current || !isActive(current)
-      }
     }
   } finally {
     saving.value = false
@@ -306,154 +295,157 @@ onBeforeUnmount(() => {
       <button class="btn btn-ghost btn-sm" :disabled="typesLoading" @click="loadTypes">Retry types</button>
     </div>
 
-    <template v-if="selectedGroup === null">
-      <div v-if="groupsError" class="banner error" role="alert">
-        <strong>Could not load city groups</strong>
-        <p>{{ groupsError }}</p>
-        <button class="btn btn-ghost" @click="loadGroups">Retry city groups</button>
-      </div>
-      <div v-else-if="groupsLoading" class="card empty" role="status">Loading city groups…</div>
-      <section v-else class="card group-directory" aria-labelledby="groups-heading">
-        <div class="directory-head">
-          <div>
-            <h2 id="groups-heading">Select a city group</h2>
-            <p class="hint">Distinct groups from the active cities table, including groups with no matrix yet.</p>
-          </div>
-          <span class="badge">{{ countLabel(groups.length, 'group') }}</span>
-        </div>
-        <label class="search-field">
-          <span class="sr-only">Search city groups</span>
-          <input v-model="search" type="search" placeholder="Search city groups…" />
-        </label>
-        <div v-if="!groups.length" class="empty">
-          <h3>No city groups found</h3>
-          <p>Add city groups to the active cities table to get started.</p>
-        </div>
-        <div v-else-if="!filteredGroups.length" class="empty">
-          <p>No city groups match “{{ search }}”.</p>
-          <button class="btn btn-ghost btn-sm" @click="search = ''">Clear search</button>
-        </div>
-        <ul v-else class="group-list" aria-label="City groups">
-          <li v-for="group in filteredGroups" :key="group">
-            <button class="group-button" :aria-label="`Open city group ${group}`" @click="selectGroup(group)">
-              <span class="group-label">{{ group }}</span>
-              <span class="group-hint">View incentive types</span>
-              <span class="arrow" aria-hidden="true">→</span>
-            </button>
-          </li>
-        </ul>
-      </section>
-    </template>
-
-    <template v-else>
-      <nav class="breadcrumbs" aria-label="Decision Matrix location">
-        <button class="text-button" @click="showGroups">← All city groups</button>
-        <span aria-hidden="true">/</span>
-        <strong aria-current="page">{{ selectedGroup }}</strong>
-      </nav>
-      <div class="group-head">
+    <div v-if="groupsError" class="banner error" role="alert">
+      <strong>Could not load city groups</strong>
+      <p>{{ groupsError }}</p>
+      <button class="btn btn-ghost" @click="loadGroups">Retry city groups</button>
+    </div>
+    <div v-else-if="groupsLoading" class="card empty" role="status">Loading city groups…</div>
+    <section v-else class="card group-directory" aria-labelledby="groups-heading">
+      <div class="directory-head">
         <div>
-          <p class="eyebrow">City group</p>
-          <h2>{{ selectedGroup }}</h2>
-          <p v-if="!matrixLoading && !matrixError" class="hint">
-            {{ countLabel(configuredTypes.length, 'incentive type') }} · {{ countLabel(series.length, 'score type') }} · {{ countLabel(activeCount, 'active step') }}
-          </p>
+          <h2 id="groups-heading">Select a city group</h2>
+          <p class="hint">Click a group to expand its incentive types below.</p>
         </div>
-        <button class="btn btn-primary" :disabled="!canAddType" @click="openForm('type')">+ Add incentive type</button>
+        <span class="badge">{{ countLabel(groups.length, 'group') }}</span>
       </div>
-
-      <div v-if="matrixError" class="banner error" role="alert">
-        <strong>Could not load the matrix</strong>
-        <p>{{ matrixError }}</p>
-        <button class="btn btn-ghost" @click="loadMatrix">Retry matrix</button>
+      <label class="search-field">
+        <span class="sr-only">Search city groups</span>
+        <input v-model="search" type="search" placeholder="Search city groups…" />
+      </label>
+      <div v-if="!groups.length" class="empty">
+        <h3>No city groups found</h3>
+        <p>Add city groups to the active cities table to get started.</p>
       </div>
-      <div v-else-if="matrixLoading" class="card empty" role="status">Loading score steps…</div>
-      <template v-else>
-        <p v-if="!typesLoading && !typesError && !types.length" class="notice">
-          No incentive types are available in the reference table. An existing type is required to add a step.
-        </p>
-        <div v-if="!configuredTypes.length" class="card empty">
-          <span class="empty-mark" aria-hidden="true">＋</span>
-          <h3>No incentive types configured yet</h3>
-          <p>Use <strong>Add incentive type</strong> to choose a type and create its first score step.</p>
-        </div>
-        <div v-else class="type-list">
-          <section v-for="(type, typeIndex) in configuredTypes" :key="type.id" class="card type-card">
-            <h3 class="accordion-heading">
-              <button
-                class="accordion-trigger type-trigger"
-                :aria-expanded="expandedType === type.id" :aria-controls="`matrix-type-${typeIndex}`"
-                @click="expandedType = expandedType === type.id ? null : type.id"
-              >
-                <span class="chevron" :class="{ open: expandedType === type.id }" aria-hidden="true">›</span>
-                <span class="type-label">{{ type.name }} <small>#{{ type.id }}</small></span>
-                <span class="counts">{{ countLabel(type.scoreTypes.length, 'score type') }} <span aria-hidden="true">·</span> {{ countLabel(type.activeCount, 'active step') }}</span>
-              </button>
-            </h3>
-            <div v-if="expandedType === type.id" :id="`matrix-type-${typeIndex}`" class="type-body">
-              <div class="section-toolbar">
-                <span class="eyebrow">Score types</span>
-                <button class="btn btn-ghost btn-sm" :disabled="!type.canAdd || typesLoading" @click="openForm('scoreType', type)">
-                  + Add score type
-                </button>
-              </div>
-              <p v-if="!type.canAdd && !typesLoading" class="notice">
-                This incentive type is not available in the reference lookup. Active steps can be edited or deactivated, but no new steps can be added.
-              </p>
-              <section v-for="(item, scoreIndex) in type.scoreTypes" :key="item.key" class="score-card">
-                <h4 class="accordion-heading">
-                  <button
-                    class="accordion-trigger score-trigger"
-                    :aria-expanded="openScores.has(item.key)" :aria-controls="`matrix-score-${typeIndex}-${scoreIndex}`"
-                    @click="toggleSet(openScores, item.key)"
-                  >
-                    <span class="chevron" :class="{ open: openScores.has(item.key) }" aria-hidden="true">›</span>
-                    <span class="score-name">{{ item.score_type }}</span>
-                    <span class="counts">{{ item.active_count }} active <span v-if="item.deactivated_count">· {{ item.deactivated_count }} deactivated</span></span>
-                  </button>
-                </h4>
-                <div v-if="openScores.has(item.key)" :id="`matrix-score-${typeIndex}-${scoreIndex}`" class="score-body">
-                  <div class="section-toolbar step-toolbar">
-                    <h5 class="steps-heading">Active steps</h5>
-                    <button class="btn btn-primary btn-sm" :disabled="!type.canAdd || typesLoading" @click="openForm('step', type, item)">
-                      + Add step ({{ item.next_score }})
-                    </button>
-                  </div>
-                  <p v-if="!item.activeSteps.length" class="steps-empty">
-                    No active steps. Add step 1 to start again.
-                  </p>
-                  <DecisionMatrixStepsTable
-                    v-else :steps="item.activeSteps" :label="`${item.score_type} active steps`"
-                    @edit="openForm('edit', type, item, $event)"
-                    @deactivate="askDeactivate(type, item, $event)"
-                  />
-                  <section v-if="item.deactivated_count" class="history-section" :aria-label="`${item.score_type} deactivated history`">
-                    <div class="section-toolbar history-toolbar">
-                      <h5 class="steps-heading">Deactivated steps</h5>
-                      <button
-                        class="btn btn-ghost btn-sm" :aria-expanded="historyShown.has(item.key)"
-                        @click="toggleSet(historyShown, item.key)"
-                      >{{ historyShown.has(item.key) ? 'Hide deactivated' : `Show deactivated (${item.deactivated_count})` }}</button>
+      <div v-else-if="!filteredGroups.length" class="empty">
+        <p>No city groups match “{{ search }}”.</p>
+        <button class="btn btn-ghost btn-sm" @click="search = ''">Clear search</button>
+      </div>
+      <ul v-else class="group-list" aria-label="City groups">
+        <li v-for="(group, groupIndex) in filteredGroups" :key="group" class="group-item">
+          <button
+            class="group-button" :aria-label="`City group ${group}`" :aria-expanded="selectedGroup === group"
+            :aria-controls="selectedGroup === group ? `matrix-group-${groupIndex}` : undefined"
+            @click="selectGroup(group)"
+          >
+            <span class="chevron" :class="{ open: selectedGroup === group }" aria-hidden="true">›</span>
+            <span class="group-label">{{ group }}</span>
+            <span class="group-hint">{{ selectedGroup === group ? 'Hide incentive types' : 'View incentive types' }}</span>
+          </button>
+          <Transition name="group-slide">
+            <div
+              v-if="selectedGroup === group" :id="`matrix-group-${groupIndex}`" class="group-panel"
+              role="region" :aria-label="`${group} decision matrix`"
+            >
+              <div class="group-panel-inner">
+                <div class="group-content">
+                  <div class="group-head">
+                    <div>
+                      <h3>Incentive types</h3>
+                      <p v-if="!matrixLoading && !matrixError" class="hint">
+                        {{ countLabel(configuredTypes.length, 'incentive type') }} · {{ countLabel(series.length, 'score type') }} · {{ countLabel(activeCount, 'active step') }}
+                      </p>
                     </div>
-                    <DecisionMatrixStepsTable
-                      v-if="historyShown.has(item.key)" :steps="item.deactivatedSteps"
-                      :label="`${item.score_type} deactivated steps`" deactivated
-                    />
-                  </section>
+                    <button class="btn btn-primary" :disabled="!canAddType" @click="openForm('type')">+ Add incentive type</button>
+                  </div>
+
+                  <div v-if="matrixError" class="banner error" role="alert">
+                    <strong>Could not load the matrix</strong>
+                    <p>{{ matrixError }}</p>
+                    <button class="btn btn-ghost" @click="loadMatrix">Retry matrix</button>
+                  </div>
+                  <div v-else-if="matrixLoading" class="card empty" role="status">Loading score steps…</div>
+                  <template v-else>
+                    <p v-if="!typesLoading && !typesError && !types.length" class="notice">
+                      No incentive types are available in the reference table. An existing type is required to add a step.
+                    </p>
+                    <div v-if="!configuredTypes.length" class="card empty">
+                      <span class="empty-mark" aria-hidden="true">＋</span>
+                      <h3>No incentive types configured yet</h3>
+                      <p>Use <strong>Add incentive type</strong> to choose a type and create its first score step.</p>
+                    </div>
+                    <div v-else class="type-list">
+                      <section v-for="(type, typeIndex) in configuredTypes" :key="type.id" class="card type-card">
+                        <h3 class="accordion-heading">
+                          <button
+                            class="accordion-trigger type-trigger"
+                            :aria-expanded="expandedType === type.id" :aria-controls="`matrix-type-${groupIndex}-${typeIndex}`"
+                            @click="expandedType = expandedType === type.id ? null : type.id"
+                          >
+                            <span class="chevron" :class="{ open: expandedType === type.id }" aria-hidden="true">›</span>
+                            <span class="type-label">{{ type.name }} <small>#{{ type.id }}</small></span>
+                            <span class="counts">{{ countLabel(type.scoreTypes.length, 'score type') }} <span aria-hidden="true">·</span> {{ countLabel(type.activeCount, 'active step') }}</span>
+                          </button>
+                        </h3>
+                        <div v-if="expandedType === type.id" :id="`matrix-type-${groupIndex}-${typeIndex}`" class="type-body">
+                          <div class="section-toolbar">
+                            <span class="eyebrow">Score types</span>
+                            <button class="btn btn-ghost btn-sm" :disabled="!type.canAdd || typesLoading" @click="openForm('scoreType', type)">
+                              + Add score type
+                            </button>
+                          </div>
+                          <p v-if="!type.canAdd && !typesLoading" class="notice">
+                            This incentive type is not available in the reference lookup. Active steps can be deactivated, but no new steps can be added.
+                          </p>
+                          <section v-for="(item, scoreIndex) in type.scoreTypes" :key="item.key" class="score-card">
+                            <h4 class="accordion-heading">
+                              <button
+                                class="accordion-trigger score-trigger"
+                                :aria-expanded="openScores.has(item.key)" :aria-controls="`matrix-score-${groupIndex}-${typeIndex}-${scoreIndex}`"
+                                @click="toggleSet(openScores, item.key)"
+                              >
+                                <span class="chevron" :class="{ open: openScores.has(item.key) }" aria-hidden="true">›</span>
+                                <span class="score-name">{{ item.score_type }}</span>
+                                <span class="counts">{{ item.active_count }} active <span v-if="item.deactivated_count">· {{ item.deactivated_count }} deactivated</span></span>
+                              </button>
+                            </h4>
+                            <div v-if="openScores.has(item.key)" :id="`matrix-score-${groupIndex}-${typeIndex}-${scoreIndex}`" class="score-body">
+                              <div class="section-toolbar step-toolbar">
+                                <h5 class="steps-heading">Active steps</h5>
+                                <button class="btn btn-primary btn-sm" :disabled="!type.canAdd || typesLoading" @click="openForm('step', type, item)">
+                                  + Add step ({{ item.next_score }})
+                                </button>
+                              </div>
+                              <p v-if="!item.activeSteps.length" class="steps-empty">
+                                No active steps. Add a new step to start again.
+                              </p>
+                              <DecisionMatrixStepsTable
+                                v-else :steps="item.activeSteps" :label="`${item.score_type} active steps`"
+                                @deactivate="askDeactivate(type, item, $event)"
+                              />
+                              <section v-if="item.deactivated_count" class="history-section" :aria-label="`${item.score_type} deactivated history`">
+                                <div class="section-toolbar history-toolbar">
+                                  <h5 class="steps-heading">Deactivated steps</h5>
+                                  <button
+                                    class="btn btn-ghost btn-sm" :aria-expanded="historyShown.has(item.key)"
+                                    @click="toggleSet(historyShown, item.key)"
+                                  >{{ historyShown.has(item.key) ? 'Hide deactivated' : `Show deactivated (${item.deactivated_count})` }}</button>
+                                </div>
+                                <DecisionMatrixStepsTable
+                                  v-if="historyShown.has(item.key)" :steps="item.deactivatedSteps"
+                                  :label="`${item.score_type} deactivated steps`" deactivated
+                                />
+                              </section>
+                            </div>
+                          </section>
+                        </div>
+                      </section>
+                      <p v-if="types.length && !availableTypes.length && !typesLoading && !typesError" class="hint all-added">
+                        All available incentive types have been added to this city group.
+                      </p>
+                    </div>
+                  </template>
                 </div>
-              </section>
+              </div>
             </div>
-          </section>
-          <p v-if="types.length && !availableTypes.length && !typesLoading && !typesError" class="hint all-added">
-            All available incentive types have been added to this city group.
-          </p>
-        </div>
-      </template>
-    </template>
+          </Transition>
+        </li>
+      </ul>
+    </section>
 
     <DecisionMatrixStepForm
       v-if="formContext" :context="formContext" :columns="columns" :types="availableTypes"
-      :existing-score-types="existingScoreTypes" :saving="saving" :error="formError"
+      :existing-score-types="existingScoreTypes" :steps="rows" :saving="saving" :error="formError"
       @save="saveStep" @close="closeForm"
     />
     <ModalDialog v-if="deactivateTarget" title-id="deactivate-score-title" :busy="deactivating" @close="closeDeactivate">
@@ -499,16 +491,19 @@ h3 { font-size: 1.05rem; }
 .group-button:focus-visible { outline-offset: -3px; }
 .group-label { flex: 1; min-width: 0; font-size: 0.95rem; font-weight: 600; overflow-wrap: anywhere; }
 .group-hint { color: var(--muted); font-size: 0.8rem; }
-.arrow { color: var(--accent); font-size: 1.15rem; }
 .empty { padding: 3.5rem 1.2rem; text-align: center; color: var(--muted); }
 .empty h3 { color: var(--text); margin: 0.8rem 0 0.4rem; }
 .empty p { margin: 0.45rem 0 1rem; font-size: 0.9rem; line-height: 1.6; }
 .empty-mark { display: inline-grid; place-items: center; width: 3rem; height: 3rem; background: var(--accent-soft); border-radius: 0.9rem; color: var(--accent); font-size: 1.7rem; }
-.breadcrumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 0.65rem; color: var(--muted); font-size: 0.86rem; margin-bottom: 1.25rem; }
-.breadcrumbs strong { color: var(--text); overflow-wrap: anywhere; }
-.text-button { border: 0; background: none; padding: 0.2rem 0; color: var(--accent-strong); font-size: inherit; }
-.text-button:hover { text-decoration: underline; }
-.group-head { margin-bottom: 1.25rem; }
+.group-head { margin-bottom: 1rem; }
+.group-head h3 { margin: 0; }
+.group-button[aria-expanded="true"] { background: var(--accent-soft); color: var(--accent-strong); }
+.group-panel { display: grid; grid-template-rows: 1fr; opacity: 1; }
+.group-panel-inner { min-height: 0; overflow: hidden; }
+.group-content { padding: 1.1rem; background: #f8faf9; border-bottom: 1px solid var(--border); }
+.group-slide-enter-active, .group-slide-leave-active { transition: grid-template-rows 0.22s ease, opacity 0.22s ease; }
+.group-slide-enter-from, .group-slide-leave-to { grid-template-rows: 0fr; opacity: 0; }
+.group-slide-leave-active { pointer-events: none; }
 .group-head .hint { margin-top: 0.35rem; }
 .type-list { display: grid; gap: 1rem; }
 .type-card { overflow: hidden; }
@@ -543,12 +538,16 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .accordion-trigger:focus-visible { outline-offset: -3px; }
 @media (max-width: 640px) {
   .head, .group-head, .directory-head { align-items: flex-start; flex-wrap: wrap; }
-  .group-directory, .type-body { padding: 0.9rem; }
+  .group-directory { padding: 0.9rem; }
+  .group-content, .type-body { padding: 0.65rem; }
   .group-head > .btn { width: 100%; }
   .accordion-trigger { flex-wrap: wrap; gap: 0.5rem; }
   .counts { width: 100%; margin-left: 1.1rem; }
   .type-trigger { padding: 1rem; }
   .step-toolbar, .history-toolbar { padding: 0.8rem; }
   .group-hint { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .group-slide-enter-active, .group-slide-leave-active { transition: none; }
 }
 </style>
