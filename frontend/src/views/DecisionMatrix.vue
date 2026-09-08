@@ -114,7 +114,7 @@ function countLabel(count, noun) {
   return `${count} ${noun}${count === 1 ? '' : 's'}`
 }
 function typeDetailHref(group, typeId) {
-  return `/decision-matrix?city_group=${encodeURIComponent(group)}&type=${encodeURIComponent(String(typeId))}`
+  return `/decision-matrix/type?city_group=${encodeURIComponent(group)}&type=${encodeURIComponent(String(typeId))}`
 }
 const existingScoreTypes = computed(() => configuredTypes.value
   .find((type) => type.id === String(formContext.value?.incentiveType))
@@ -291,7 +291,10 @@ async function confirmDeactivate() {
 function applyFocusFromQuery() {
   const group = String(route.query.city_group ?? '').trim()
   const type = String(route.query.type ?? '').trim()
-  if (!group) return
+  if (!group) {
+    focusType.value = null
+    return
+  }
   if (search.value.trim()) search.value = ''
   focusType.value = type || null
   if (selectedGroup.value !== group) {
@@ -313,6 +316,9 @@ onMounted(async () => {
   await loadGroups()
   applyFocusFromQuery()
 })
+// Re-apply when the query changes without a full reload (same component is
+// reused across /decision-matrix and /decision-matrix/type).
+watch(() => [route.query.city_group, route.query.type], () => applyFocusFromQuery())
 onBeforeUnmount(() => {
   disposed = true
   groupsController?.abort()

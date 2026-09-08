@@ -18,6 +18,14 @@ export default createRouter({
       meta: { wide: true },
     },
     {
+      // Focused view of a single incentive type: same component and UI as the
+      // main Decision Matrix tab, scoped via ?city_group=…&type=….
+      path: '/decision-matrix/type',
+      name: 'decision-matrix-type',
+      component: DecisionMatrix,
+      meta: { wide: true },
+    },
+    {
       path: '/business-entities',
       name: 'business-entities',
       component: BusinessEntities,

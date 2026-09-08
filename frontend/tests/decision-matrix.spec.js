@@ -547,9 +547,9 @@ test('each incentive type opens a focused single-type view in a new tab', async 
   const openLink = groupPanel(page).getByRole('link', { name: 'Open DAILY in a new tab', exact: true })
   await expect(openLink).toBeVisible()
   await expect(openLink).toHaveAttribute('target', '_blank')
-  await expect(openLink).toHaveAttribute('href', '/decision-matrix?city_group=Group%20A&type=1')
+  await expect(openLink).toHaveAttribute('href', '/decision-matrix/type?city_group=Group%20A&type=1')
   // The focused view keeps the exact same structure and flows, scoped to one type.
-  await page.goto('/decision-matrix?city_group=Group%20A&type=1')
+  await page.goto('/decision-matrix/type?city_group=Group%20A&type=1')
   await expect(groupButton(page)).toHaveAttribute('aria-expanded', 'true')
   await expect(groupPanel(page).getByRole('button', { name: /DAILY #/ })).toBeVisible()
   await expect(groupPanel(page).getByRole('button', { name: /WEEKLY #/ })).toHaveCount(0)
