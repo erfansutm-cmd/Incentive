@@ -1,6 +1,6 @@
 """ClickHouse database connection module.
 
-This module provides a function to connect to ClickHouse database.
+This module provides functions to connect to ClickHouse database and execute queries.
 Currently not used in the main application flow, but available for future usage.
 """
 
@@ -54,6 +54,40 @@ def get_clickhouse_connection():
         # Log the error but don't crash - this function is for future usage
         print(f"ClickHouse connection failed: {e}")
         return None
+
+
+def execute_query(sql, parameters=None):
+    """Execute a ClickHouse query and return the results.
+    
+    Args:
+        sql: SQL query string
+        parameters: Optional dictionary of parameters to bind
+        
+    Returns:
+        List of dictionaries representing the query results, or None if connection not configured
+    """
+    connection = get_clickhouse_connection()
+    if connection is None:
+        return None
+    
+    try:
+        # Clickhouse_driver returns rows as tuples, we'll convert to dicts
+        rows = connection.execute(sql, parameters or {})
+        # Get column names from the connection
+        # Note: clickhouse-driver may not directly provide column names,
+        # so we return rows as-is or convert based on available info
+        if rows:
+            # Return rows as list of tuples or dicts if column names available
+            return [dict(zip([f'col_{i}' for i in range(len(rows[0]))], row)) for row in rows]
+        return []
+    except Exception as e:
+        print(f"ClickHouse query execution failed: {e}")
+        return None
+    finally:
+        try:
+            connection.close()
+        except Exception:
+            pass
 
 
 def get_clickhouse():

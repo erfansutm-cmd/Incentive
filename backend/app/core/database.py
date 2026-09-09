@@ -1,6 +1,6 @@
 import os
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -48,3 +48,23 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def execute_query(sql, params=None):
+    """Execute a MySQL query and return the results.
+    
+    Args:
+        sql: SQL query string
+        params: Optional dictionary of parameters to bind
+        
+    Returns:
+        List of dictionaries representing the query results, or None if no rows returned
+    """
+    with SessionLocal() as session:
+        result = session.execute(text(sql), params or {})
+        if result.returns_rows:
+            columns = result.keys()
+            rows = result.fetchall()
+            return [dict(zip(columns, row)) for row in rows]
+        else:
+            return None
