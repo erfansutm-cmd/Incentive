@@ -7,7 +7,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from ..core.database import engine, quote_table
+from app.core.utils.database import engine, quote_table
 
 TABLE_NAME = os.getenv("DB_BUSINESS_ENTITIES_TABLE", "business_entities")
 TABLE_SQL = quote_table(TABLE_NAME)

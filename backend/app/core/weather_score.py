@@ -1,8 +1,8 @@
 from datetime import date, timedelta
 import requests
 
-from ..config import WEATHER_API_URL
-from ..logger import get_logger
+from app.core.config import WEATHER_API_URL
+from app.core.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
