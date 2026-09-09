@@ -56,30 +56,69 @@ def get_clickhouse_connection():
         return None
 
 
-def execute_query(sql, parameters=None):
+def execute_query(sql=None, parameters=None, db=None, table=None):
     """Execute a ClickHouse query and return the results.
     
+    This function supports two modes:
+    
+    1. Raw SQL mode: Provide custom SQL query string in `sql`.
+       Use `parameters` for parameter binding.
+       
+    2. Automatic query mode: Provide `table` name (optionally with `db` database name).
+       The function will build a SELECT query automatically.
+       
+    If neither `sql` nor (`db` and `table`) are provided, a basic "SELECT 1" query is used
+    for testing connectivity.
+    
     Args:
-        sql: SQL query string
-        parameters: Optional dictionary of parameters to bind
+        sql: SQL query string. If building automatic query, use "SELECT * FROM table_name"
+        parameters: Optional dictionary of parameters to bind (for raw SQL mode)
+        db: Optional database name for automatic query mode
+        table: Optional table name for automatic query mode
         
     Returns:
         List of dictionaries representing the query results, or None if connection not configured
+        
+    Example:
+        # Automatic mode - SELECT * from specific table in specific database
+        results = execute_query(db="default", table="my_table")
+        
+        # Raw SQL mode
+        results = execute_query(sql="SELECT * FROM my_table WHERE id = %s", {"id": 1})
+        
+        # Automatic mode without database (uses default DB)
+        results = execute_query(table="my_table")
+        
+        # Default connectivity test
+        results = execute_query()
     """
     connection = get_clickhouse_connection()
     if connection is None:
         return None
     
     try:
-        # Clickhouse_driver returns rows as tuples, we'll convert to dicts
-        rows = connection.execute(sql, parameters or {})
-        # Get column names from the connection
-        # Note: clickhouse-driver may not directly provide column names,
-        # so we return rows as-is or convert based on available info
-        if rows:
-            # Return rows as list of tuples or dicts if column names available
-            return [dict(zip([f'col_{i}' for i in range(len(rows[0]))], row)) for row in rows]
-        return []
+        # If db and table are provided, build a SELECT query automatically
+        if db and table:
+            # Build a SELECT query with the specified database and table
+            sql = f"SELECT * FROM {db}.{table}"
+            # Execute the query
+            rows = connection.execute(sql, parameters or {})
+            # Return rows as list of tuples
+            return [row for row in rows]
+        elif sql is None:
+            # Default: basic connectivity test
+            sql = "SELECT 1 as test"
+            rows = connection.execute(sql, parameters or {})
+            if rows:
+                return [dict(zip([f'col_{i}' for i in range(len(rows[0]))], row)) for row in rows]
+            return []
+        else:
+            # Use raw SQL provided
+            rows = connection.execute(sql, parameters or {})
+            if rows:
+                # Return rows as list of dicts with generic column names
+                return [dict(zip([f'col_{i}' for i in range(len(rows[0]))], row)) for row in rows]
+            return []
     except Exception as e:
         print(f"ClickHouse query execution failed: {e}")
         return None
