@@ -1,148 +1,134 @@
-"""ClickHouse database connection module.
+"""ClickHouse database connection module (HTTP / clickhouse-connect).
 
-This module provides functions to connect to ClickHouse database and execute queries.
-Currently not used in the main application flow, but available for future usage.
+This module provides functions to connect to ClickHouse database via HTTP(S)
+and execute queries for performance score calculations.
 """
 
-import os
-from clickhouse_driver import connect
+import clickhouse_connect
+
+from app.core.config import (
+    CLICKHOUSE_DB,
+    CLICKHOUSE_HOST,
+    CLICKHOUSE_PASSWORD,
+    CLICKHOUSE_PORT,
+    CLICKHOUSE_USER,
+)
+from app.core.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
-def get_clickhouse_connection():
-    """Get a ClickHouse database connection.
-
-    This function reads ClickHouse connection parameters from environment variables
-    and returns a connection object. The connection is not used by default currently,
-    but can be used in the future by importing and calling this function.
-
-    Environment variables (all optional, with sensible defaults):
-        CLICKHOUSE_HOST: ClickHouse server host (default: empty)
-        CLICKHOUSE_PORT: ClickHouse server port (default: 8123)
-        CLICKHOUSE_DB: Default database name (default: empty)
-        CLICKHOUSE_USER: ClickHouse user (default: empty)
-        CLICKHOUSE_PASSWORD: ClickHouse password (default: empty)
+def get_clickhouse_client():
+    """Get an HTTP-based ClickHouse client without binding a fixed database at connection time.
 
     Returns:
-        A ClickHouse connection object, or None if connection fails or
-        required parameters are not configured.
-
-    Note:
-        This function is intended for future usage. Currently, the environment
-        variables are set with empty/default values so the function will
-        return None unless explicitly configured.
+        A clickhouse_connect Client object, or None if host is missing or connection fails.
     """
-    host = os.getenv("CLICKHOUSE_HOST", "")
-    port = int(os.getenv("CLICKHOUSE_PORT", "8123"))
-    database = os.getenv("CLICKHOUSE_DB", "")
-    user = os.getenv("CLICKHOUSE_USER", "")
-    password = os.getenv("CLICKHOUSE_PASSWORD", "")
-
-    # Return None if host is not configured (not used for now)
-    if not host:
+    if not CLICKHOUSE_HOST:
+        logger.error(
+            "CLICKHOUSE_HOST is not set: ClickHouse queries cannot run and will return None. "
+            "Set CLICKHOUSE_HOST (and CLICKHOUSE_PORT/USER/PASSWORD) in the environment."
+        )
         return None
 
     try:
-        connection = connect(
-            host=host,
+        port = int(CLICKHOUSE_PORT)
+    except (TypeError, ValueError):
+        logger.error("ClickHouse client creation failed: invalid port %r", CLICKHOUSE_PORT)
+        return None
+
+    try:
+        client = clickhouse_connect.get_client(
+            host=CLICKHOUSE_HOST,
             port=port,
-            database=database,
-            user=user,
-            password=password,
+            username=CLICKHOUSE_USER,
+            password=CLICKHOUSE_PASSWORD,
         )
-        return connection
-    except Exception as e:
-        # Log the error but don't crash - this function is for future usage
-        print(f"ClickHouse connection failed: {e}")
+        return client
+    except Exception:
+        logger.exception(
+            "ClickHouse HTTP client creation failed (host=%r, port=%r, user=%r)",
+            CLICKHOUSE_HOST,
+            port,
+            CLICKHOUSE_USER,
+        )
         return None
 
 
 def execute_query(sql=None, parameters=None, db=None, table=None):
-    """Execute a ClickHouse query and return the results.
-    
-    This function supports two modes:
-    
-    1. Raw SQL mode: Provide custom SQL query string in `sql`.
-       Use `parameters` for parameter binding.
-       
-    2. Automatic query mode: Provide `table` name (optionally with `db` database name).
-       The function will build a SELECT query automatically.
-       
-    If neither `sql` nor (`db` and `table`) are provided, a basic "SELECT 1" query is used
-    for testing connectivity.
-    
+    """Execute a ClickHouse query, specifying the target database at query runtime via settings.
+
     Args:
-        sql: SQL query string. If building automatic query, use "SELECT * FROM table_name"
-        parameters: Optional dictionary of parameters to bind (for raw SQL mode)
-        db: Optional database name for automatic query mode
-        table: Optional table name for automatic query mode
-        
+        sql: Custom SQL query string.
+        parameters: Optional dictionary of parameters to bind.
+        db: Optional target database name for this specific query run.
+        table: Optional table name for automatic query mode.
+
     Returns:
-        List of dictionaries representing the query results, or None if connection not configured
-        
-    Example:
-        # Automatic mode - SELECT * from specific table in specific database
-        results = execute_query(db="default", table="my_table")
-        
-        # Raw SQL mode
-        results = execute_query(sql="SELECT * FROM my_table WHERE id = %s", {"id": 1})
-        
-        # Automatic mode without database (uses default DB)
-        results = execute_query(table="my_table")
-        
-        # Default connectivity test
-        results = execute_query()
+        List of dictionaries representing the query results, or None on failure/unconfigured.
     """
-    connection = get_clickhouse_connection()
-    if connection is None:
+    client = get_clickhouse_client()
+    if client is None:
         return None
-    
+
+    target_db = db or CLICKHOUSE_DB or "default"
+
     try:
-        # If db and table are provided, build a SELECT query automatically
         if db and table:
-            # Build a SELECT query with the specified database and table
             sql = f"SELECT * FROM {db}.{table}"
-            # Execute the query
-            rows = connection.execute(sql, parameters or {})
-            # Return rows as list of tuples
-            return [row for row in rows]
         elif sql is None:
-            # Default: basic connectivity test
             sql = "SELECT 1 as test"
-            rows = connection.execute(sql, parameters or {})
-            if rows:
-                return [dict(zip([f'col_{i}' for i in range(len(rows[0]))], row)) for row in rows]
-            return []
-        else:
-            # Use raw SQL provided
-            rows = connection.execute(sql, parameters or {})
-            if rows:
-                # Return rows as list of dicts with generic column names
-                return [dict(zip([f'col_{i}' for i in range(len(rows[0]))], row)) for row in rows]
-            return []
-    except Exception as e:
-        print(f"ClickHouse query execution failed: {e}")
+
+        # Pass database via query settings dictionary
+        result = client.query(
+            sql,
+            parameters=parameters or {},
+            settings={"database": target_db},
+        )
+
+        # Consume generator into a Python list of dictionaries
+        rows = list(result.named_results())
+
+        logger.debug(
+            "ClickHouse HTTP query on %s:%s (db=%s) returned %d rows",
+            CLICKHOUSE_HOST,
+            CLICKHOUSE_PORT,
+            target_db,
+            len(rows),
+        )
+        return rows
+    except Exception:
+        logger.exception(
+            "ClickHouse HTTP query failed on %s:%s (database=%r, user=%r). SQL:\n%s",
+            CLICKHOUSE_HOST,
+            CLICKHOUSE_PORT,
+            target_db,
+            CLICKHOUSE_USER,
+            sql,
+        )
         return None
     finally:
         try:
-            connection.close()
+            client.close()
         except Exception:
             pass
 
 
-def get_clickhouse():
-    """FastAPI dependency that yields a ClickHouse session (for future use).
+def get_clickhouse_connection():
+    """Legacy helper returning a client instance for DB API compatibility."""
+    return get_clickhouse_client()
 
-    Returns:
-        A context manager yielding a ClickHouse connection, or None if not configured.
-    """
-    connection = get_clickhouse_connection()
-    if connection is None:
+
+def get_clickhouse():
+    """FastAPI dependency yielding a ClickHouse HTTP client context."""
+    client = get_clickhouse_client()
+    if client is None:
         return None
 
     try:
-        yield connection
+        yield client
     finally:
         try:
-            connection.close()
+            client.close()
         except Exception:
             pass

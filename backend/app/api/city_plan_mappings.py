@@ -7,11 +7,12 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.core.utils.database import engine, quote_table
+from app.core.config import DB_CITY_MAPPING_TABLE as TABLE_NAME
 
 # Table holding the per-city plan mapping:
 #   id | city_id | incentive_type_id | business_entity | created_at | deactivated_at
 # Configured the same way as the other tables: "table" or "schema/table".
-TABLE_NAME = os.getenv("DB_CITY_PLAN_MAPPING_TABLE", "incentive/incentive_city_plan_mapping")
+
 TABLE_SQL = quote_table(TABLE_NAME)  # quoted, may be "schema/table"
 
 CITY_ID_COLUMN = "city_id"

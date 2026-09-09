@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.core.utils.database import engine, quote_table
+from app.core.config import DB_INCENTIVE_TYPE_TABLE as TABLE_NAME
 
 # Lookup table for plan-mapping types:
 #   id | name | created_at
@@ -14,7 +15,6 @@ from app.core.utils.database import engine, quote_table
 # fill the "Add plan" type dropdown, and by the Decision Matrix type selector.
 # Configured like the other tables:
 # "table" or "schema/table".
-TABLE_NAME = os.getenv("DB_INCENTIVE_TYPE_TABLE", "mafsho/incentive_type")
 TABLE_SQL = quote_table(TABLE_NAME)  # quoted, may be "schema/table"
 
 router = APIRouter(prefix="/api/incentive-types", tags=["incentive-types"])

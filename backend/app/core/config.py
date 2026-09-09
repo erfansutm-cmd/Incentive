@@ -7,17 +7,23 @@ DB_HOST = os.getenv("DB_HOST", "172.21.41.75")
 DB_PORT = int(os.getenv("DB_PORT", "3306"))
 DB_NAME = os.getenv("DB_NAME", "")
 
-# ClickHouse settings (for future use - not active yet)
+# ClickHouse settings (used by the performance score calculation).
+# NOTE: clickhouse-driver speaks the native protocol (default port 9000),
+# not the HTTP port 8123.
 CLICKHOUSE_HOST = os.getenv("CLICKHOUSE_HOST", "")
-CLICKHOUSE_PORT = os.getenv("CLICKHOUSE_PORT", "8123")
+CLICKHOUSE_PORT = os.getenv("CLICKHOUSE_PORT", "9000")
 CLICKHOUSE_DB = os.getenv("CLICKHOUSE_DB", "")
 CLICKHOUSE_USER = os.getenv("CLICKHOUSE_USER", "")
 CLICKHOUSE_PASSWORD = os.getenv("CLICKHOUSE_PASSWORD", "")
 
 # Table names
-DB_CITIES_TABLE = os.getenv("DB_CITIES_TABLE", "cities")
+DB_CITIES_TABLE = os.getenv("DB_CITIES_TABLE", "incentive/cities")
 DB_CITY_MAPPING_TABLE = os.getenv("DB_CITY_MAPPING_TABLE", "mafsho/city_mapping")
 DB_ACTIVE_CITY_TABLE = os.getenv("DB_ACTIVE_CITY_TABLE", "incentive/incentive_active_city")
+DB_BUSINESS_ENTITIES_TABLE = os.getenv(
+    "DB_BUSINESS_ENTITIES_TABLE", "incentive/business_entities"
+)
+DB_INCENTIVE_TYPE_TABLE = os.getenv("DB_INCENTIVE_TYPE_TABLE", "mafsho/incentive_type")
 DB_DECISION_MATRIX_TABLE = os.getenv(
     "DB_DECISION_MATRIX_TABLE", "incentive/incentive_decision_matrix"
 )

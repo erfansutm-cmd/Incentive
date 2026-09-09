@@ -4,13 +4,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-# Database settings read directly from environment variables
-# These are read from os.getenv() instead of importing from config.py
-DB_USER = os.getenv("DB_USER", "erfan.mohamadi")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "")
-DB_HOST = os.getenv("DB_HOST", "172.21.41.75")
-DB_PORT = int(os.getenv("DB_PORT", "3306"))
-DB_NAME = os.getenv("DB_NAME", "")
+from app.core.config import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER
 
 # URL.create() takes care of escaping special characters in the password.
 DATABASE_URL = URL.create(

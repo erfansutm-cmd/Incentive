@@ -324,6 +324,24 @@ the suggestion chips (known delivery categories, plus values already used in
 the table) or type your own and press Enter / comma to add it — duplicates
 are removed automatically.
 
+## Performance score
+
+`GET /api/performance/score/{city}/{business_entity}` exposes
+`get_city_performance_score()` from `backend/app/core/performance_score.py`
+(mirroring `GET /api/weather/score/{city}`):
+
+```json
+{ "city": "Tehran", "business_entity": "Food", "score": 4 }
+```
+
+The business entity's customer IDs are read from MySQL and their InSlot metrics
+are read from ClickHouse; the rendered ClickHouse query, its timing, and row
+counts are logged at INFO level. Missing data and unknown entities fall back
+to score `1`. Blank `city` / `business_entity` values return `400`.
+ClickHouse access uses `CLICKHOUSE_HOST`, `CLICKHOUSE_PORT` (native protocol,
+default `9000`), `CLICKHOUSE_DB`, `CLICKHOUSE_USER`, and
+`CLICKHOUSE_PASSWORD`.
+
 ## Development
 
 ```bash
