@@ -1,5 +1,4 @@
 from datetime import date, timedelta
-
 import requests
 
 from ..config import WEATHER_API_URL
@@ -22,42 +21,30 @@ def get_city_weather_score(city: str) -> int:
     params = {"date": incentive_date}
 
     try:
-        response = requests.get(
-            url,
-            params=params,
-            timeout=10
-        )
+        response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
 
         weather_response = response.json()
-        raw_score = weather_response.get("response", 1)
-        score = round(raw_score)
+        raw_score = weather_response.get("response")
+
+        # Safely handle null/None values before rounding
+        score = round(raw_score) if raw_score is not None else 1
 
         logger.info(
-            "Weather score retrieved from API: city=%r, raw_score=%s, rounded_score=%s",
+            "Fetched weather score for %s (%s) | api_response=%s | raw_score=%s | final_score=%s",
             city,
+            incentive_date,
+            weather_response,
             raw_score,
             score,
         )
-
         return score
 
     except Exception as exc:
-        # Collect as much context as possible before logging the failure.
-        failed_response = getattr(exc, "response", None)
-        details = {
-            "city": city,
-            "url": url,
-            "params": params,
-            "incentive_date": incentive_date,
-            "exception_type": type(exc).__name__,
-            "exception_message": str(exc),
-            "status_code": getattr(failed_response, "status_code", None),
-            "response_text": getattr(failed_response, "text", None),
-        }
-        logger.exception(
-            "Weather score lookup failed for city=%r; falling back to score 1. Details: %s",
+        logger.error(
+            "Failed weather score for %s (%s) due to %s: fallback to score 1",
             city,
-            details,
+            incentive_date,
+            exc,
         )
-        return 1  # Fallback score on error
+        return 1
