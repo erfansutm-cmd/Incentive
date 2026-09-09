@@ -1,10 +1,10 @@
 """ClickHouse database connection module.
 
 This module provides functions to connect to ClickHouse database and execute queries.
-Currently not used in the main application flow, but available for future usage.
+It is used by the performance score calculation.
 """
 
-from clickhouse_driver import connect
+from clickhouse_driver import Client, connect
 
 from app.core.config import (
     CLICKHOUSE_DB,
@@ -92,41 +92,60 @@ def execute_query(sql=None, parameters=None, db=None, table=None):
         # Default connectivity test
         results = execute_query()
     """
-    connection = get_clickhouse_connection()
-    if connection is None:
+    client = get_clickhouse_client()
+    if client is None:
         return None
-    
+
     try:
         # If db and table are provided, build a SELECT query automatically
         if db and table:
             # Build a SELECT query with the specified database and table
             sql = f"SELECT * FROM {db}.{table}"
-            # Execute the query
-            rows = connection.execute(sql, parameters or {})
-            # Return rows as list of tuples
-            return [row for row in rows]
         elif sql is None:
             # Default: basic connectivity test
             sql = "SELECT 1 as test"
-            rows = connection.execute(sql, parameters or {})
-            if rows:
-                return [dict(zip([f'col_{i}' for i in range(len(rows[0]))], row)) for row in rows]
-            return []
-        else:
-            # Use raw SQL provided
-            rows = connection.execute(sql, parameters or {})
-            if rows:
-                # Return rows as list of dicts with generic column names
-                return [dict(zip([f'col_{i}' for i in range(len(rows[0]))], row)) for row in rows]
-            return []
+        # with_column_types returns (rows, [(name, type), ...]) so callers
+        # get real column names instead of positional aliases.
+        rows, columns = client.execute(sql, parameters or {}, with_column_types=True)
+        names = [col[0] for col in columns]
+        return [dict(zip(names, row)) for row in rows]
     except Exception as e:
         print(f"ClickHouse query execution failed: {e}")
         return None
     finally:
         try:
-            connection.close()
+            client.disconnect()
         except Exception:
             pass
+
+
+def get_clickhouse_client():
+    """Get a ClickHouse native-protocol client, or None if not configured.
+
+    Returns:
+        A clickhouse_driver Client object, or None if the host is not
+        configured or the client cannot be created.
+    """
+    if not CLICKHOUSE_HOST:
+        return None
+
+    try:
+        port = int(CLICKHOUSE_PORT)
+    except (TypeError, ValueError):
+        print(f"ClickHouse client creation failed: invalid port {CLICKHOUSE_PORT!r}")
+        return None
+
+    try:
+        return Client(
+            host=CLICKHOUSE_HOST,
+            port=port,
+            database=CLICKHOUSE_DB or "default",
+            user=CLICKHOUSE_USER,
+            password=CLICKHOUSE_PASSWORD,
+        )
+    except Exception as e:
+        print(f"ClickHouse client creation failed: {e}")
+        return None
 
 
 def get_clickhouse():
