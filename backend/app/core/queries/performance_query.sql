@@ -3,7 +3,7 @@ SELECT
         created_date,
         city_mapping.correct_city AS city,
         COUNT(DISTINCT customer_ref_id) AS orders_cnt,
-        ROUND(toFloat64({inslot_case}), 3) AS InSlot
+        ROUND(toFloat64({inslot_case}), 5) AS InSlot
 
     FROM
     (
@@ -35,6 +35,6 @@ SELECT
     ) city_mapping
     ON fact.source_district_id = city_mapping.district_id
 
-    WHERE lower(city_mapping.correct_city) = lower('{city}')
+    WHERE city_mapping.correct_city = '{city}'
 
     GROUP BY customer_id, created_date, city
