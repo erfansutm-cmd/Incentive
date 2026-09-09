@@ -35,6 +35,6 @@ SELECT
     ) city_mapping
     ON fact.source_district_id = city_mapping.district_id
 
-    WHERE city_mapping.correct_city = '{city}'
+    WHERE lower(city_mapping.correct_city) = lower('{city}')
 
     GROUP BY customer_id, created_date, city

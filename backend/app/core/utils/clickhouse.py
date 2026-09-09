@@ -13,6 +13,9 @@ from app.core.config import (
     CLICKHOUSE_PORT,
     CLICKHOUSE_USER,
 )
+from app.core.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def get_clickhouse_connection():
@@ -50,9 +53,14 @@ def get_clickhouse_connection():
             password=password,
         )
         return connection
-    except Exception as e:
-        # Log the error but don't crash - this function is for future usage
-        print(f"ClickHouse connection failed: {e}")
+    except Exception:
+        logger.exception(
+            "ClickHouse DBAPI connection failed (host=%r, port=%r, database=%r, user=%r)",
+            host,
+            port,
+            database,
+            user,
+        )
         return None
 
 
@@ -108,9 +116,23 @@ def execute_query(sql=None, parameters=None, db=None, table=None):
         # get real column names instead of positional aliases.
         rows, columns = client.execute(sql, parameters or {}, with_column_types=True)
         names = [col[0] for col in columns]
+        logger.debug(
+            "ClickHouse query on %s:%s returned %d rows (columns=%s)",
+            CLICKHOUSE_HOST,
+            CLICKHOUSE_PORT,
+            len(rows),
+            names,
+        )
         return [dict(zip(names, row)) for row in rows]
-    except Exception as e:
-        print(f"ClickHouse query execution failed: {e}")
+    except Exception:
+        logger.exception(
+            "ClickHouse query failed on %s:%s (database=%r, user=%r). SQL:\n%s",
+            CLICKHOUSE_HOST,
+            CLICKHOUSE_PORT,
+            CLICKHOUSE_DB or "default",
+            CLICKHOUSE_USER,
+            sql,
+        )
         return None
     finally:
         try:
@@ -127,12 +149,16 @@ def get_clickhouse_client():
         configured or the client cannot be created.
     """
     if not CLICKHOUSE_HOST:
+        logger.error(
+            "CLICKHOUSE_HOST is not set: ClickHouse queries cannot run and will return None. "
+            "Set CLICKHOUSE_HOST (and CLICKHOUSE_PORT/DB/USER/PASSWORD) in the backend environment."
+        )
         return None
 
     try:
         port = int(CLICKHOUSE_PORT)
     except (TypeError, ValueError):
-        print(f"ClickHouse client creation failed: invalid port {CLICKHOUSE_PORT!r}")
+        logger.error("ClickHouse client creation failed: invalid port %r", CLICKHOUSE_PORT)
         return None
 
     try:
@@ -143,8 +169,14 @@ def get_clickhouse_client():
             user=CLICKHOUSE_USER,
             password=CLICKHOUSE_PASSWORD,
         )
-    except Exception as e:
-        print(f"ClickHouse client creation failed: {e}")
+    except Exception:
+        logger.exception(
+            "ClickHouse client creation failed (host=%r, port=%r, database=%r, user=%r)",
+            CLICKHOUSE_HOST,
+            port,
+            CLICKHOUSE_DB or "default",
+            CLICKHOUSE_USER,
+        )
         return None
 
 
