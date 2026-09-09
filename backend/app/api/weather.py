@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from ..core.utils.weather_score import get_city_weather_score
+from app.core.weather_score import get_city_weather_score
 
 router = APIRouter(prefix="/api/weather", tags=["weather"])
 

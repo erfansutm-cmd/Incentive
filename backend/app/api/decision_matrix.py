@@ -17,8 +17,8 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from ..core.config import DB_ACTIVE_CITY_TABLE, DB_DECISION_MATRIX_TABLE, DB_NAME
-from ..core.database import engine, quote_table
-from ..core.logger import get_logger
+from app.core.utils.database import engine, quote_table
+from app.core.utils.logger import get_logger
 from .incentive_types import TABLE_SQL as INCENTIVE_TYPE_SQL
 
 TABLE_SQL = quote_table(DB_DECISION_MATRIX_TABLE)

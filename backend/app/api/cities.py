@@ -1,12 +1,11 @@
 import datetime
 import decimal
-import os
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from ..core.database import engine, quote_table
+from app.core.utils.database import engine, quote_table
 from ..core.config import DB_CITIES_TABLE, DB_CITY_MAPPING_TABLE
 
 TABLE_NAME = DB_CITIES_TABLE

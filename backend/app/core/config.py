@@ -1,11 +1,18 @@
 import os
 
-# Database settings
+# Database settings - MySQL
 DB_USER = os.getenv("DB_USER", "erfan.mohamadi")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_HOST = os.getenv("DB_HOST", "172.21.41.75")
 DB_PORT = int(os.getenv("DB_PORT", "3306"))
 DB_NAME = os.getenv("DB_NAME", "")
+
+# ClickHouse settings (for future use - not active yet)
+CLICKHOUSE_HOST = os.getenv("CLICKHOUSE_HOST", "")
+CLICKHOUSE_PORT = os.getenv("CLICKHOUSE_PORT", "8123")
+CLICKHOUSE_DB = os.getenv("CLICKHOUSE_DB", "")
+CLICKHOUSE_USER = os.getenv("CLICKHOUSE_USER", "")
+CLICKHOUSE_PASSWORD = os.getenv("CLICKHOUSE_PASSWORD", "")
 
 # Table names
 DB_CITIES_TABLE = os.getenv("DB_CITIES_TABLE", "cities")

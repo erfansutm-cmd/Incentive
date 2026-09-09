@@ -8,7 +8,7 @@ target channel and put its URL in ``TEAMS_WEBHOOK_URL`` (see ``.env.example``).
 import requests
 
 from ..config import TEAMS_WEBHOOK_URL
-from ..logger import get_logger
+from app.core.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
