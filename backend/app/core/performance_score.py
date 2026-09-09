@@ -172,6 +172,7 @@ def get_city_performance_score(city: str, business_entity: str) -> int:
     # ---------------------------
     weighted_score_sum = 0.0
     total_entity_orders = 0
+    customer_scores_breakdown = {}
 
     for cid, summary in customer_metrics_summary.items():
         orders = summary["total_orders"]
@@ -179,6 +180,11 @@ def get_city_performance_score(city: str, business_entity: str) -> int:
 
         # Get individual score for each customer ID (Scores 1 to 5)
         customer_score = get_customer_score(cid, metric_val)
+        customer_scores_breakdown[cid] = {
+            "score": customer_score,
+            "orders": orders,
+            "smoothed_metric": round(metric_val, 5),
+        }
 
         weighted_score_sum += customer_score * orders
         total_entity_orders += orders
@@ -195,12 +201,13 @@ def get_city_performance_score(city: str, business_entity: str) -> int:
     final_score = round(weighted_score_sum / total_entity_orders)
 
     logger.info(
-        "Calculated score %d for business_entity=%r in city=%r (total_orders=%d, alpha=%.2f)",
+        "Calculated score %d for business_entity=%r in city=%r (total_orders=%d, alpha=%.2f, customer_breakdown=%s)",
         final_score,
         business_entity,
         city,
         total_entity_orders,
         alpha,
+        customer_scores_breakdown,
     )
 
     return final_score
