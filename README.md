@@ -334,13 +334,12 @@ are removed automatically.
 { "city": "Tehran", "business_entity": "Food", "score": 4 }
 ```
 
-The business entity's customer IDs are read from MySQL, their InSlot metrics
-are read from ClickHouse, and each customer's orders-weighted average InSlot
-is mapped through its `SLA_THRESHOLDS_METRIC` entry (1 = best). The final
-score is the worst per-customer score. Missing data, unknown entities, and
-source errors all fall back to score `1`, matching the weather score behavior.
-Blank `city` / `business_entity` values return `400`. ClickHouse access uses `CLICKHOUSE_HOST`,
-`CLICKHOUSE_PORT`, `CLICKHOUSE_DB`, `CLICKHOUSE_USER`, and
+The business entity's customer IDs are read from MySQL and their InSlot metrics
+are read from ClickHouse; the rendered ClickHouse query, its timing, and row
+counts are logged at INFO level. Missing data and unknown entities fall back
+to score `1`. Blank `city` / `business_entity` values return `400`.
+ClickHouse access uses `CLICKHOUSE_HOST`, `CLICKHOUSE_PORT` (native protocol,
+default `9000`), `CLICKHOUSE_DB`, `CLICKHOUSE_USER`, and
 `CLICKHOUSE_PASSWORD`.
 
 ## Development
