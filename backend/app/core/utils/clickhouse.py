@@ -4,38 +4,38 @@ This module provides functions to connect to ClickHouse database and execute que
 Currently not used in the main application flow, but available for future usage.
 """
 
-import os
 from clickhouse_driver import connect
+
+from app.core.config import (
+    CLICKHOUSE_DB,
+    CLICKHOUSE_HOST,
+    CLICKHOUSE_PASSWORD,
+    CLICKHOUSE_PORT,
+    CLICKHOUSE_USER,
+)
 
 
 def get_clickhouse_connection():
     """Get a ClickHouse database connection.
 
-    This function reads ClickHouse connection parameters from environment variables
+    This function uses ClickHouse connection parameters imported from config.py
     and returns a connection object. The connection is not used by default currently,
     but can be used in the future by importing and calling this function.
-
-    Environment variables (all optional, with sensible defaults):
-        CLICKHOUSE_HOST: ClickHouse server host (default: empty)
-        CLICKHOUSE_PORT: ClickHouse server port (default: 8123)
-        CLICKHOUSE_DB: Default database name (default: empty)
-        CLICKHOUSE_USER: ClickHouse user (default: empty)
-        CLICKHOUSE_PASSWORD: ClickHouse password (default: empty)
 
     Returns:
         A ClickHouse connection object, or None if connection fails or
         required parameters are not configured.
 
     Note:
-        This function is intended for future usage. Currently, the environment
+        This function is intended for future usage. Currently, the config
         variables are set with empty/default values so the function will
         return None unless explicitly configured.
     """
-    host = os.getenv("CLICKHOUSE_HOST", "")
-    port = int(os.getenv("CLICKHOUSE_PORT", "8123"))
-    database = os.getenv("CLICKHOUSE_DB", "")
-    user = os.getenv("CLICKHOUSE_USER", "")
-    password = os.getenv("CLICKHOUSE_PASSWORD", "")
+    host = CLICKHOUSE_HOST
+    port = int(CLICKHOUSE_PORT)
+    database = CLICKHOUSE_DB
+    user = CLICKHOUSE_USER
+    password = CLICKHOUSE_PASSWORD
 
     # Return None if host is not configured (not used for now)
     if not host:

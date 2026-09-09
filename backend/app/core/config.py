@@ -15,9 +15,13 @@ CLICKHOUSE_USER = os.getenv("CLICKHOUSE_USER", "")
 CLICKHOUSE_PASSWORD = os.getenv("CLICKHOUSE_PASSWORD", "")
 
 # Table names
-DB_CITIES_TABLE = os.getenv("DB_CITIES_TABLE", "cities")
+DB_CITIES_TABLE = os.getenv("DB_CITIES_TABLE", "incentive/cities")
 DB_CITY_MAPPING_TABLE = os.getenv("DB_CITY_MAPPING_TABLE", "mafsho/city_mapping")
 DB_ACTIVE_CITY_TABLE = os.getenv("DB_ACTIVE_CITY_TABLE", "incentive/incentive_active_city")
+DB_BUSINESS_ENTITIES_TABLE = os.getenv(
+    "DB_BUSINESS_ENTITIES_TABLE", "incentive/business_entities"
+)
+DB_INCENTIVE_TYPE_TABLE = os.getenv("DB_INCENTIVE_TYPE_TABLE", "mafsho/incentive_type")
 DB_DECISION_MATRIX_TABLE = os.getenv(
     "DB_DECISION_MATRIX_TABLE", "incentive/incentive_decision_matrix"
 )

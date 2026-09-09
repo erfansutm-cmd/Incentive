@@ -8,8 +8,8 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.core.utils.database import engine, quote_table
+from app.core.config import DB_BUSINESS_ENTITIES_TABLE as TABLE_NAME
 
-TABLE_NAME = os.getenv("DB_BUSINESS_ENTITIES_TABLE", "business_entities")
 TABLE_SQL = quote_table(TABLE_NAME)
 
 router = APIRouter(prefix="/api/business-entities", tags=["business_entities"])

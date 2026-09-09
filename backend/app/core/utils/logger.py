@@ -11,9 +11,8 @@ Level is read from environment variable LOG_LEVEL directly.
 import logging
 import os
 import sys
+from app.core.config import LOG_LEVEL
 
-# Read LOG_LEVEL directly from environment variable
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 _LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
 _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
