@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.core.utils.database import engine, quote_table
-from app.core.config import DB_CITY_MAPPING_TABLE as TABLE_NAME
+from app.core.config import DB_CITY_PLAN_MAPPING_TABLE as TABLE_NAME
 
 # Table holding the per-city plan mapping:
 #   id | city_id | incentive_type_id | business_entity | created_at | deactivated_at
