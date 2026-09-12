@@ -16,7 +16,7 @@ app.include_router(business_entities.router)
 app.include_router(city_plan_mappings.router)
 app.include_router(decision_matrix.router)
 app.include_router(incentive_types.router)
-app.include_router(performance.router)
+# app.include_router(performance.router)
 app.include_router(weather.router)
 
 

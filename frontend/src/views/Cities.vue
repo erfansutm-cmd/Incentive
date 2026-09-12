@@ -64,6 +64,11 @@ function isCityNameColumn(col) {
   return !editing.value && cityNameColumn.value && col.name === cityNameColumn.value.name
 }
 
+// The city name is the row's identity, so it reads heavier than the other columns.
+function isNameColumn(col) {
+  return Boolean(cityNameColumn.value) && col.name === cityNameColumn.value.name
+}
+
 async function fetchSuggestions(term) {
   const seq = ++lookupSeq
   suggestLoading.value = true
@@ -652,52 +657,52 @@ onMounted(() => {
 </script>
 
 <template>
-  <div>
-    <div class="head">
+  <div class="cities">
+    <div class="page-head">
       <div>
         <h1>Active Cities</h1>
+        <p class="head-sub">{{ rows.length }} cities · {{ groupOptions.length }} city groups</p>
       </div>
-      <button class="btn btn-primary" @click="openAdd">+ Add city</button>
+      <div class="head-actions">
+        <button class="btn btn-ghost" :disabled="loading" @click="load">Refresh</button>
+        <button class="btn btn-primary" @click="openAdd">+ Add city</button>
+      </div>
     </div>
 
-    <div v-if="error" class="banner error">
+    <div v-if="error" class="banner error" role="alert">
       <strong>Could not load cities</strong>
       <p>{{ error }}</p>
       <button class="btn btn-ghost" @click="load">Retry</button>
     </div>
 
-    <div v-else-if="loading" class="card empty">Loading…</div>
+    <div v-else-if="loading" class="card empty" role="status">Loading cities…</div>
 
-    <div v-else class="card table-card">
-      <div class="toolbar">
-        <div class="search-wrap">
-          <span class="search-icon">🔎</span>
-          <input
-            v-model="searchQuery"
-            type="search"
-            class="search-input"
-            placeholder="Search by city name or box city name…"
-          />
-        </div>
+    <template v-else>
+      <div class="card toolbar-card">
+        <label class="search-field">
+          <span class="sr-only">Search cities</span>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="6.5" />
+            <path d="M16 16l4 4" />
+          </svg>
+          <input v-model="searchQuery" type="search" placeholder="Search by city name or box city name…" />
+        </label>
 
-        <select v-model="groupFilter" class="group-select">
+        <label class="sr-only" for="city-group-filter">City group</label>
+        <select id="city-group-filter" v-model="groupFilter" class="select-field">
           <option value="">All groups</option>
           <option v-for="g in groupOptions" :key="g" :value="String(g)">{{ g }}</option>
         </select>
 
-        <button
-          v-if="searchQuery || groupFilter"
-          class="btn btn-ghost btn-sm"
-          @click="clearFilters"
-        >
+        <button v-if="searchQuery || groupFilter" class="btn btn-ghost btn-sm" @click="clearFilters">
           Clear
         </button>
 
-        <span class="result-count">
-          {{ filteredRows.length }} of {{ rows.length }} cities
-        </span>
+        <span class="pill spacer">{{ filteredRows.length }} of {{ rows.length }} cities</span>
       </div>
 
+      <section class="card section-card city-section" aria-label="Active cities">
+      <div class="table-scroll">
       <table>
         <thead>
           <tr>
@@ -714,8 +719,14 @@ onMounted(() => {
               :title="cityIdOf(row) === null ? '' : 'Click to see plan mappings'"
               @click="toggleExpand(row, i)"
             >
-              <td class="expand-col"><span class="chevron">❯</span></td>
-              <td v-for="c in tableColumns" :key="c.name">{{ cellValue(row, c) }}</td>
+              <td class="expand-col">
+                <span class="chevron-disc" :class="{ open: isExpanded(row, i) }" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M9.5 5.5l6.5 6.5-6.5 6.5" />
+                  </svg>
+                </span>
+              </td>
+              <td v-for="c in tableColumns" :key="c.name" :class="{ 'name-cell': isNameColumn(c) }">{{ cellValue(row, c) }}</td>
               <td class="actions-col">
                 <button class="btn btn-ghost btn-sm" @click.stop="openEdit(row)">Edit</button>
               </td>
@@ -725,12 +736,28 @@ onMounted(() => {
                 <div class="slide-wrap">
                   <div class="plan-panel">
                     <div class="plan-head">
-                      <strong>Plans</strong>
-                      <span class="plan-city">{{ planTitle(row) }}</span>
-                      <template
+                      <div class="plan-head-text">
+                        <span class="icon-tile sm accent" aria-hidden="true">
+                          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 3.6l8.4 4.2-8.4 4.2-8.4-4.2z" />
+                            <path d="M4.4 12.4L12 16.2l7.6-3.8" />
+                            <path d="M4.4 16.6L12 20.4l7.6-3.8" />
+                          </svg>
+                        </span>
+                        <div>
+                          <p class="eyebrow">Plans</p>
+                          <h3 class="plan-city">{{ rowCityName(row) }}</h3>
+                          <p class="hint">
+                            city_id {{ cityIdOf(row) ?? '—' }}<template
+                              v-if="plansFor(row, i) && !plansFor(row, i).loading && !plansFor(row, i).error"
+                            > · {{ planCountsText(plansFor(row, i)) }}</template>
+                          </p>
+                        </div>
+                      </div>
+                      <div
                         v-if="plansFor(row, i) && !plansFor(row, i).loading && !plansFor(row, i).error"
+                        class="plan-head-actions"
                       >
-                        <span class="plan-counts">{{ planCountsText(plansFor(row, i)) }}</span>
                         <button
                           v-if="plansFor(row, i).deactivated.length"
                           class="btn btn-ghost btn-sm"
@@ -742,13 +769,10 @@ onMounted(() => {
                               : `Show deactivated (${plansFor(row, i).deactivated.length})`
                           }}
                         </button>
-                        <button
-                          class="btn btn-primary btn-sm"
-                          @click.stop="openAddPlan(row, i)"
-                        >
+                        <button class="btn btn-primary btn-sm" @click.stop="openAddPlan(row, i)">
                           + Add plan
                         </button>
-                      </template>
+                      </div>
                     </div>
 
 
@@ -864,7 +888,9 @@ onMounted(() => {
           </tr>
         </tbody>
       </table>
-    </div>
+      </div>
+      </section>
+    </template>
 
     <!-- add / edit popup -->
     <div v-if="showModal" class="overlay" @click.self="showModal = false">
@@ -1024,153 +1050,160 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.head {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 1.25rem;
-}
-.head h1 {
-  margin: 0;
-  color: var(--text);
-  font-size: 1.5rem;
-}
-.sub {
-  margin: 0.3rem 0 0;
-  color: var(--muted);
-}
-.sub code {
-  background: var(--surface-2);
-  padding: 0.1rem 0.4rem;
-  border-radius: 0.3rem;
-  color: var(--accent-strong);
-}
+/* Page chrome (head, toolbar card, section card, pills, icon tiles, chevron
+   discs) comes from the shared classes in App.vue, so this tab keeps the same
+   shape as the Decision Matrix. */
+.empty { padding: 3.5rem 1.2rem; text-align: center; color: var(--muted); }
+td.empty { padding: 2.2rem 1rem; font-size: 0.9rem; line-height: 1.6; }
 
-.empty {
-  padding: 3rem 1rem;
-  text-align: center;
-  color: var(--muted);
-}
-
-.table-card {
-  overflow: hidden;
-}
-
-/* search + filter toolbar */
-.toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.85rem 1rem;
-  border-bottom: 1px solid var(--border);
-  background: #fbfdfc;
-}
-.search-wrap {
-  position: relative;
-  flex: 1;
-  min-width: 220px;
-  max-width: 380px;
-}
-.search-icon {
-  position: absolute;
-  left: 0.65rem;
-  top: 50%;
-  transform: translateY(-50%);
-  font-size: 0.85rem;
-  opacity: 0.6;
-  pointer-events: none;
-}
-.search-input {
-  width: 100%;
-  padding: 0.5rem 0.7rem 0.5rem 2rem;
-  border: 1px solid var(--border);
-  border-radius: 0.55rem;
-  font-size: 0.92rem;
-  outline: none;
-  color: var(--text);
-  background: #fff;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-.search-input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-ring);
-}
-.group-select {
-  padding: 0.5rem 0.7rem;
-  border: 1px solid var(--border);
-  border-radius: 0.55rem;
-  font-size: 0.92rem;
-  background: #fff;
-  color: var(--text);
-  outline: none;
-  cursor: pointer;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-.group-select:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-ring);
-}
-.result-count {
-  margin-left: auto;
-  font-size: 0.82rem;
-  color: var(--muted);
-  white-space: nowrap;
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-}
+.table-scroll { width: 100%; overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
 thead th {
   text-align: left;
-  padding: 0.75rem 1rem;
+  padding: 0.75rem 0.9rem;
   background: var(--surface-2);
   color: #4a6155;
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.03em;
   white-space: nowrap;
-  border-bottom: 1px solid var(--border);
 }
 tbody td {
-  padding: 0.7rem 1rem;
-  border-bottom: 1px solid #eef2ef;
-  font-size: 0.94rem;
+  padding: 0.7rem 0.9rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.9rem;
   color: var(--text);
 }
-tbody tr:last-child td {
-  border-bottom: none;
-}
-tbody tr:hover {
-  background: #f6faf8;
-}
-.actions-col {
-  text-align: right;
+tbody tr:hover { background: #f6faf8; }
+.actions-col { text-align: right; white-space: nowrap; }
+.actions-col .btn + .btn { margin-left: 0.4rem; }
+.actions-col a.btn { display: inline-block; text-decoration: none; }
+
+/* expandable rows: the open row is tinted like an open Decision Matrix card */
+.city-row { cursor: pointer; }
+.city-row.expanded { background: var(--accent-soft); }
+.city-row.expanded:hover { background: #dceee4; }
+.city-row.expanded td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.name-cell { font-weight: 650; color: var(--text); }
+.expand-col { width: 3rem; text-align: center; }
+thead th.expand-col { padding-left: 0.5rem; padding-right: 0.5rem; }
+tbody td.expand-col .chevron-disc { margin: 0 auto; }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
   white-space: nowrap;
+  border: 0;
 }
-.actions-col .btn + .btn {
-  margin-left: 0.4rem;
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+/* slide-down panel: same tinted background as the Decision Matrix group panel */
+tbody tr.detail-row:hover { background: transparent; }
+.detail-cell {
+  padding: 1.1rem 1.25rem 1.25rem;
+  background: #f8faf9;
+  border-top: 1px solid rgba(61, 139, 109, 0.22);
 }
-.actions-col a.btn {
-  display: inline-block;
-  text-decoration: none;
+@media (max-width: 640px) {
+  .detail-cell { padding: 0.8rem; }
+}
+.slide-wrap { overflow: hidden; animation: slideDown 0.25s ease; }
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .slide-wrap { animation: none; }
 }
 
-.field .type {
-  margin-left: 0.4rem;
+/* plan mappings live in a sub-card, like a Decision Matrix type card */
+.plan-panel {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 0.8rem;
+  padding: 1.1rem 1.25rem 1.25rem;
+  box-shadow: 0 1px 2px rgba(20, 40, 30, 0.04), 0 8px 24px rgba(20, 40, 30, 0.05);
+}
+.plan-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding-bottom: 0.9rem;
+  margin-bottom: 0.9rem;
+  border-bottom: 1px solid var(--border);
+}
+.plan-head-text { display: flex; align-items: flex-start; gap: 0.75rem; min-width: 0; }
+.plan-head-text .eyebrow { margin-bottom: 0.15rem; }
+.plan-city { margin: 0; font-size: 1rem; color: var(--text); overflow-wrap: anywhere; }
+.plan-head-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+
+.plan-loading, .plan-empty { color: var(--muted); font-size: 0.9rem; padding: 0.6rem 0; }
+.plan-empty {
+  padding: 1.5rem 1rem;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: 0.6rem;
+}
+.plan-error {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  color: #8c3030;
+  background: var(--danger-soft);
+  border: 1px solid #f0caca;
+  border-radius: 0.6rem;
+  padding: 0.7rem 0.9rem;
+  font-size: 0.88rem;
 }
 
-/* modal hint + city-name autocomplete */
+table.plan-table {
+  width: 100%;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  overflow: hidden;
+}
+table.plan-table thead th { font-size: 0.7rem; padding: 0.6rem 0.75rem; }
+table.plan-table tbody td { font-size: 0.86rem; padding: 0.65rem 0.75rem; background: #fff; }
+table.plan-table tbody tr:hover td { background: #f6faf8; }
+table.plan-table tbody tr.is-deactivated td { color: var(--inactive-text); }
+
+.deactivated-block {
+  margin-top: 1rem;
+  padding: 0.9rem;
+  background: #fafbfa;
+  border: 1px solid var(--border);
+  border-radius: 0.7rem;
+}
+.plan-subhead {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+}
+
+/* plans slide-down: type names, add-plan popup, deactivate popup */
+.type-id { color: var(--muted); font-size: 0.78rem; margin-left: 0.3rem; white-space: nowrap; }
+.field .type { margin-left: 0.4rem; }
+
 .modal-hint {
   margin: -0.4rem 0 1rem;
   font-size: 0.85rem;
   color: var(--muted);
   line-height: 1.45;
 }
-.modal-hint code {
+.modal-hint code, .hint code, .sub code {
   background: var(--surface-2);
   padding: 0.05rem 0.35rem;
   border-radius: 0.3rem;
@@ -1178,14 +1211,8 @@ tbody tr:hover {
 }
 
 /* let the suggestion dropdown escape the modal's scroll box */
-.modal.lookup-open {
-  overflow: visible;
-}
-
-.combo {
-  position: relative;
-}
-
+.modal.lookup-open { overflow: visible; }
+.combo { position: relative; }
 .suggest {
   position: absolute;
   z-index: 60;
@@ -1210,42 +1237,14 @@ tbody tr:hover {
   border-radius: 0.4rem;
   cursor: pointer;
 }
-.suggest li:hover,
-.suggest li.active {
-  background: var(--accent-soft);
-}
-.s-name {
-  font-size: 0.92rem;
-  color: var(--text);
-}
-.s-meta {
-  font-size: 0.78rem;
-  color: var(--muted);
-}
+.suggest li:hover, .suggest li.active { background: var(--accent-soft); }
+.s-name { font-size: 0.92rem; color: var(--text); }
+.s-meta { font-size: 0.78rem; color: var(--muted); }
 
-.hint {
-  margin: 0.35rem 0 0;
-  font-size: 0.78rem;
-  color: var(--muted);
-}
-.hint.ok {
-  color: var(--ok-text);
-}
-.hint.warn {
-  color: var(--warning);
-}
-.hint code {
-  background: var(--surface-2);
-  padding: 0.05rem 0.3rem;
-  border-radius: 0.3rem;
-}
-
-.auto-filled {
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-  cursor: default;
-}
-
+.hint { margin: 0.3rem 0 0; font-size: 0.8rem; color: var(--muted); }
+.hint.ok { color: var(--ok-text); }
+.hint.warn { color: var(--warning); }
+.auto-filled { background: var(--accent-soft); color: var(--accent-strong); cursor: default; }
 .link {
   align-self: flex-start;
   margin-top: 0.25rem;
@@ -1258,184 +1257,6 @@ tbody tr:hover {
   cursor: pointer;
 }
 
-/* expandable rows + slide-down plan mappings */
-.city-row {
-  cursor: pointer;
-}
-.city-row.expanded {
-  background: #e2eee7;
-}
-.city-row.expanded td:first-child {
-  box-shadow: inset 4px 0 0 var(--accent);
-}
-.expand-col {
-  width: 2.4rem;
-  text-align: center;
-}
-thead th.expand-col {
-  padding-left: 0.5rem;
-  padding-right: 0.5rem;
-}
-.chevron {
-  display: inline-block;
-  font-size: 0.75rem;
-  color: var(--muted);
-  transition: transform 0.2s ease, color 0.2s ease;
-}
-.city-row.expanded .chevron {
-  transform: rotate(90deg);
-  color: var(--accent-strong);
-}
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
-}
-
-tbody tr.detail-row:hover {
-  background: #e6efe9;
-}
-.detail-cell {
-  padding: 0.8rem 1rem 1rem 2.9rem;
-  background: #e6efe9;
-  box-shadow:
-    inset 0 8px 10px -8px rgba(47, 112, 87, 0.35),
-    inset 0 -8px 10px -8px rgba(47, 112, 87, 0.35);
-}
-@media (max-width: 640px) {
-  .detail-cell {
-    padding-left: 0.8rem;
-  }
-}
-.slide-wrap {
-  overflow: hidden;
-  animation: slideDown 0.25s ease;
-}
-@keyframes slideDown {
-  from {
-    opacity: 0;
-    transform: translateY(-6px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-.plan-panel {
-  background: #fff;
-  border: 1px solid #c9dcd2;
-  border-left: 4px solid var(--accent);
-  border-radius: 0.7rem;
-  padding: 1rem 1.25rem 1.25rem;
-  box-shadow: 0 6px 18px rgba(47, 112, 87, 0.12);
-}
-.plan-head {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  flex-wrap: wrap;
-  margin-bottom: 0.7rem;
-}
-.plan-head strong {
-  background: var(--accent);
-  color: #fff;
-  font-size: 0.8rem;
-  padding: 0.2rem 0.7rem;
-  border-radius: 999px;
-  letter-spacing: 0.02em;
-}
-.plan-city {
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-.plan-counts {
-  font-size: 0.82rem;
-  color: var(--muted);
-}
-.plan-head .btn {
-  margin-left: auto;
-}
-
-.plan-loading,
-.plan-empty {
-  color: var(--muted);
-  font-size: 0.9rem;
-  padding: 0.6rem 0;
-}
-.plan-error {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  flex-wrap: wrap;
-  color: #8c3030;
-  background: var(--danger-soft);
-  border: 1px solid #f0caca;
-  border-radius: 0.6rem;
-  padding: 0.6rem 0.8rem;
-  font-size: 0.88rem;
-}
-
-table.plan-table {
-  background: #fff;
-  border: 1px solid var(--border);
-  border-radius: 0.6rem;
-  overflow: hidden;
-}
-table.plan-table thead th {
-  font-size: 0.72rem;
-  padding: 0.5rem 0.7rem;
-}
-table.plan-table tbody td {
-  font-size: 0.87rem;
-  padding: 0.5rem 0.7rem;
-  background: #fff;
-}
-table.plan-table tbody tr:hover {
-  background: #f6faf8;
-}
-table.plan-table tbody tr.is-deactivated td {
-  color: var(--muted);
-}
-
-.deactivated-block {
-  margin-top: 0.9rem;
-}
-.plan-subhead {
-  font-size: 0.78rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-  margin-bottom: 0.45rem;
-}
-
-.badge {
-  display: inline-block;
-  padding: 0.12rem 0.55rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 700;
-  white-space: nowrap;
-}
-.badge.active {
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-}
-.badge.deactivated {
-  background: #eceff0;
-  color: #687876;
-}
-
-/* plans slide-down: type names, add-plan popup, deactivate popup */
-.type-id {
-  color: var(--muted);
-  font-size: 0.78rem;
-  margin-left: 0.3rem;
-  white-space: nowrap;
-}
 .plan-city-chip {
   display: flex;
   align-items: center;
@@ -1455,14 +1276,8 @@ table.plan-table tbody tr.is-deactivated td {
   letter-spacing: 0.05em;
   color: var(--accent-strong);
 }
-.plan-city-chip strong {
-  color: var(--text);
-}
-.chip-id {
-  margin-left: auto;
-  color: var(--muted);
-  font-size: 0.8rem;
-}
+.plan-city-chip strong { color: var(--text); }
+.chip-id { margin-left: auto; color: var(--muted); font-size: 0.8rem; }
 .field select {
   padding: 0.55rem 0.7rem;
   border: 1px solid var(--border);
@@ -1473,15 +1288,8 @@ table.plan-table tbody tr.is-deactivated td {
   background: #fbfdfc;
   cursor: pointer;
 }
-.field select:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-ring);
-  background: #fff;
-}
-.field select:disabled {
-  opacity: 0.6;
-  cursor: wait;
-}
+.field select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); background: #fff; }
+.field select:disabled { opacity: 0.6; cursor: wait; }
 .form-error {
   color: #8c3030;
   background: var(--danger-soft);
@@ -1491,8 +1299,14 @@ table.plan-table tbody tr.is-deactivated td {
   font-size: 0.85rem;
   margin: 0 0 0.6rem;
 }
-.confirm-text {
-  color: var(--text);
-  line-height: 1.5;
+.confirm-text { color: var(--text); line-height: 1.6; overflow-wrap: anywhere; }
+
+@media (max-width: 640px) {
+  .card-head-text { gap: 0.7rem; }
+  .icon-tile { width: 2.1rem; height: 2.1rem; border-radius: 0.65rem; }
+  .plan-panel { padding: 0.9rem; }
+  .plan-head { gap: 0.6rem; }
+  .plan-head-actions { width: 100%; }
+  .plan-head-actions .btn { flex: 1 1 auto; }
 }
 </style>

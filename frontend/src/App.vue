@@ -176,6 +176,244 @@ button {
   border-radius: 0.5rem;
 }
 
+/* ---------------------------------------------------------------------------
+   Shared list-page shape (introduced with the Decision Matrix restyle):
+   page head + toolbar card + separate section cards, icon tiles, round
+   chevrons and tinted expansion panels. Used by Cities and Business Entities
+   so every tab reads the same way.
+--------------------------------------------------------------------------- */
+.page-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+.page-head h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  overflow-wrap: anywhere;
+}
+.page-head .head-sub {
+  margin: 0.35rem 0 0;
+  font-size: 0.83rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.eyebrow {
+  margin: 0 0 0.25rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.hint {
+  margin: 0.3rem 0 0;
+  font-size: 0.83rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.22rem 0.6rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 600;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.pill.accent {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+.pill.plain {
+  background: #fff;
+  border: 1px solid var(--border);
+}
+.icon-tile {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 2.35rem;
+  height: 2.35rem;
+  border-radius: 0.75rem;
+  background: var(--surface-2);
+  color: var(--muted);
+  transition: background 0.18s ease, color 0.18s ease;
+}
+.icon-tile.sm {
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 0.6rem;
+}
+.icon-tile.accent {
+  background: var(--accent);
+  color: #fff;
+}
+.icon-tile.neutral {
+  background: #eceff0;
+  color: #6b7c78;
+}
+.chevron-disc {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 1.7rem;
+  height: 1.7rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+  transition: transform 0.18s ease, border-color 0.18s ease, color 0.18s ease, background 0.18s ease;
+}
+.chevron-disc svg {
+  display: block;
+}
+.chevron-disc.open {
+  transform: rotate(90deg);
+  border-color: rgba(61, 139, 109, 0.45);
+  background: #fff;
+  color: var(--accent-strong);
+}
+/* toolbar strip (search / filters / counts) rendered as its own card */
+.toolbar-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem 1.1rem;
+  margin-bottom: 0.85rem;
+}
+.toolbar-card .spacer {
+  margin-left: auto;
+}
+.search-field {
+  position: relative;
+  display: block;
+  flex: 1 1 220px;
+  min-width: 190px;
+  max-width: 380px;
+}
+.search-field > svg {
+  position: absolute;
+  left: 0.7rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+.search-field input {
+  width: 100%;
+  padding: 0.55rem 0.8rem 0.55rem 2.15rem;
+  font: inherit;
+  font-size: 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  background: #fbfdfc;
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+.search-field input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+  background: #fff;
+}
+.select-field {
+  padding: 0.55rem 0.8rem;
+  font: inherit;
+  font-size: 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  background: #fbfdfc;
+  color: var(--text);
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.select-field:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+  background: #fff;
+}
+/* card header: icon tile + eyebrow/title/hint on the left, pill/actions right */
+.card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+.card-head-text {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.9rem;
+  min-width: 0;
+}
+.card-head h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  overflow-wrap: anywhere;
+}
+.card-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+/* separated section cards */
+.section-list {
+  display: grid;
+  gap: 0.85rem;
+}
+.section-card {
+  overflow: hidden;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+.section-card:hover {
+  border-color: #cfe0d7;
+}
+/* tinted expansion panel, like the Decision Matrix group panel */
+.panel-tint {
+  background: #f8faf9;
+  border-top: 1px solid rgba(61, 139, 109, 0.22);
+}
+/* stat strip */
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  padding: 1rem 1.25rem;
+}
+.stat {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.stat-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--accent-strong);
+  font-variant-numeric: tabular-nums;
+}
+.stat-label {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 /* toast message */
 .toast {
   position: fixed;
@@ -230,6 +468,12 @@ button {
     font-size: 0.82rem;
   }
   .page { padding: 1.5rem 1rem 2.5rem; }
+  .page-head { align-items: flex-start; flex-wrap: wrap; }
+  .head-actions { width: 100%; }
+  .head-actions .btn { flex: 1 1 auto; }
+  .toolbar-card { padding: 0.75rem 0.85rem; }
+  .card-head { padding: 0.9rem; }
+  .summary { gap: 1rem; padding: 0.9rem; }
 }
 
 /* modal overlay + popups */
