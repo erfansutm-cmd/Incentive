@@ -88,18 +88,34 @@ test('Top 4 priority handles capitalization and separators and keeps original lo
   }
 })
 
-test('filtering collapses a hidden group and never leaves a separate group page', async ({ page }) => {
+test('groups are separate cards with no search box, and opening one collapses the other', async ({ page }) => {
   await mockDecisionMatrix(page)
   await page.goto('/decision-matrix')
+  // The search box and its "Select a city group" header block are gone.
+  await expect(page.getByRole('searchbox')).toHaveCount(0)
+  await expect(page.getByText('Select a city group')).toHaveCount(0)
+  await expect(page.getByText(/Click a group to expand/)).toHaveCount(0)
+  const items = page.getByRole('list', { name: 'City groups', exact: true }).locator('> li')
+  await expect(items).toHaveCount(3)
+  // Each group is its own card: same column, but a visible gap between neighbours.
+  const boxes = await items.evaluateAll((elements) => elements.map((el) => {
+    const { left, top, bottom, width } = el.getBoundingClientRect()
+    return { left, top, bottom, width }
+  }))
+  for (let i = 1; i < boxes.length; i++) {
+    expect(boxes[i].left).toBe(boxes[0].left)
+    expect(boxes[i].width).toBe(boxes[0].width)
+    expect(boxes[i].top).toBeGreaterThan(boxes[i - 1].bottom)
+  }
   await openGroup(page)
-  await page.getByLabel('Search city groups').fill('Group B')
+  await expect(items.nth(0)).toHaveClass(/is-open/)
+  await expect(items.nth(1)).not.toHaveClass(/is-open/)
+  await groupButton(page, 'Group B').click()
   await expect(groupPanel(page)).toBeHidden()
-  await openGroup(page, 'Group B')
-  await page.getByLabel('Search city groups').fill('missing group')
-  await expect(page.getByText(/No city groups match/)).toBeVisible()
-  await page.getByRole('button', { name: 'Clear search', exact: true }).click()
   await expect(groupButton(page)).toHaveAttribute('aria-expanded', 'false')
-  await expect(groupButton(page, 'Group B')).toHaveAttribute('aria-expanded', 'false')
+  await openGroup(page, 'Group B')
+  await expect(items.nth(1)).toHaveClass(/is-open/)
+  await expect(items.nth(0)).not.toHaveClass(/is-open/)
 })
 
 test('an empty matrix supports its first step with a user-chosen score and required float values', async ({ page }) => {

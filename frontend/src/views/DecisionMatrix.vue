@@ -9,7 +9,6 @@ import { scoreTypeLabel, scoreTypeValue } from '../lib/decisionMatrixScoreTypes'
 const groups = ref([])
 const groupsLoading = ref(true)
 const groupsError = ref('')
-const search = ref('')
 const selectedGroup = ref(null)
 const types = ref([])
 const typesLoading = ref(false)
@@ -47,8 +46,8 @@ function groupSortName(group) {
   // Sort Tier 2 before Tier 10 even when separators/capitalization differ.
   return group.trim().replace(/^tiers?[\s_-]*(?=\d)/i, 'Tier ')
 }
-const filteredGroups = computed(() => groups.value
-  .filter((group) => group.toLowerCase().includes(search.value.trim().toLowerCase()))
+const sortedGroups = computed(() => groups.value
+  .slice()
   .sort((a, b) => groupRank(a) - groupRank(b) || groupCollator.compare(groupSortName(a), groupSortName(b)))
 )
 const typeNames = computed(() => {
@@ -208,7 +207,8 @@ function refresh() {
   loadGroups()
   if (selectedGroup.value !== null) loadMatrix()
 }
-watch(filteredGroups, (visible) => {
+// A refresh can drop the open group from the lookup; never leave a stale panel behind.
+watch(sortedGroups, (visible) => {
   if (selectedGroup.value !== null && !visible.includes(selectedGroup.value)) collapseGroup()
 })
 
@@ -305,36 +305,33 @@ onBeforeUnmount(() => {
       <button class="btn btn-ghost" @click="loadGroups">Retry city groups</button>
     </div>
     <div v-else-if="groupsLoading" class="card empty" role="status">Loading city groups…</div>
-    <section v-else class="card group-directory" aria-labelledby="groups-heading">
-      <div class="directory-head">
-        <div>
-          <h2 id="groups-heading">Select a city group</h2>
-          <p class="hint">Click a group to expand its incentive types below.</p>
-        </div>
-        <span class="badge">{{ countLabel(groups.length, 'group') }}</span>
-      </div>
-      <label class="search-field">
-        <span class="sr-only">Search city groups</span>
-        <input v-model="search" type="search" placeholder="Search city groups…" />
-      </label>
-      <div v-if="!groups.length" class="empty">
+    <section v-else class="group-directory" aria-labelledby="groups-heading">
+      <h2 id="groups-heading" class="sr-only">City groups</h2>
+      <div v-if="!sortedGroups.length" class="card empty">
         <h3>No city groups found</h3>
         <p>Add city groups to the active cities table to get started.</p>
       </div>
-      <div v-else-if="!filteredGroups.length" class="empty">
-        <p>No city groups match “{{ search }}”.</p>
-        <button class="btn btn-ghost btn-sm" @click="search = ''">Clear search</button>
-      </div>
       <ul v-else class="group-list" aria-label="City groups">
-        <li v-for="(group, groupIndex) in filteredGroups" :key="group" class="group-item">
+        <li
+          v-for="(group, groupIndex) in sortedGroups" :key="group" class="card group-item"
+          :class="{ 'is-open': selectedGroup === group }"
+        >
           <button
             class="group-button" :aria-label="`City group ${group}`" :aria-expanded="selectedGroup === group"
             :aria-controls="selectedGroup === group ? `matrix-group-${groupIndex}` : undefined"
             @click="selectGroup(group)"
           >
-            <span class="chevron" :class="{ open: selectedGroup === group }" aria-hidden="true">›</span>
-            <span class="group-label">{{ group }}</span>
-            <span class="group-hint">{{ selectedGroup === group ? 'Hide incentive types' : 'View incentive types' }}</span>
+            <span class="group-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 21.2s6.8-5.7 6.8-11A6.8 6.8 0 1 0 5.2 10.2c0 5.3 6.8 11 6.8 11z" />
+                <circle cx="12" cy="10" r="2.5" />
+              </svg>
+            </span>
+            <span class="group-text">
+              <span class="group-label">{{ group }}</span>
+              <span class="group-hint">{{ selectedGroup === group ? 'Hide incentive types' : 'View incentive types' }}</span>
+            </span>
+            <span class="chevron group-chevron" :class="{ open: selectedGroup === group }" aria-hidden="true">›</span>
           </button>
           <Transition name="group-slide">
             <div
@@ -481,7 +478,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.head, .group-head, .directory-head {
+.head, .group-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -493,28 +490,33 @@ h2 { margin: 0; font-size: 1.2rem; overflow-wrap: anywhere; }
 h3 { font-size: 1.05rem; }
 .hint { margin: 0; font-size: 0.83rem; line-height: 1.5; color: var(--muted); }
 .eyebrow { margin: 0 0 0.25rem; color: var(--muted); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
-.group-directory { padding: 1.3rem; }
-.directory-head { margin-bottom: 1rem; }
-.directory-head .hint { margin-top: 0.35rem; }
-.search-field { display: block; max-width: 360px; margin-bottom: 1.1rem; }
-.search-field input { width: 100%; padding: 0.65rem 0.8rem; font: inherit; font-size: 0.9rem; border: 1px solid var(--border); border-radius: 0.55rem; background: #fbfdfc; color: var(--text); }
-.group-list { list-style: none; padding: 0; margin: 0; }
-.group-button { display: flex; align-items: center; gap: 1rem; width: 100%; padding: 1rem 0.7rem; border: 0; border-bottom: 1px solid var(--border); background: transparent; text-align: left; color: var(--text); transition: background 0.15s; }
-.group-list li:last-child .group-button { border-bottom: 0; }
-.group-button:hover { background: #f6faf8; }
+/* One card per city group: the gap between cards is what separates them. */
+.group-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.85rem; }
+.group-item { overflow: hidden; transition: border-color 0.18s ease, box-shadow 0.18s ease; }
+.group-item:hover { border-color: #cfe0d7; box-shadow: 0 2px 6px rgba(20, 40, 30, 0.05), 0 12px 28px rgba(20, 40, 30, 0.08); }
+.group-item.is-open { border-color: rgba(61, 139, 109, 0.45); box-shadow: 0 2px 6px rgba(20, 40, 30, 0.05), 0 14px 32px rgba(20, 40, 30, 0.1); }
+.group-button { display: flex; align-items: center; gap: 0.95rem; width: 100%; padding: 1rem 1.15rem; border: 0; background: transparent; text-align: left; color: var(--text); transition: background 0.15s ease; }
+.group-button:hover { background: #f7fbf9; }
 .group-button:focus-visible { outline-offset: -3px; }
-.group-label { flex: 1; min-width: 0; font-size: 0.95rem; font-weight: 600; overflow-wrap: anywhere; }
+.group-item.is-open .group-button { background: linear-gradient(180deg, var(--accent-soft), #f8fbf9); }
+.group-icon { display: grid; place-items: center; flex-shrink: 0; width: 2.35rem; height: 2.35rem; border-radius: 0.75rem; background: var(--surface-2); color: var(--muted); transition: background 0.18s ease, color 0.18s ease; }
+.group-item:hover .group-icon { background: var(--accent-soft); color: var(--accent-strong); }
+.group-item.is-open .group-icon { background: var(--accent); color: #fff; }
+.group-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+.group-label { font-size: 1rem; font-weight: 650; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.group-item.is-open .group-label { color: var(--accent-strong); }
 .group-hint { color: var(--muted); font-size: 0.8rem; }
+.group-button .group-chevron { display: grid; place-items: center; flex-shrink: 0; width: 1.85rem; height: 1.85rem; border: 1px solid var(--border); border-radius: 999px; background: #fff; color: var(--muted); font-size: 1.1rem; transition: transform 0.18s ease, border-color 0.18s ease, color 0.18s ease; }
+.group-item.is-open .group-chevron { border-color: rgba(61, 139, 109, 0.45); color: var(--accent-strong); }
 .empty { padding: 3.5rem 1.2rem; text-align: center; color: var(--muted); }
 .empty h3 { color: var(--text); margin: 0.8rem 0 0.4rem; }
 .empty p { margin: 0.45rem 0 1rem; font-size: 0.9rem; line-height: 1.6; }
 .empty-mark { display: inline-grid; place-items: center; width: 3rem; height: 3rem; background: var(--accent-soft); border-radius: 0.9rem; color: var(--accent); font-size: 1.7rem; }
 .group-head { margin-bottom: 1rem; }
 .group-head h3 { margin: 0; }
-.group-button[aria-expanded="true"] { background: var(--accent-soft); color: var(--accent-strong); }
 .group-panel { display: grid; grid-template-rows: 1fr; opacity: 1; }
 .group-panel-inner { min-height: 0; overflow: hidden; }
-.group-content { padding: 1.1rem; background: #f8faf9; border-bottom: 1px solid var(--border); }
+.group-content { padding: 1.25rem; background: #f8faf9; border-top: 1px solid rgba(61, 139, 109, 0.22); }
 .group-slide-enter-active, .group-slide-leave-active { transition: grid-template-rows 0.22s ease, opacity 0.22s ease; }
 .group-slide-enter-from, .group-slide-leave-to { grid-template-rows: 0fr; opacity: 0; }
 .group-slide-leave-active { pointer-events: none; }
@@ -546,7 +548,6 @@ h3 { font-size: 1.05rem; }
 .history-section { margin-top: 0.8rem; border-top: 1px solid var(--border); background: #fafbfa; }
 .history-toolbar { margin: 0; padding: 0.9rem 1rem; }
 .steps-empty { margin: 0; padding: 1.5rem 1rem; text-align: center; color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--border); }
-.badge { display: inline-block; padding: 0.22rem 0.6rem; border-radius: 999px; font-size: 0.74rem; font-weight: 600; background: var(--surface-2); color: var(--muted); white-space: nowrap; }
 .notice { padding: 0.8rem 1rem; background: var(--warning-soft); color: #886027; border-radius: 0.6rem; font-size: 0.85rem; line-height: 1.5; }
 .all-added { text-align: center; }
 .confirm-text { line-height: 1.6; overflow-wrap: anywhere; }
@@ -554,16 +555,18 @@ h3 { font-size: 1.05rem; }
 button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .accordion-trigger:focus-visible { outline-offset: -3px; }
 @media (max-width: 640px) {
-  .head, .group-head, .directory-head { align-items: flex-start; flex-wrap: wrap; }
-  .group-directory { padding: 0.9rem; }
-  .group-content, .type-body { padding: 0.65rem; }
+  .head, .group-head { align-items: flex-start; flex-wrap: wrap; }
+  .group-list { gap: 0.6rem; }
+  .group-button { padding: 0.85rem 0.9rem; gap: 0.75rem; }
+  .group-icon { width: 2.1rem; height: 2.1rem; border-radius: 0.65rem; }
+  .group-label { font-size: 0.95rem; }
+  .group-content, .type-body { padding: 0.8rem; }
   .group-head > .btn { width: 100%; }
   .accordion-trigger { flex-wrap: wrap; gap: 0.5rem; }
   .counts { width: 100%; margin-left: 1.1rem; }
   .type-trigger { padding: 1rem; }
   .open-type { margin-right: 0.65rem; }
   .step-toolbar, .history-toolbar { padding: 0.8rem; }
-  .group-hint { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .group-slide-enter-active, .group-slide-leave-active { transition: none; }
