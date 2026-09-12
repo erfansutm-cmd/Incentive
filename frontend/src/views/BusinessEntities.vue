@@ -186,6 +186,12 @@ function cellText(row, col) {
   return String(v)
 }
 
+// Entity names are the row's identity, so they read heavier than other columns.
+const nameColumns = new Set(['name', 'fa_name'])
+function isNameColumn(name) {
+  return nameColumns.has(name)
+}
+
 function chipClass(colName) {
   // keep all chips green as requested
   return 'mini-chip'
@@ -375,31 +381,8 @@ onMounted(load)
       <div class="section-list">
       <section
         v-for="section in sections" :key="section.key" class="card section-card entity-section" :class="section.key"
-        :aria-labelledby="`${section.key}-heading`"
+        :aria-label="section.title"
       >
-        <header class="card-head">
-          <div class="card-head-text">
-            <span class="icon-tile" :class="section.editable ? 'accent' : 'neutral'" aria-hidden="true">
-              <svg v-if="section.editable" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M3 21h18" />
-                <path d="M5.5 21V7.4L12 4l6.5 3.4V21" />
-                <path d="M9.8 21v-4.6h4.4V21" />
-                <path d="M9.4 10.2h.01M14.6 10.2h.01" />
-              </svg>
-              <svg v-else viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3" y="4" width="18" height="4.6" rx="1.3" />
-                <path d="M5.2 8.6V19a1.6 1.6 0 0 0 1.6 1.6h10.4A1.6 1.6 0 0 0 18.8 19V8.6" />
-                <path d="M10 12.6h4" />
-              </svg>
-            </span>
-            <div>
-              <p class="eyebrow">{{ section.editable ? 'Current' : 'History' }}</p>
-              <h2 :id="`${section.key}-heading`">{{ section.title }}</h2>
-              <p class="hint">{{ section.editable ? 'Available to edit or deactivate.' : 'Previously deactivated — read-only.' }}</p>
-            </div>
-          </div>
-          <span class="pill" :class="{ accent: section.editable }">{{ section.rows.length }}</span>
-        </header>
       <div class="table-scroll">
         <table>
           <thead>
@@ -420,6 +403,7 @@ onMounted(load)
               <td
                 v-for="c in section.columns"
                 :key="c.name"
+                :class="{ 'name-cell': isNameColumn(c.name) }"
               >
                 <div v-if="c.json_array" class="cell-chips">
                   <template v-if="asArray(row[c.name]).length">
@@ -554,6 +538,9 @@ tbody td {
 }
 tbody tr:hover { background: #f6faf8; }
 .muted { color: var(--muted); }
+.name-cell { font-weight: 650; }
+.name-cell .cell-text { color: var(--text); }
+.entity-section.deactivated .name-cell .cell-text { color: var(--inactive-text); }
 
 /* The history section reads like the Decision Matrix deactivated block. */
 .entity-section.deactivated .table-scroll { background: #fafbfa; }
@@ -634,11 +621,6 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   .actions-col { white-space: normal; }
   .actions-col .btn { margin-bottom: 0.25rem; }
 }
-@media (max-width: 640px) {
-  .card-head-text { gap: 0.7rem; }
-  .icon-tile { width: 2.1rem; height: 2.1rem; border-radius: 0.65rem; }
-}
-
 .modal-wide { max-width: 600px; }
 .field .type { margin-left: 0.4rem; }
 .confirm-text { color: var(--text); line-height: 1.6; overflow-wrap: anywhere; }

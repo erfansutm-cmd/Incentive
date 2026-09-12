@@ -275,9 +275,10 @@ button {
   border-radius: 999px;
   background: #fff;
   color: var(--muted);
-  font-size: 1rem;
-  line-height: 1;
   transition: transform 0.18s ease, border-color 0.18s ease, color 0.18s ease, background 0.18s ease;
+}
+.chevron-disc svg {
+  display: block;
 }
 .chevron-disc.open {
   transform: rotate(90deg);

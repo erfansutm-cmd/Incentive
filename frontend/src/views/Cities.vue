@@ -64,6 +64,11 @@ function isCityNameColumn(col) {
   return !editing.value && cityNameColumn.value && col.name === cityNameColumn.value.name
 }
 
+// The city name is the row's identity, so it reads heavier than the other columns.
+function isNameColumn(col) {
+  return Boolean(cityNameColumn.value) && col.name === cityNameColumn.value.name
+}
+
 async function fetchSuggestions(term) {
   const seq = ++lookupSeq
   suggestLoading.value = true
@@ -696,23 +701,7 @@ onMounted(() => {
         <span class="pill spacer">{{ filteredRows.length }} of {{ rows.length }} cities</span>
       </div>
 
-      <section class="card section-card city-section" aria-labelledby="cities-heading">
-        <header class="card-head">
-          <div class="card-head-text">
-            <span class="icon-tile accent" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 21.2s6.8-5.7 6.8-11A6.8 6.8 0 1 0 5.2 10.2c0 5.3 6.8 11 6.8 11z" />
-                <circle cx="12" cy="10" r="2.5" />
-              </svg>
-            </span>
-            <div>
-              <p class="eyebrow">Directory</p>
-              <h2 id="cities-heading">Active cities</h2>
-            </div>
-          </div>
-          <span class="pill accent">{{ filteredRows.length }}</span>
-        </header>
-
+      <section class="card section-card city-section" aria-label="Active cities">
       <div class="table-scroll">
       <table>
         <thead>
@@ -731,9 +720,13 @@ onMounted(() => {
               @click="toggleExpand(row, i)"
             >
               <td class="expand-col">
-                <span class="chevron-disc" :class="{ open: isExpanded(row, i) }" aria-hidden="true">›</span>
+                <span class="chevron-disc" :class="{ open: isExpanded(row, i) }" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M9.5 5.5l6.5 6.5-6.5 6.5" />
+                  </svg>
+                </span>
               </td>
-              <td v-for="c in tableColumns" :key="c.name">{{ cellValue(row, c) }}</td>
+              <td v-for="c in tableColumns" :key="c.name" :class="{ 'name-cell': isNameColumn(c) }">{{ cellValue(row, c) }}</td>
               <td class="actions-col">
                 <button class="btn btn-ghost btn-sm" @click.stop="openEdit(row)">Edit</button>
               </td>
@@ -1092,6 +1085,7 @@ tbody tr:hover { background: #f6faf8; }
 .city-row.expanded { background: var(--accent-soft); }
 .city-row.expanded:hover { background: #dceee4; }
 .city-row.expanded td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.name-cell { font-weight: 650; color: var(--text); }
 .expand-col { width: 3rem; text-align: center; }
 thead th.expand-col { padding-left: 0.5rem; padding-right: 0.5rem; }
 tbody td.expand-col .chevron-disc { margin: 0 auto; }

@@ -331,7 +331,11 @@ onBeforeUnmount(() => {
               <span class="group-label">{{ group }}</span>
               <span class="group-hint">{{ selectedGroup === group ? 'Hide incentive types' : 'View incentive types' }}</span>
             </span>
-            <span class="chevron group-chevron" :class="{ open: selectedGroup === group }" aria-hidden="true">›</span>
+            <span class="chevron group-chevron" :class="{ open: selectedGroup === group }" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9.5 5.5l6.5 6.5-6.5 6.5" />
+              </svg>
+            </span>
           </button>
           <Transition name="group-slide">
             <div
@@ -373,7 +377,11 @@ onBeforeUnmount(() => {
                             :aria-expanded="expandedType === type.id" :aria-controls="`matrix-type-${groupIndex}-${typeIndex}`"
                             @click="expandedType = expandedType === type.id ? null : type.id"
                           >
-                            <span class="chevron" :class="{ open: expandedType === type.id }" aria-hidden="true">›</span>
+                            <span class="chevron" :class="{ open: expandedType === type.id }" aria-hidden="true">
+                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M9.5 5.5l6.5 6.5-6.5 6.5" />
+                              </svg>
+                            </span>
                             <span class="type-label">{{ type.name }} <small>#{{ type.id }}</small></span>
                             <span class="counts">{{ countLabel(type.scoreTypes.length, 'score type') }} <span aria-hidden="true">·</span> {{ countLabel(type.activeCount, 'active step') }}</span>
                           </button>
@@ -405,7 +413,11 @@ onBeforeUnmount(() => {
                                 :aria-expanded="openScores.has(item.key)" :aria-controls="`matrix-score-${groupIndex}-${typeIndex}-${scoreIndex}`"
                                 @click="toggleSet(openScores, item.key)"
                               >
-                                <span class="chevron" :class="{ open: openScores.has(item.key) }" aria-hidden="true">›</span>
+                                <span class="chevron" :class="{ open: openScores.has(item.key) }" aria-hidden="true">
+                                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M9.5 5.5l6.5 6.5-6.5 6.5" />
+                                  </svg>
+                                </span>
                                 <span class="score-name">{{ scoreTypeLabel(item.score_type) }}</span>
                                 <span class="counts">{{ item.active_count }} active <span v-if="item.deactivated_count">· {{ item.deactivated_count }} deactivated</span></span>
                               </button>
@@ -506,7 +518,7 @@ h3 { font-size: 1.05rem; }
 .group-label { font-size: 1rem; font-weight: 650; letter-spacing: -0.01em; overflow-wrap: anywhere; }
 .group-item.is-open .group-label { color: var(--accent-strong); }
 .group-hint { color: var(--muted); font-size: 0.8rem; }
-.group-button .group-chevron { display: grid; place-items: center; flex-shrink: 0; width: 1.85rem; height: 1.85rem; border: 1px solid var(--border); border-radius: 999px; background: #fff; color: var(--muted); font-size: 1.1rem; transition: transform 0.18s ease, border-color 0.18s ease, color 0.18s ease; }
+.group-button .group-chevron { display: grid; place-items: center; flex-shrink: 0; width: 1.85rem; height: 1.85rem; border: 1px solid var(--border); border-radius: 999px; background: #fff; color: var(--muted); transition: transform 0.18s ease, border-color 0.18s ease, color 0.18s ease; }
 .group-item.is-open .group-chevron { border-color: rgba(61, 139, 109, 0.45); color: var(--accent-strong); }
 .empty { padding: 3.5rem 1.2rem; text-align: center; color: var(--muted); }
 .empty h3 { color: var(--text); margin: 0.8rem 0 0.4rem; }
@@ -531,8 +543,9 @@ h3 { font-size: 1.05rem; }
 .open-type { align-self: center; margin-right: 1rem; white-space: nowrap; flex-shrink: 0; text-decoration: none; }
 .accordion-trigger:hover { background: #f6faf8; }
 .accordion-trigger[aria-expanded="true"] { background: #f6faf8; }
-.chevron { color: var(--muted); font-size: 1.5rem; line-height: 1; transition: transform 0.15s; }
-.chevron.open { transform: rotate(90deg); }
+.chevron { display: inline-grid; place-items: center; flex-shrink: 0; color: var(--muted); transition: transform 0.18s ease, color 0.18s ease; }
+.chevron svg { display: block; }
+.chevron.open { transform: rotate(90deg); color: var(--accent-strong); }
 .type-label { font-weight: 700; overflow-wrap: anywhere; min-width: 0; }
 .type-label small { margin-left: 0.5rem; font-size: 0.78rem; font-weight: 400; color: var(--muted); }
 .counts { margin-left: auto; font-size: 0.8rem; color: var(--muted); font-weight: 400; }
