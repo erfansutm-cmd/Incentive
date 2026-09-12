@@ -9,7 +9,6 @@ import { scoreTypeLabel, scoreTypeValue } from '../lib/decisionMatrixScoreTypes'
 const groups = ref([])
 const groupsLoading = ref(true)
 const groupsError = ref('')
-const search = ref('')
 const selectedGroup = ref(null)
 const types = ref([])
 const typesLoading = ref(false)
@@ -47,8 +46,7 @@ function groupSortName(group) {
   // Sort Tier 2 before Tier 10 even when separators/capitalization differ.
   return group.trim().replace(/^tiers?[\s_-]*(?=\d)/i, 'Tier ')
 }
-const filteredGroups = computed(() => groups.value
-  .filter((group) => group.toLowerCase().includes(search.value.trim().toLowerCase()))
+const sortedGroups = computed(() => [...groups.value]
   .sort((a, b) => groupRank(a) - groupRank(b) || groupCollator.compare(groupSortName(a), groupSortName(b)))
 )
 const typeNames = computed(() => {
@@ -208,10 +206,9 @@ function refresh() {
   loadGroups()
   if (selectedGroup.value !== null) loadMatrix()
 }
-watch(filteredGroups, (visible) => {
+watch(sortedGroups, (visible) => {
   if (selectedGroup.value !== null && !visible.includes(selectedGroup.value)) collapseGroup()
 })
-
 function openForm(mode, type = null, item = null) {
   if (selectedGroup.value === null) return
   formError.value = ''
@@ -305,36 +302,24 @@ onBeforeUnmount(() => {
       <button class="btn btn-ghost" @click="loadGroups">Retry city groups</button>
     </div>
     <div v-else-if="groupsLoading" class="card empty" role="status">Loading city groups…</div>
-    <section v-else class="card group-directory" aria-labelledby="groups-heading">
-      <div class="directory-head">
-        <div>
-          <h2 id="groups-heading">Select a city group</h2>
-          <p class="hint">Click a group to expand its incentive types below.</p>
-        </div>
-        <span class="badge">{{ countLabel(groups.length, 'group') }}</span>
-      </div>
-      <label class="search-field">
-        <span class="sr-only">Search city groups</span>
-        <input v-model="search" type="search" placeholder="Search city groups…" />
-      </label>
-      <div v-if="!groups.length" class="empty">
+    <section v-else class="group-directory" aria-label="City groups">
+      <div v-if="!groups.length" class="card empty">
         <h3>No city groups found</h3>
         <p>Add city groups to the active cities table to get started.</p>
       </div>
-      <div v-else-if="!filteredGroups.length" class="empty">
-        <p>No city groups match “{{ search }}”.</p>
-        <button class="btn btn-ghost btn-sm" @click="search = ''">Clear search</button>
-      </div>
       <ul v-else class="group-list" aria-label="City groups">
-        <li v-for="(group, groupIndex) in filteredGroups" :key="group" class="group-item">
+        <li v-for="(group, groupIndex) in sortedGroups" :key="group" class="group-item" :class="{ open: selectedGroup === group }">
           <button
             class="group-button" :aria-label="`City group ${group}`" :aria-expanded="selectedGroup === group"
             :aria-controls="selectedGroup === group ? `matrix-group-${groupIndex}` : undefined"
             @click="selectGroup(group)"
           >
             <span class="chevron" :class="{ open: selectedGroup === group }" aria-hidden="true">›</span>
-            <span class="group-label">{{ group }}</span>
-            <span class="group-hint">{{ selectedGroup === group ? 'Hide incentive types' : 'View incentive types' }}</span>
+            <span class="group-main">
+              <span class="group-label">{{ group }}</span>
+              <span class="group-subtitle">Incentive types</span>
+            </span>
+            <span class="group-action">{{ selectedGroup === group ? 'Collapse' : 'Expand' }}</span>
           </button>
           <Transition name="group-slide">
             <div
@@ -481,7 +466,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.head, .group-head, .directory-head {
+.head, .group-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -493,28 +478,66 @@ h2 { margin: 0; font-size: 1.2rem; overflow-wrap: anywhere; }
 h3 { font-size: 1.05rem; }
 .hint { margin: 0; font-size: 0.83rem; line-height: 1.5; color: var(--muted); }
 .eyebrow { margin: 0 0 0.25rem; color: var(--muted); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
-.group-directory { padding: 1.3rem; }
-.directory-head { margin-bottom: 1rem; }
-.directory-head .hint { margin-top: 0.35rem; }
-.search-field { display: block; max-width: 360px; margin-bottom: 1.1rem; }
-.search-field input { width: 100%; padding: 0.65rem 0.8rem; font: inherit; font-size: 0.9rem; border: 1px solid var(--border); border-radius: 0.55rem; background: #fbfdfc; color: var(--text); }
-.group-list { list-style: none; padding: 0; margin: 0; }
-.group-button { display: flex; align-items: center; gap: 1rem; width: 100%; padding: 1rem 0.7rem; border: 0; border-bottom: 1px solid var(--border); background: transparent; text-align: left; color: var(--text); transition: background 0.15s; }
-.group-list li:last-child .group-button { border-bottom: 0; }
-.group-button:hover { background: #f6faf8; }
-.group-button:focus-visible { outline-offset: -3px; }
-.group-label { flex: 1; min-width: 0; font-size: 0.95rem; font-weight: 600; overflow-wrap: anywhere; }
-.group-hint { color: var(--muted); font-size: 0.8rem; }
+.group-directory { margin-top: 0.25rem; }
+.group-list { display: grid; gap: 0.85rem; list-style: none; padding: 0; margin: 0; }
+.group-item {
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  box-shadow: 0 1px 2px rgba(20, 40, 30, 0.04), 0 10px 28px rgba(20, 40, 30, 0.05);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+.group-item:hover {
+  border-color: #d4e2da;
+  box-shadow: 0 2px 6px rgba(20, 40, 30, 0.06), 0 14px 34px rgba(20, 40, 30, 0.07);
+}
+.group-item.open { border-color: rgba(61, 139, 109, 0.32); }
+.group-button {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  width: 100%;
+  padding: 1rem 1.15rem;
+  border: 0;
+  background: #fff;
+  text-align: left;
+  color: var(--text);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.group-button:hover { background: #f8fbf9; }
+.group-button:focus-visible { outline-offset: -4px; }
+.group-button[aria-expanded="true"] {
+  background: linear-gradient(90deg, var(--accent-soft), #fff 88%);
+  color: var(--accent-strong);
+}
+.group-main { display: grid; gap: 0.14rem; flex: 1; min-width: 0; }
+.group-label { min-width: 0; font-size: 1rem; font-weight: 700; overflow-wrap: anywhere; }
+.group-subtitle { color: var(--muted); font-size: 0.78rem; font-weight: 500; }
+.group-action {
+  flex-shrink: 0;
+  padding: 0.28rem 0.68rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  background: #fbfdfc;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+.group-button[aria-expanded="true"] .group-action {
+  border-color: rgba(61, 139, 109, 0.28);
+  color: var(--accent-strong);
+  background: #fff;
+}
 .empty { padding: 3.5rem 1.2rem; text-align: center; color: var(--muted); }
 .empty h3 { color: var(--text); margin: 0.8rem 0 0.4rem; }
 .empty p { margin: 0.45rem 0 1rem; font-size: 0.9rem; line-height: 1.6; }
 .empty-mark { display: inline-grid; place-items: center; width: 3rem; height: 3rem; background: var(--accent-soft); border-radius: 0.9rem; color: var(--accent); font-size: 1.7rem; }
 .group-head { margin-bottom: 1rem; }
 .group-head h3 { margin: 0; }
-.group-button[aria-expanded="true"] { background: var(--accent-soft); color: var(--accent-strong); }
 .group-panel { display: grid; grid-template-rows: 1fr; opacity: 1; }
 .group-panel-inner { min-height: 0; overflow: hidden; }
-.group-content { padding: 1.1rem; background: #f8faf9; border-bottom: 1px solid var(--border); }
+.group-content { padding: 1.1rem; background: #f8faf9; border-top: 1px solid var(--border); }
 .group-slide-enter-active, .group-slide-leave-active { transition: grid-template-rows 0.22s ease, opacity 0.22s ease; }
 .group-slide-enter-from, .group-slide-leave-to { grid-template-rows: 0fr; opacity: 0; }
 .group-slide-leave-active { pointer-events: none; }
@@ -546,16 +569,13 @@ h3 { font-size: 1.05rem; }
 .history-section { margin-top: 0.8rem; border-top: 1px solid var(--border); background: #fafbfa; }
 .history-toolbar { margin: 0; padding: 0.9rem 1rem; }
 .steps-empty { margin: 0; padding: 1.5rem 1rem; text-align: center; color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--border); }
-.badge { display: inline-block; padding: 0.22rem 0.6rem; border-radius: 999px; font-size: 0.74rem; font-weight: 600; background: var(--surface-2); color: var(--muted); white-space: nowrap; }
 .notice { padding: 0.8rem 1rem; background: var(--warning-soft); color: #886027; border-radius: 0.6rem; font-size: 0.85rem; line-height: 1.5; }
 .all-added { text-align: center; }
 .confirm-text { line-height: 1.6; overflow-wrap: anywhere; }
-.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .accordion-trigger:focus-visible { outline-offset: -3px; }
 @media (max-width: 640px) {
-  .head, .group-head, .directory-head { align-items: flex-start; flex-wrap: wrap; }
-  .group-directory { padding: 0.9rem; }
+  .head, .group-head { align-items: flex-start; flex-wrap: wrap; }
   .group-content, .type-body { padding: 0.65rem; }
   .group-head > .btn { width: 100%; }
   .accordion-trigger { flex-wrap: wrap; gap: 0.5rem; }
@@ -563,7 +583,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   .type-trigger { padding: 1rem; }
   .open-type { margin-right: 0.65rem; }
   .step-toolbar, .history-toolbar { padding: 0.8rem; }
-  .group-hint { display: none; }
+  .group-button { padding: 0.9rem; }
+  .group-action { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .group-slide-enter-active, .group-slide-leave-active { transition: none; }

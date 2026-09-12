@@ -88,18 +88,31 @@ test('Top 4 priority handles capitalization and separators and keeps original lo
   }
 })
 
-test('filtering collapses a hidden group and never leaves a separate group page', async ({ page }) => {
+test('city groups render as separated cards without the directory header or search', async ({ page }) => {
   await mockDecisionMatrix(page)
   await page.goto('/decision-matrix')
+  await expect(page.getByRole('heading', { name: 'Select a city group', exact: true })).toHaveCount(0)
+  await expect(page.getByText('Click a group to expand its incentive types below.', { exact: true })).toHaveCount(0)
+  await expect(page.getByLabel('Search city groups')).toHaveCount(0)
+  await expect(page.getByPlaceholder('Search city groups…')).toHaveCount(0)
+  await expect(page.getByText('3 groups', { exact: true })).toHaveCount(0)
+
+  const items = page.locator('.group-item')
+  await expect(items).toHaveCount(3)
+  const boxes = await items.evaluateAll((elements) => elements.map((el) => {
+    const { x, y, width, height } = el.getBoundingClientRect()
+    return { x, y, width, height }
+  }))
+  for (let i = 1; i < boxes.length; i++) {
+    expect(boxes[i].x).toBe(boxes[0].x)
+    expect(boxes[i].width).toBe(boxes[0].width)
+    expect(boxes[i].y).toBeGreaterThan(boxes[i - 1].y + boxes[i - 1].height)
+  }
+
   await openGroup(page)
-  await page.getByLabel('Search city groups').fill('Group B')
-  await expect(groupPanel(page)).toBeHidden()
-  await openGroup(page, 'Group B')
-  await page.getByLabel('Search city groups').fill('missing group')
-  await expect(page.getByText(/No city groups match/)).toBeVisible()
-  await page.getByRole('button', { name: 'Clear search', exact: true }).click()
-  await expect(groupButton(page)).toHaveAttribute('aria-expanded', 'false')
-  await expect(groupButton(page, 'Group B')).toHaveAttribute('aria-expanded', 'false')
+  await expect(groupButton(page)).toHaveAttribute('aria-expanded', 'true')
+  await expect(groupButton(page, 'Group B')).toBeVisible()
+  await expect(page).toHaveURL(/\/decision-matrix$/)
 })
 
 test('an empty matrix supports its first step with a user-chosen score and required float values', async ({ page }) => {
