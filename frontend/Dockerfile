@@ -18,5 +18,10 @@ RUN npm run build
 FROM nginx:alpine AS prod
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
-EXPOSE 80
+
+# Fix OKD arbitrary UID permission issues
+RUN touch /var/run/nginx.pid && \
+    chmod -R 777 /var/run/nginx.pid /var/cache/nginx /var/log/nginx /usr/share/nginx/html /tmp
+
+EXPOSE 8080
 CMD ["nginx", "-g", "daemon off;"]
