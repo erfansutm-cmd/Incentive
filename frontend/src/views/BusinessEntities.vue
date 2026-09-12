@@ -339,7 +339,6 @@ onMounted(load)
     <div class="head">
       <div>
         <h1>Business Entities</h1>
-        <p class="sub">Manage the <code>business_entities</code> table.</p>
       </div>
       <button class="btn btn-primary" @click="openAdd">+ Add entity</button>
     </div>

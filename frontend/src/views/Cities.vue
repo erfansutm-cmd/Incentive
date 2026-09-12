@@ -655,8 +655,7 @@ onMounted(() => {
   <div>
     <div class="head">
       <div>
-        <h1>Cities</h1>
-        <p class="sub">Manage the <code>cities</code> table. Click a city to see its plans.</p>
+        <h1>Active Cities</h1>
       </div>
       <button class="btn btn-primary" @click="openAdd">+ Add city</button>
     </div>
