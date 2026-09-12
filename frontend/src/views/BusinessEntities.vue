@@ -186,10 +186,9 @@ function cellText(row, col) {
   return String(v)
 }
 
-// Entity names are the row's identity, so they read heavier than other columns.
-const nameColumns = new Set(['name', 'fa_name'])
+// Only the entity name is the row's identity; fa_name stays regular weight.
 function isNameColumn(name) {
-  return nameColumns.has(name)
+  return name === 'name'
 }
 
 function chipClass(colName) {
