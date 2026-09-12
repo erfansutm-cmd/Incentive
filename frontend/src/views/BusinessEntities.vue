@@ -335,49 +335,70 @@ onMounted(load)
 </script>
 
 <template>
-  <div>
-    <div class="head">
+  <div class="business-entities">
+    <div class="page-head">
       <div>
         <h1>Business Entities</h1>
+        <p class="head-sub">{{ activeRows.length }} active · {{ deactivatedRows.length }} deactivated</p>
       </div>
-      <button class="btn btn-primary" @click="openAdd">+ Add entity</button>
+      <div class="head-actions">
+        <button class="btn btn-ghost" :disabled="loading" @click="load">Refresh</button>
+        <button class="btn btn-primary" @click="openAdd">+ Add entity</button>
+      </div>
     </div>
 
-    <div v-if="error" class="banner error">
+    <div v-if="error" class="banner error" role="alert">
       <strong>Could not load business entities</strong>
       <p>{{ error }}</p>
       <button class="btn btn-ghost" @click="load">Retry</button>
     </div>
 
-    <div v-else-if="loading" class="card empty">Loading…</div>
+    <div v-else-if="loading" class="card empty" role="status">Loading business entities…</div>
 
-    <div v-else class="table-card">
-      <div class="toolbar">
-        <div class="search-wrap">
-          <span class="search-icon">🔎</span>
-          <input
-            v-model="searchQuery"
-            type="search"
-            class="search-input"
-            placeholder="Search by name or customer ID…"
-          />
-        </div>
-        <span class="entity-counts">{{ activeRows.length }} active · {{ deactivatedRows.length }} deactivated</span>
+    <template v-else>
+      <div class="card toolbar-card">
+        <label class="search-field">
+          <span class="sr-only">Search business entities</span>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="6.5" />
+            <path d="M16 16l4 4" />
+          </svg>
+          <input v-model="searchQuery" type="search" placeholder="Search by name or customer ID…" />
+        </label>
         <button v-if="deactivatedRows.length" class="btn btn-ghost btn-sm"
           :aria-pressed="showDeactivated" @click="showDeactivated = !showDeactivated">
           {{ showDeactivated ? 'Hide deactivated' : `Show deactivated (${deactivatedRows.length})` }}
         </button>
-        <span class="result-count">
-          {{ visibleCount }} of {{ rows.length }} entities
-        </span>
+        <span class="pill spacer">{{ visibleCount }} of {{ rows.length }} entities</span>
       </div>
 
-      <section v-for="section in sections" :key="section.key" class="entity-section" :class="section.key" :aria-labelledby="section.editable ? undefined : `${section.key}-heading`" :aria-label="section.editable ? 'Active entities' : undefined">
-        <header v-if="!section.editable" class="section-header">
-          <h2 :id="`${section.key}-heading`" class="section-heading">
-            {{ section.title }} <span class="section-count">{{ section.rows.length }}</span>
-          </h2>
-          <p class="section-description">{{ section.editable ? 'Current business entities — available to edit or deactivate.' : 'Previously deactivated entities — read-only.' }}</p>
+      <div class="section-list">
+      <section
+        v-for="section in sections" :key="section.key" class="card section-card entity-section" :class="section.key"
+        :aria-labelledby="`${section.key}-heading`"
+      >
+        <header class="card-head">
+          <div class="card-head-text">
+            <span class="icon-tile" :class="section.editable ? 'accent' : 'neutral'" aria-hidden="true">
+              <svg v-if="section.editable" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 21h18" />
+                <path d="M5.5 21V7.4L12 4l6.5 3.4V21" />
+                <path d="M9.8 21v-4.6h4.4V21" />
+                <path d="M9.4 10.2h.01M14.6 10.2h.01" />
+              </svg>
+              <svg v-else viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="4" width="18" height="4.6" rx="1.3" />
+                <path d="M5.2 8.6V19a1.6 1.6 0 0 0 1.6 1.6h10.4A1.6 1.6 0 0 0 18.8 19V8.6" />
+                <path d="M10 12.6h4" />
+              </svg>
+            </span>
+            <div>
+              <p class="eyebrow">{{ section.editable ? 'Current' : 'History' }}</p>
+              <h2 :id="`${section.key}-heading`">{{ section.title }}</h2>
+              <p class="hint">{{ section.editable ? 'Available to edit or deactivate.' : 'Previously deactivated — read-only.' }}</p>
+            </div>
+          </div>
+          <span class="pill" :class="{ accent: section.editable }">{{ section.rows.length }}</span>
         </header>
       <div class="table-scroll">
         <table>
@@ -430,7 +451,8 @@ onMounted(load)
         </table>
       </div>
       </section>
-    </div>
+      </div>
+    </template>
 
     <!-- add / edit popup -->
     <div v-if="showModal" class="overlay" @click.self="showModal = false">
@@ -495,192 +517,57 @@ onMounted(load)
 </template>
 
 <style scoped>
-.entity-counts { font-size: 0.82rem; color: var(--muted); }
-.is-deactivated td { color: var(--muted); }
-
-.head {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 1.25rem;
-}
-.head h1 {
-  margin: 0;
-  color: var(--text);
-  font-size: 1.5rem;
-}
-.sub {
-  margin: 0.3rem 0 0;
-  color: var(--muted);
-}
-.sub code {
-  background: var(--surface-2);
-  padding: 0.1rem 0.4rem;
-  border-radius: 0.3rem;
-  color: var(--accent-strong);
-}
-
-.empty {
-  padding: 3rem 1rem;
-  text-align: center;
-  color: var(--muted);
-}
-
-.table-card {
-  overflow: hidden;
-  width: 100%;
-}
-
-.toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.85rem 1rem;
-  border: 1px solid var(--border);
-  border-radius: 0.7rem;
-  margin-bottom: 1rem;
-  background: #fbfdfc;
-}
-.search-wrap {
-  position: relative;
-  flex: 1;
-  min-width: 220px;
-  max-width: 380px;
-}
-.search-icon {
-  position: absolute;
-  left: 0.65rem;
-  top: 50%;
-  transform: translateY(-50%);
-  font-size: 0.85rem;
-  opacity: 0.6;
-  pointer-events: none;
-}
-.search-input {
-  width: 100%;
-  padding: 0.5rem 0.7rem 0.5rem 2rem;
-  border: 1px solid var(--border);
-  border-radius: 0.55rem;
-  font-size: 0.92rem;
-  outline: none;
-  color: var(--text);
-  background: #fff;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-.search-input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-ring);
-}
-.result-count {
-  margin-left: auto;
-  font-size: 0.82rem;
-  color: var(--muted);
-  white-space: nowrap;
-}
+/* Page chrome (head, toolbar card, section cards, pills, icon tiles) comes from
+   the shared classes in App.vue so this tab matches the Decision Matrix shape. */
+.empty { padding: 3.5rem 1.2rem; text-align: center; color: var(--muted); }
+td.empty { padding: 2.2rem 1rem; font-size: 0.9rem; line-height: 1.6; }
 
 /* Wrap full labels and values; scroll on narrow screens rather than clip. */
-.table-scroll {
-  width: 100%;
-  overflow-x: auto;
-}
-table {
-  width: 100%;
-  min-width: 1100px;
-  table-layout: fixed;
-  border-collapse: collapse;
-}
-
-/* Header: consistent alignment, centered vertically */
+.table-scroll { width: 100%; overflow-x: auto; }
+table { width: 100%; min-width: 1100px; table-layout: fixed; border-collapse: collapse; }
 thead th {
   text-align: left;
-  padding: 0.7rem 0.6rem;
+  padding: 0.75rem 0.9rem;
   background: var(--surface-2);
   color: #4a6155;
-  font-size: 0.7rem;
+  font-size: 0.72rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  border-bottom: 1px solid var(--border);
   white-space: normal;
   overflow-wrap: anywhere;
   vertical-align: middle;
 }
-
 /* Reserve more space for customer IDs while keeping two-line timestamps compact. */
 thead th.timestamp-col { width: 115px; }
 thead th.include-customer-col { width: 210px; }
-.entity-section {
-  border: 1px solid var(--border);
-  border-radius: 0.8rem;
-  overflow: hidden;
-  background: #fff;
-  box-shadow: 0 3px 12px rgba(20, 40, 30, 0.05);
-}
-.entity-section + .entity-section { margin-top: 2.5rem; }
-.section-header {
-  padding: 1rem 1.25rem;
-  border-bottom: 1px solid var(--border);
-  border-left: 4px solid var(--accent);
-  background: var(--accent-soft);
-}
-.deactivated .section-header {
-  background: #eceff0;
-  border-left-color: #879694;
-}
-.section-heading {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  margin: 0;
-  font-size: 1rem;
-  color: var(--text);
-}
-.section-count {
-  padding: 0.15rem 0.55rem;
-  border-radius: 999px;
-  background: #fff;
-  font-size: 0.8rem;
-  color: var(--muted);
-}
-.section-description {
-  margin: 0.4rem 0 0;
-  font-size: 0.82rem;
-  color: var(--muted);
-}
 
-/* Body: middle alignment for clean rows */
 tbody td {
-  padding: 0.6rem 0.6rem;
-  border-bottom: 1px solid #eef2ef;
+  padding: 0.75rem 0.9rem;
+  border-top: 1px solid var(--border);
   font-size: 0.86rem;
   color: var(--text);
   vertical-align: middle;
   word-break: break-word;
   overflow-wrap: anywhere;
-  line-height: 1.4;
+  line-height: 1.45;
 }
-tbody tr:last-child td {
-  border-bottom: none;
-}
-tbody tr:hover {
-  background: #f6faf8;
-}
-.muted {
-  color: var(--muted);
+tbody tr:hover { background: #f6faf8; }
+.muted { color: var(--muted); }
+
+/* The history section reads like the Decision Matrix deactivated block. */
+.entity-section.deactivated .table-scroll { background: #fafbfa; }
+.entity-section.deactivated tbody td,
+.is-deactivated td { color: var(--inactive-text); }
+.entity-section.deactivated tbody tr:hover { background: #f3f6f4; }
+.entity-section.deactivated .mini-chip {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--inactive-text);
 }
 
-.cell-text {
-  display: inline-block;
-  max-width: 100%;
-  overflow-wrap: anywhere;
-  vertical-align: middle;
-}
-
-.cell-text.timestamp {
-  white-space: pre-line;
-}
+.cell-text { display: inline-block; max-width: 100%; overflow-wrap: anywhere; vertical-align: middle; }
+.cell-text.timestamp { white-space: pre-line; color: var(--muted); font-size: 0.78rem; }
 
 /* Chips: all green, aligned left, wrapped */
 .cell-chips {
@@ -691,8 +578,6 @@ tbody tr:hover {
   justify-content: flex-start;
   max-width: 100%;
 }
-
-/* All chips green as requested */
 .mini-chip {
   display: inline-flex;
   align-items: center;
@@ -721,59 +606,40 @@ tbody tr:hover {
   padding-right: 0.9rem;
   padding-left: 0.6rem;
 }
-.actions-col .btn {
-  padding: 0.32rem 0.65rem;
-  font-size: 0.78rem;
-  vertical-align: middle;
-}
+.actions-col .btn { padding: 0.32rem 0.65rem; font-size: 0.78rem; vertical-align: middle; }
 /* Separate the edit and deactivate actions. */
-.actions-col .btn + .btn {
-  margin-left: 0.75rem;
+.actions-col .btn + .btn { margin-left: 0.75rem; }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 @media (max-width: 1300px) {
-  thead th {
-    font-size: 0.66rem;
-    padding: 0.55rem 0.45rem;
-  }
-  tbody td {
-    font-size: 0.82rem;
-    padding: 0.5rem 0.45rem;
-  }
-  .mini-chip {
-    font-size: 0.71rem;
-    padding: 0.12rem 0.45rem;
-  }
-  .actions-col {
-    width: 180px;
-    min-width: 180px;
-    max-width: 180px;
-    padding-right: 0.7rem;
-  }
-  .actions-col .btn + .btn {
-    margin-left: 0.6rem;
-  }
+  thead th { font-size: 0.66rem; padding: 0.6rem 0.6rem; }
+  tbody td { font-size: 0.82rem; padding: 0.65rem 0.6rem; }
+  .mini-chip { font-size: 0.71rem; padding: 0.12rem 0.45rem; }
+  .actions-col { padding-right: 0.7rem; }
+  .actions-col .btn + .btn { margin-left: 0.6rem; }
 }
 @media (max-width: 900px) {
-  .table-scroll {
-    overflow-x: auto;
-  }
-  .actions-col {
-    white-space: normal;
-  }
-  .actions-col .btn {
-    margin-bottom: 0.25rem;
-  }
+  .actions-col { white-space: normal; }
+  .actions-col .btn { margin-bottom: 0.25rem; }
+}
+@media (max-width: 640px) {
+  .card-head-text { gap: 0.7rem; }
+  .icon-tile { width: 2.1rem; height: 2.1rem; border-radius: 0.65rem; }
 }
 
-.modal-wide {
-  max-width: 600px;
-}
-.field .type {
-  margin-left: 0.4rem;
-}
-.confirm-text {
-  color: var(--text);
-  line-height: 1.5;
-}
+.modal-wide { max-width: 600px; }
+.field .type { margin-left: 0.4rem; }
+.confirm-text { color: var(--text); line-height: 1.6; overflow-wrap: anywhere; }
 </style>
