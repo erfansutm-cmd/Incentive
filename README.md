@@ -44,6 +44,7 @@ configured through a root `.env` file:
 | `DB_CITY_MAPPING_TABLE` | `mafsho/city_mapping` |
 | `DB_DECISION_MATRIX_TABLE` | `incentive/incentive_decision_matrix` |
 | `DB_ACTIVE_CITY_TABLE` | `incentive/incentive_active_city` |
+| `DB_INCENTIVE_BASE_CONFIG_TABLE` | `incentive/incentive_base_configs` |
 
 ```bash
 cp .env.example .env   # then fill in DB_PASSWORD
@@ -142,6 +143,48 @@ the *Add plan* form picks the type from `mafsho.incentive_type` and the
 business entity from `incentive.business_entities` (both are dropdowns —
 nothing new can be added there), and every active row has
 a *Deactivate* button behind a confirmation popup.
+
+### Base configs of a plan (per-plan allocators)
+
+The *Details* button of a plan opens `/plans/:id`
+(`frontend/src/views/PlanDetail.vue`). Under the plan's facts it lists that
+plan's rows of `incentive.incentive_base_configs`, joined on `plan_id` = the
+plan's primary key, through `backend/app/api/incentive_base_configs.py`:
+
+| Method | Path | Action |
+|--------|------|--------|
+| GET | `/api/incentive-base-configs?plan_id={id}` | Base configs (allocators) of one plan |
+
+The table is set with `DB_INCENTIVE_BASE_CONFIG_TABLE` (default
+`incentive/incentive_base_configs`) and follows the same `schema/table`
+convention. The expected columns are:
+
+```
+id, plan_id, listing_id, allocator_id, rule_name, impact_ratio,
+duration, districts, vendors, batch_size, clustering_method,
+sensitivity_id, sensitivity_group
+```
+
+Rows come back ordered by `listing_id`, then `impact_ratio` descending, then
+`id`, so a listing's dominant allocator leads and its allocators stay adjacent.
+The response also carries `columns`, `summary_columns`, `total` and
+`impact_ratio_sum` (a plan's allocators normally add up to `1`; a plan's rows
+with no ratio are skipped in the sum).
+
+The UI shows only four fields up front — **Listing ID**, **Allocator ID**,
+**Rule name**, **Impact ratio** (as a percentage with the raw value beside it) —
+and keeps the rest of the row (`id`, `duration`, `districts`, `vendors`,
+`batch_size`, `clustering_method`, `sensitivity_id`, `sensitivity_group`) behind
+each row's dropdown. Clicking the row (or its chevron) opens that dropdown;
+*Expand all* / *Collapse all* does it for every allocator at once. Which fields
+are hidden follows the table's real columns, so an added column appears in the
+dropdown without a code change, and a missing one simply disappears.
+
+The section is read-only and loads independently of the plan itself: if the
+lookup fails (for example the table does not exist yet) the plan facts stay on
+screen and the section offers a *Retry*. A plan with no rows shows an empty
+state. Like the other lookups, a `deactivated_at` column — when the table has
+one — hides deactivated rows.
 
 ## Decision Matrix
 

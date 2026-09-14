@@ -28,6 +28,9 @@ DB_INCENTIVE_TYPE_TABLE = os.getenv("DB_INCENTIVE_TYPE_TABLE", "mafsho/incentive
 DB_DECISION_MATRIX_TABLE = os.getenv(
     "DB_DECISION_MATRIX_TABLE", "incentive/incentive_decision_matrix"
 )
+DB_INCENTIVE_BASE_CONFIG_TABLE = os.getenv(
+    "DB_INCENTIVE_BASE_CONFIG_TABLE", "incentive/incentive_base_configs"
+)
 
 # Weather API
 WEATHER_API_URL = os.getenv("weather_ENDPOINT", "http://172.21.88.66:5000/severity-forecast")
