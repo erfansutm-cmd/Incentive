@@ -190,6 +190,20 @@ toast, so adding, editing and deactivating an allocator each flag it at the
 moment it happens rather than only on a later visit. A rounding-sized
 difference (under 0.005%) is treated as exact and not reported.
 
+### Every allocator of a plan shares one listing
+
+`listing_id` is a plan-level value, so all of a plan's allocators must carry the
+same one. The section re-checks this on every load and after every change, from
+the rows it just fetched: if the **active** allocators disagree, the header shows
+a red `N listings` pill and a standing line naming them — *This plan's active
+allocators use 2 different listings (kerman-daily-foodZooket,
+tehran-daily-foodZooket), but a plan has only one.* — and the same message rides
+along in the toast of any write. Writes already refuse to split a plan (a
+per-row `listing_id` is a 409, and adding inherits the plan's listing), so this
+catches rows that got out of step some other way, such as a direct database
+edit. Deactivated rows are left out, since they are not part of the plan's
+active split.
+
 The UI shows only three fields up front — **Allocator ID**, **Rule name**,
 **Impact ratio** (as a percentage with the raw value beside it) — and keeps the
 rest of the row (`id`, `districts`, `vendors`, `batch_size`,
@@ -261,11 +275,12 @@ a confirmation.
 Two fields are not plain text boxes:
 
 - **Clustering method** is a combo (`frontend/src/components/FreeCombo.vue`). It
-  offers the known methods — `kmeans`, `rfmxs`, `dbscan`, `hierarchical`,
-  `none` — and opening it always shows the whole list, so a method already
-  stored can be switched without clearing it first. Anything typed is just as
-  valid: unlisted text is offered back as *Use "…"* and stored as-is, because
-  the column is free text and a new method should not need a code change.
+  offers the two methods in use — `kmeans` and `rfmxs` — and opening it always
+  shows the whole list, so a method already stored can be switched without
+  clearing it first. Anything typed is just as valid: unlisted text is offered
+  back as *Use "…"* and stored as-is, because the column is free text and a new
+  method should not need a code change. A value that is not on the list (an
+  older row's `dbscan`, say) still displays and edits normally.
 - **Sensitivity group** is three boxes (`FloatTriple.vue`), one per group. The
   column holds a JSON array of exactly three floats, so the form only ever
   sends all three or nothing: filling one or two is refused with *'Sensitivity

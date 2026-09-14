@@ -438,6 +438,44 @@ describe('PlanDetail base configs', () => {
     )
   })
 
+  it('flags a plan whose allocators do not share one listing', async () => {
+    const { wrapper } = await setup({
+      configs: [
+        makeRow({ id: 1, impact_ratio: 0.5, listing_id: 'kerman-daily-foodZooket' }),
+        makeRow({ id: 2, impact_ratio: 0.5, listing_id: 'tehran-daily-foodZooket' }),
+      ],
+    })
+    const pill = wrapper.find('.card-head-actions .pill.danger')
+    expect(pill.text()).toBe('2 listings')
+    // the ratios still add up, so only the listing is complained about
+    expect(wrapper.findAll('.impact-warning')).toHaveLength(1)
+    expect(wrapper.find('.impact-warning').text()).toContain(
+      'use 2 different listings (kerman-daily-foodZooket, tehran-daily-foodZooket)'
+    )
+    expect(wrapper.find('.impact-warning').text()).toContain('a plan has only one')
+  })
+
+  it('ignores deactivated rows when checking the listing and the sum', async () => {
+    const { wrapper } = await setup({
+      configs: [
+        makeRow({ id: 1, impact_ratio: 0.6, listing_id: 'kerman-daily-foodZooket' }),
+        makeRow({ id: 2, impact_ratio: 0.4, listing_id: 'kerman-daily-foodZooket' }),
+      ],
+      deactivated: [
+        makeRow({
+          id: 3, impact_ratio: 0.9, listing_id: 'tehran-daily-foodZooket',
+          deactivated_at: '2026-09-12T08:00:00',
+        }),
+      ],
+    })
+    await button(wrapper, 'Show deactivated (1)').trigger('click')
+    await flushPromises()
+    // the retired row's odd listing and ratio are left out of both checks
+    expect(wrapper.find('.pill.danger').exists()).toBe(false)
+    expect(wrapper.findAll('.impact-warning')).toHaveLength(0)
+    expect(wrapper.find('.card-head-actions').text()).toContain('impact 100%')
+  })
+
   it('leaves a plan that adds up to 100% unflagged', async () => {
     const { wrapper } = await setup()
     const pill = wrapper.find('.card-head-actions .pill')
@@ -452,11 +490,11 @@ describe('PlanDetail base configs', () => {
     await rowButtons(wrapper).find((b) => b.text() === 'Edit').trigger('click')
     const method = modal(wrapper).find('#config-clustering_method')
 
-    // the stored value is shown, and the known methods are offered
+    // the stored value is shown, and only the two known methods are offered
     expect(method.element.value).toBe('kmeans')
     await method.trigger('focus')
     await flushPromises()
-    expect(optionNames(wrapper)).toContain('rfmxs')
+    expect(optionNames(wrapper)).toEqual(['kmeans', 'rfmxs'])
 
     await method.setValue('rfmxs')
     await flushPromises()

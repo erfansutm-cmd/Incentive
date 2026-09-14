@@ -30,8 +30,9 @@ const ROW_FIELDS = [
   'batch_size', 'clustering_method', 'sensitivity_id', 'sensitivity_group',
 ]
 const REQUIRED_FIELDS = ['allocator_id', 'rule_name', 'impact_ratio']
-// Clustering method is free text, but these are the ones worth offering.
-const CLUSTERING_OPTIONS = ['kmeans', 'rfmxs', 'dbscan', 'hierarchical', 'none']
+// Clustering method is free text: these two are offered as a starting point,
+// but anything the user types is stored as-is.
+const CLUSTERING_OPTIONS = ['kmeans', 'rfmxs']
 // sensitivity_group is either nothing or exactly three floats, stored as JSON.
 const TRIPLE_FIELD = 'sensitivity_group'
 // Columns holding a JSON list of strings (districts, vendors). The stored JSON
@@ -117,6 +118,27 @@ const impactMessage = computed(() => {
   return (
     `The impact ratios of this plan's active allocators add up to ` +
     `${ratioText(impactRatioSum.value)}, not 100% — ${short}.`
+  )
+})
+
+// A plan has exactly one listing, so its allocators must all carry the same
+// one. Derived from the loaded rows, so it re-checks on every refresh and
+// after every change.
+const listingValues = computed(() => {
+  const seen = []
+  for (const row of activeConfigs.value) {
+    const value = String(row.listing_id ?? '').trim()
+    if (value && !seen.includes(value)) seen.push(value)
+  }
+  return seen
+})
+const listingIsWrong = computed(() => listingValues.value.length > 1)
+const listingMessage = computed(() => {
+  if (!listingIsWrong.value) return ''
+  return (
+    `This plan's active allocators use ${listingValues.value.length} different listings ` +
+    `(${listingValues.value.join(', ')}), but a plan has only one. ` +
+    `Use \u201cEdit for all\u201d to set them all to the same listing.`
   )
 })
 
@@ -270,8 +292,9 @@ function notify(text, kind = 'ok') {
 // Report the result of a write, plus a warning when the plan's active
 // allocators no longer add up to 100%.
 function notifyChange(text) {
-  if (impactIsWrong.value) {
-    notify(`${text} ${impactMessage.value}`, 'warn')
+  const warnings = [impactMessage.value, listingMessage.value].filter(Boolean)
+  if (warnings.length) {
+    notify(`${text} ${warnings.join(' ')}`, 'warn')
   } else {
     notify(text)
   }
@@ -763,6 +786,13 @@ onMounted(load)
           >
             impact {{ ratioText(impactRatioSum) }}
           </span>
+          <span
+            v-if="listingIsWrong"
+            class="pill danger"
+            :title="listingMessage"
+          >
+            {{ listingValues.length }} listings
+          </span>
           <span v-if="!configsLoading && !configsError" class="pill">
             {{ activeCount }} allocator{{ activeCount === 1 ? '' : 's' }}
           </span>
@@ -819,6 +849,9 @@ onMounted(load)
 
       <p v-if="impactIsWrong && !configsLoading && !configsError" class="impact-warning">
         {{ impactMessage }}
+      </p>
+      <p v-if="listingIsWrong && !configsLoading && !configsError" class="impact-warning">
+        {{ listingMessage }}
       </p>
 
       <div v-if="configsLoading" class="config-body">
@@ -906,7 +939,6 @@ onMounted(load)
                   >
                     Activate
                   </button>
-                  <span v-if="isDeactivated(row)" class="row-note">Deactivated</span>
                 </td>
               </tr>
               <tr v-if="isOpen(row, i)" class="detail-row">
@@ -1403,16 +1435,16 @@ tbody td.expand-col .chevron-disc {
   margin: 0 auto;
   padding: 0;
 }
+/* width:1% + nowrap makes the column exactly as wide as its widest set of
+   buttons, so the actions sit flush right and line up down the whole table
+   instead of drifting with the other columns. */
 .actions-col {
+  width: 1%;
   text-align: right;
   white-space: nowrap;
 }
 .actions-col .btn + .btn {
   margin-left: 0.4rem;
-}
-.row-note {
-  color: var(--muted);
-  font-size: 0.8rem;
 }
 .mono-cell {
   font-variant-numeric: tabular-nums;
