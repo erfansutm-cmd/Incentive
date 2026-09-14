@@ -452,10 +452,30 @@ pip install -r requirements-dev.txt
 python -m unittest discover -s tests -v
 ```
 
+Frontend component tests run in jsdom against a mocked `/api`
+(`frontend/tests/unit/`, `frontend/tests/unit/api-mock.js`), so they need no
+browser, no backend and no database:
+
+```bash
+cd frontend
+npm ci
+npm test          # one run
+npm run test:watch
+```
+
+They mount the real `PlanDetail.vue` and cover the plan-level listing/duration
+strip, that `plan_id` / `listing_id` / `duration` stay out of a row, the
+select-only lookup fields (typing filters but never becomes a value), in-place
+edits with their logged previous values, required vs optional markers, list
+columns as chips and as a tag editor, deactivation behind a confirmation,
+add-allocator inheritance, lookup outages, write failures, change history and
+its retry, and the empty/error states.
+
 Browser tests use Playwright with intercepted API responses (no real database
 writes). They cover inline city-group accordions, the custom score-type picker,
 nearest-step prefill, editable creation scores, required float values, nullable
-three-value buckets, concurrent changes, separate history, and mobile/keyboard behavior.
+three-value buckets, concurrent changes, separate history, mobile/keyboard
+behavior, and the same plan-detail flows end to end.
 
 ```bash
 cd frontend
@@ -467,7 +487,8 @@ npm run build
 
 The tests start Vite automatically, or reuse it when already running. An
 existing Chromium installation can be used by setting
-`PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`.
+`PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`. Playwright's `testDir` is `tests/` and it
+ignores `tests/unit/`, so the two suites never pick each other up.
 
 ## Business Entities CRUD
 
