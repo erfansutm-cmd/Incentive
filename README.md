@@ -45,6 +45,7 @@ configured through a root `.env` file:
 | `DB_DECISION_MATRIX_TABLE` | `incentive/incentive_decision_matrix` |
 | `DB_ACTIVE_CITY_TABLE` | `incentive/incentive_active_city` |
 | `DB_INCENTIVE_BASE_CONFIG_TABLE` | `incentive/incentive_base_configs` |
+| `DB_INCENTIVE_BASE_CONFIG_LOG_TABLE` | `incentive/incentive_base_configs_logs` |
 
 ```bash
 cp .env.example .env   # then fill in DB_PASSWORD
@@ -153,7 +154,10 @@ plan's primary key, through `backend/app/api/incentive_base_configs.py`:
 
 | Method | Path | Action |
 |--------|------|--------|
-| GET | `/api/incentive-base-configs?plan_id={id}` | Base configs (allocators) of one plan |
+| GET | `/api/incentive-base-configs?plan_id={id}[&include_deactivated=true]` | Base configs (allocators) of one plan |
+| GET | `/api/incentive-base-configs/{id}/logs` | Logged previous versions of one config, newest first |
+| PUT | `/api/incentive-base-configs/{id}` | Update a config; the row as it was before the change is logged first |
+| POST | `/api/incentive-base-configs/{id}/deactivate` | Set `deactivated_at = NOW()`; the row is logged first |
 
 The table is set with `DB_INCENTIVE_BASE_CONFIG_TABLE` (default
 `incentive/incentive_base_configs`) and follows the same `schema/table`
@@ -162,29 +166,73 @@ convention. The expected columns are:
 ```
 id, plan_id, listing_id, allocator_id, rule_name, impact_ratio,
 duration, districts, vendors, batch_size, clustering_method,
-sensitivity_id, sensitivity_group
+sensitivity_id, sensitivity_group, created_at, updated_at, deactivated_at
 ```
 
 Rows come back ordered by `listing_id`, then `impact_ratio` descending, then
 `id`, so a listing's dominant allocator leads and its allocators stay adjacent.
-The response also carries `columns`, `summary_columns`, `total` and
-`impact_ratio_sum` (a plan's allocators normally add up to `1`; a plan's rows
-with no ratio are skipped in the sum).
+The response also carries `columns`, `summary_columns`, `total`,
+`active_count`, `deactivated_count` and `impact_ratio_sum` (a plan's *active*
+allocators normally add up to `1`; deactivated rows and rows without a ratio
+are left out of the sum).
 
 The UI shows only four fields up front — **Listing ID**, **Allocator ID**,
 **Rule name**, **Impact ratio** (as a percentage with the raw value beside it) —
 and keeps the rest of the row (`id`, `duration`, `districts`, `vendors`,
-`batch_size`, `clustering_method`, `sensitivity_id`, `sensitivity_group`) behind
-each row's dropdown. Clicking the row (or its chevron) opens that dropdown;
-*Expand all* / *Collapse all* does it for every allocator at once. Which fields
-are hidden follows the table's real columns, so an added column appears in the
-dropdown without a code change, and a missing one simply disappears.
+`batch_size`, `clustering_method`, `sensitivity_id`, `sensitivity_group`,
+`created_at`, `updated_at`, `deactivated_at`) behind each row's dropdown.
+Clicking the row (or its chevron) opens that dropdown; *Expand all* /
+*Collapse all* does it for every allocator at once. Which fields are hidden
+follows the table's real columns, so an added column appears in the dropdown
+without a code change, and a missing one simply disappears. Columns ending in
+`_at` are rendered as readable dates (`Sep 14, 2026, 10:11 AM`), never as raw
+ISO strings.
 
-The section is read-only and loads independently of the plan itself: if the
-lookup fails (for example the table does not exist yet) the plan facts stay on
-screen and the section offers a *Retry*. A plan with no rows shows an empty
-state. Like the other lookups, a `deactivated_at` column — when the table has
-one — hides deactivated rows.
+Deactivated configs are left out of the list until *Show deactivated (N)* is
+pressed; they then join the table greyed out, with a *Deactivated* tag, while
+the allocator count and the impact share keep describing the active rows.
+
+The section loads independently of the plan itself: if the lookup fails (for
+example the table does not exist yet) the plan facts stay on screen and the
+section offers a *Retry*. A plan with no rows shows an empty state.
+
+### Change log (previous version before every change)
+
+`incentive.incentive_base_configs_logs`, set with
+`DB_INCENTIVE_BASE_CONFIG_LOG_TABLE`, holds the row as it was *before* a change:
+
+```
+log_id, config_id, plan_id, listing_id, allocator_id, rule_name, impact_ratio,
+duration, districts, vendors, batch_size, clustering_method,
+sensitivity_id, sensitivity_group, created_at, updated_at, deactivated_at,
+changed_at
+```
+
+Every `PUT` and every deactivation copies the current row into the log table
+(`config_id` = the config's id, `changed_at` = `NOW()`, `log_id`
+auto-incremented) and applies the change **in the same transaction**, so a
+failed update leaves no orphan log row and no unlogged change. Only columns
+the log table really has are copied, so a column added to both tables is
+logged without a code change.
+
+- A `PUT` whose values are all unchanged writes **no** log row and answers
+  `{"logged": false, "message": "No changes to record."}`; a real change
+  answers with the `log_id` and a `changes` map of `{field: {from, to}}` using
+  the stored values (`0.4` and `"0.4000"` count as equal).
+- `created_at`, `updated_at`, `deactivated_at` and `plan_id` are not settable
+  through `PUT`. `updated_at` is stamped with `NOW()` by the server;
+  deactivation goes through its own endpoint. Deactivating an already
+  deactivated config changes nothing and logs nothing.
+- **Writes need the log table to exist.** If it is missing the request fails
+  with its name in the message and the config is left untouched, rather than
+  silently losing history. Reads work without it — the page shows the error
+  inside the row instead.
+
+In the UI each row's dropdown has a **Change history** disclosure: it fetches
+that config's log rows on first open (nothing is requested before) and lists
+them newest first, each with its `changed_at` and the full previous row
+(`log_id`, `config_id` and `changed_at` are not repeated as fields). A failed
+history lookup offers a *Retry* and never affects the rest of the page.
 
 ## Decision Matrix
 

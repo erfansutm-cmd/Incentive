@@ -15,14 +15,21 @@ const cityName = ref('')
 // One row per allocator of the plan, joined on plan_id. Only the four summary
 // fields are shown up front; the rest of a row sits behind its dropdown.
 const SUMMARY_FIELDS = ['listing_id', 'allocator_id', 'rule_name', 'impact_ratio']
+// Log columns that only identify the entry; the header already shows changed_at.
+const HISTORY_HIDDEN = ['log_id', 'config_id', 'changed_at']
 
 const configs = ref([])
 const configColumns = ref([])
 const summaryColumns = ref([])
 const impactRatioSum = ref(null)
+const activeCount = ref(0)
+const deactivatedCount = ref(0)
+const showDeactivated = ref(false)
 const configsLoading = ref(true)
 const configsError = ref('')
 const expanded = ref(new Set())
+// row key -> { open, loading, error, rows, columns } of its logged versions
+const histories = ref({})
 
 const isActive = computed(() => {
   if (!plan.value) return false
@@ -73,6 +80,11 @@ function toggleAll() {
     : new Set(configs.value.map((row, i) => rowKey(row, i)))
 }
 
+function isDeactivated(row) {
+  const v = row?.deactivated_at
+  return v !== null && v !== undefined && v !== ''
+}
+
 function colLabel(name) {
   return String(name)
     .split('_')
@@ -95,7 +107,7 @@ function cellText(value) {
   return String(value)
 }
 
-// "2026-09-02T15:40:50" -> "Sep 2, 2026, 3:40 PM"
+// "2026-09-14T10:11:16" -> "Sep 14, 2026, 10:11 AM"
 function formatDate(value) {
   if (!value) return ''
   const d = new Date(value)
@@ -106,20 +118,100 @@ function formatDate(value) {
   }).format(d)
 }
 
-async function loadConfigs() {
+// Timestamp columns read as dates, everything else as plain text.
+function displayValue(field, value) {
+  if (String(field).endsWith('_at')) return formatDate(value) || '—'
+  return cellText(value)
+}
+
+// --- change history (incentive_base_configs_logs) ---------------------------
+// Each logged row is the config as it was *before* a change. Loaded lazily the
+// first time a row's history is opened.
+function historyOf(row, i) {
+  return histories.value[rowKey(row, i)]
+}
+
+function historyFields(entry) {
+  const names = (entry?.columns || []).length
+    ? entry.columns.map((c) => c.name)
+    : Object.keys(entry?.rows?.[0] || {})
+  return names.filter((n) => !HISTORY_HIDDEN.includes(n))
+}
+
+function historyLabel(row, i) {
+  const entry = historyOf(row, i)
+  if (entry?.loading) return 'Loading history…'
+  if (entry?.rows?.length) return entry.open ? 'Hide change history' : `Change history (${entry.rows.length})`
+  return 'Change history'
+}
+
+function setHistory(key, entry) {
+  histories.value = { ...histories.value, [key]: entry }
+}
+
+async function loadHistory(row, i) {
+  const key = rowKey(row, i)
+  setHistory(key, { open: true, loading: true, error: '', rows: [], columns: [] })
+  try {
+    const res = await fetch(
+      `/api/incentive-base-configs/${encodeURIComponent(row.id)}/logs`
+    )
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.message || data.detail || 'Failed to load change history')
+    setHistory(key, {
+      open: true,
+      loading: false,
+      error: '',
+      rows: data.rows || [],
+      columns: data.columns || [],
+    })
+  } catch (e) {
+    setHistory(key, { open: true, loading: false, error: e.message, rows: [], columns: [] })
+  }
+}
+
+async function toggleHistory(row, i) {
+  if (row.id === undefined || row.id === null) return
+  const key = rowKey(row, i)
+  const entry = histories.value[key]
+  if (entry?.loading) return
+  // Closing a loaded panel never re-fetches.
+  if (entry?.open && !entry.error) {
+    setHistory(key, { ...entry, open: false })
+    return
+  }
+  // A successful load is kept, so reopening is instant.
+  if (entry && !entry.error) {
+    setHistory(key, { ...entry, open: true })
+    return
+  }
+  await loadHistory(row, i)
+}
+
+// Retry always goes back to the API, even with the panel already open.
+function retryHistory(row, i) {
+  if (row.id === undefined || row.id === null) return Promise.resolve()
+  return loadHistory(row, i)
+}
+
+async function loadConfigs(includeDeactivated = false) {
   configsLoading.value = true
   configsError.value = ''
   expanded.value = new Set()
+  histories.value = {}
   try {
-    const res = await fetch(
-      `/api/incentive-base-configs?plan_id=${encodeURIComponent(planId.value)}`
-    )
+    const params = new URLSearchParams({ plan_id: String(planId.value) })
+    if (includeDeactivated) params.set('include_deactivated', 'true')
+    const res = await fetch(`/api/incentive-base-configs?${params.toString()}`)
     const data = await res.json()
     if (!res.ok) throw new Error(data.message || data.detail || 'Failed to load base configs')
     configs.value = data.rows || []
     configColumns.value = data.columns || []
     summaryColumns.value = data.summary_columns || []
     impactRatioSum.value = data.impact_ratio_sum ?? null
+    activeCount.value = data.active_count ?? configs.value.length
+    deactivatedCount.value = data.deactivated_count ?? 0
+    showDeactivated.value = Boolean(data.include_deactivated)
   } catch (e) {
     configs.value = []
     configsError.value = e.message
@@ -128,12 +220,20 @@ async function loadConfigs() {
   }
 }
 
+function retryConfigs() {
+  return loadConfigs(showDeactivated.value)
+}
+
+function toggleDeactivated() {
+  return loadConfigs(!showDeactivated.value)
+}
+
 async function load() {
   loading.value = true
   error.value = ''
   // The base configs are a separate section: a failure there must not hide the
   // plan itself, so it is loaded on its own track.
-  const configsPromise = loadConfigs()
+  const configsPromise = loadConfigs(false)
   try {
     const [planRes, typesRes, citiesRes] = await Promise.all([
       fetch(`/api/city-plan-mappings/${encodeURIComponent(planId.value)}`),
@@ -257,10 +357,6 @@ onMounted(load)
           <div>
             <p class="eyebrow">Base configs</p>
             <h2>Allocators</h2>
-            <p class="hint">
-              Rows of <code>incentive_base_configs</code> for plan_id
-              {{ planId }} — open a row to see its other fields.
-            </p>
           </div>
         </div>
         <div class="card-head-actions">
@@ -268,8 +364,18 @@ onMounted(load)
             impact {{ ratioText(impactRatioSum) }}
           </span>
           <span v-if="!configsLoading && !configsError" class="pill">
-            {{ configs.length }} allocator{{ configs.length === 1 ? '' : 's' }}
+            {{ activeCount }} allocator{{ activeCount === 1 ? '' : 's' }}
           </span>
+          <span v-if="showDeactivated && deactivatedCount" class="pill plain">
+            {{ deactivatedCount }} deactivated
+          </span>
+          <button
+            v-if="deactivatedCount && !configsLoading && !configsError"
+            class="btn btn-ghost btn-sm"
+            @click="toggleDeactivated"
+          >
+            {{ showDeactivated ? 'Hide deactivated' : `Show deactivated (${deactivatedCount})` }}
+          </button>
           <button
             v-if="configs.length > 1"
             class="btn btn-ghost btn-sm"
@@ -286,11 +392,17 @@ onMounted(load)
       <div v-else-if="configsError" class="config-body">
         <div class="config-error">
           <span>{{ configsError }}</span>
-          <button class="btn btn-ghost btn-sm" @click="loadConfigs">Retry</button>
+          <button class="btn btn-ghost btn-sm" @click="retryConfigs">Retry</button>
         </div>
       </div>
       <div v-else-if="!configs.length" class="config-body">
-        <p class="config-empty">No base configs for this plan yet.</p>
+        <p class="config-empty">
+          {{
+            deactivatedCount
+              ? 'No active base configs for this plan.'
+              : 'No base configs for this plan yet.'
+          }}
+        </p>
       </div>
       <div v-else class="table-scroll">
         <table class="config-table">
@@ -304,7 +416,7 @@ onMounted(load)
             <template v-for="(row, i) in configs" :key="rowKey(row, i)">
               <tr
                 class="config-row"
-                :class="{ expanded: isOpen(row, i) }"
+                :class="{ expanded: isOpen(row, i), 'is-deactivated': isDeactivated(row) }"
                 title="Click to see the other fields"
                 @click="toggleRow(row, i)"
               >
@@ -323,14 +435,20 @@ onMounted(load)
                     </svg>
                   </button>
                 </td>
-                <td v-for="f in tableFields" :key="f" :class="{ 'mono-cell': f !== 'impact_ratio' }">
+                <td v-for="(f, fi) in tableFields" :key="f" :class="{ 'mono-cell': f !== 'impact_ratio' }">
                   <template v-if="f === 'impact_ratio'">
                     <span class="ratio">{{ ratioText(row[f]) }}</span>
                     <span v-if="row[f] !== null && row[f] !== undefined && row[f] !== ''" class="ratio-raw">
                       {{ row[f] }}
                     </span>
                   </template>
-                  <template v-else>{{ cellText(row[f]) }}</template>
+                  <template v-else>
+                    {{ cellText(row[f]) }}
+                    <span
+                      v-if="fi === 0 && isDeactivated(row)"
+                      class="tag-off"
+                    >Deactivated</span>
+                  </template>
                 </td>
               </tr>
               <tr v-if="isOpen(row, i)" class="detail-row">
@@ -338,10 +456,58 @@ onMounted(load)
                   <dl v-if="detailFields.length" class="detail-facts">
                     <div v-for="f in detailFields" :key="f">
                       <dt>{{ colLabel(f) }}</dt>
-                      <dd>{{ cellText(row[f]) }}</dd>
+                      <dd>{{ displayValue(f, row[f]) }}</dd>
                     </div>
                   </dl>
                   <p v-else class="config-loading">This row has no other fields.</p>
+
+                  <!-- logged previous versions of this row -->
+                  <div v-if="row.id !== undefined && row.id !== null" class="history">
+                    <button
+                      type="button"
+                      class="btn btn-ghost btn-sm"
+                      :aria-expanded="Boolean(historyOf(row, i)?.open)"
+                      :disabled="Boolean(historyOf(row, i)?.loading)"
+                      @click="toggleHistory(row, i)"
+                    >
+                      {{ historyLabel(row, i) }}
+                    </button>
+
+                    <p v-if="historyOf(row, i)?.loading" class="config-loading">
+                      Loading change history…
+                    </p>
+                    <div v-else-if="historyOf(row, i)?.error" class="config-error">
+                      <span>{{ historyOf(row, i).error }}</span>
+                      <button class="btn btn-ghost btn-sm" @click="retryHistory(row, i)">
+                        Retry
+                      </button>
+                    </div>
+                    <template v-else-if="historyOf(row, i)?.open">
+                      <p v-if="!historyOf(row, i).rows.length" class="config-loading">
+                        No previous versions recorded yet.
+                      </p>
+                      <ol v-else class="history-list">
+                        <li
+                          v-for="(entry, li) in historyOf(row, i).rows"
+                          :key="entry.log_id ?? li"
+                          class="history-item"
+                        >
+                          <div class="history-head">
+                            <span class="history-when">
+                              {{ formatDate(entry.changed_at) || '—' }}
+                            </span>
+                            <span class="pill plain">previous values</span>
+                          </div>
+                          <dl class="detail-facts">
+                            <div v-for="f in historyFields(historyOf(row, i))" :key="f">
+                              <dt>{{ colLabel(f) }}</dt>
+                              <dd>{{ displayValue(f, entry[f]) }}</dd>
+                            </div>
+                          </dl>
+                        </li>
+                      </ol>
+                    </template>
+                  </div>
                 </td>
               </tr>
             </template>
@@ -462,12 +628,6 @@ onMounted(load)
   margin: 0;
   font-size: 1.05rem;
 }
-.config-section code {
-  background: var(--surface-2);
-  padding: 0.05rem 0.35rem;
-  border-radius: 0.3rem;
-  color: var(--accent-strong);
-}
 .config-body {
   padding: 1rem 1.25rem 1.25rem;
 }
@@ -535,6 +695,9 @@ table.config-table {
 .config-table tbody tr.config-row.expanded td:first-child {
   box-shadow: inset 3px 0 0 var(--accent);
 }
+.config-table tbody tr.config-row.is-deactivated td {
+  color: var(--inactive-text);
+}
 .expand-col {
   width: 3rem;
   text-align: center;
@@ -555,11 +718,27 @@ tbody td.expand-col .chevron-disc {
   color: var(--accent-strong);
   font-variant-numeric: tabular-nums;
 }
+.is-deactivated .ratio {
+  color: var(--inactive-text);
+}
 .ratio-raw {
   margin-left: 0.4rem;
   color: var(--muted);
   font-size: 0.8rem;
   font-variant-numeric: tabular-nums;
+}
+.tag-off {
+  display: inline-block;
+  margin-left: 0.45rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: #eceff0;
+  color: #6b7c78;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
 }
 
 /* the dropdown under an open row, tinted like the other expansion panels */
@@ -613,6 +792,48 @@ tbody tr.detail-row:hover td {
     animation: none;
   }
 }
+
+/* change history: the row's logged previous versions */
+.history {
+  margin-top: 0.9rem;
+  padding-top: 0.85rem;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  align-items: flex-start;
+}
+.history-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.7rem;
+  width: 100%;
+}
+.history-item {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-left: 3px solid #cfe0d7;
+  border-radius: 0.6rem;
+  padding: 0.7rem 0.8rem;
+}
+.history-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.6rem;
+}
+.history-when {
+  font-weight: 650;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+.history .detail-facts {
+  animation: none;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;

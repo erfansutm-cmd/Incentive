@@ -31,6 +31,9 @@ DB_DECISION_MATRIX_TABLE = os.getenv(
 DB_INCENTIVE_BASE_CONFIG_TABLE = os.getenv(
     "DB_INCENTIVE_BASE_CONFIG_TABLE", "incentive/incentive_base_configs"
 )
+DB_INCENTIVE_BASE_CONFIG_LOG_TABLE = os.getenv(
+    "DB_INCENTIVE_BASE_CONFIG_LOG_TABLE", "incentive/incentive_base_configs_logs"
+)
 
 # Weather API
 WEATHER_API_URL = os.getenv("weather_ENDPOINT", "http://172.21.88.66:5000/severity-forecast")
