@@ -180,9 +180,46 @@ test('a row can be deactivated behind a confirmation', async ({ page }) => {
   await section(page).getByRole('button', { name: 'Show deactivated (1)', exact: true }).click()
   const off = allocatorRows(page).last()
   await expect(off).toHaveClass(/is-deactivated/)
-  // a deactivated row offers no actions
+  // a deactivated row cannot be edited, but it can be brought back
   await expect(off.getByRole('button', { name: 'Edit', exact: true })).toHaveCount(0)
   await expect(off.getByRole('button', { name: 'Deactivate', exact: true })).toHaveCount(0)
+  await expect(off.getByRole('button', { name: 'Activate', exact: true })).toBeVisible()
+})
+
+test('a deactivated row can be activated again, keeping its history', async ({ page }) => {
+  const state = await mockPlanDetail(page, {
+    deactivated: [
+      makeConfig({
+        id: 3, allocator_id: 'oldAllocator', rule_name: 'old-rule',
+        impact_ratio: 0.3, deactivated_at: '2026-09-12T08:00:00',
+      }),
+    ],
+  })
+  await page.goto('/plans/1')
+  await section(page).getByRole('button', { name: 'Show deactivated (1)', exact: true }).click()
+  const off = allocatorRows(page).last()
+  await expect(off).toHaveClass(/is-deactivated/)
+
+  await off.getByRole('button', { name: 'Activate', exact: true }).click()
+  await expect(dialog(page)).toContainText('Activate allocator')
+  await expect(dialog(page)).toContainText('Nothing is deleted')
+  await dialogButton(page, 'Activate').click()
+
+  await expect(dialog(page)).toHaveCount(0)
+  expect(state.writes).toEqual([{ kind: 'activate', id: 3 }])
+  // it is an active row again, with the same id and its logged history attached
+  const back = allocatorRows(page).filter({ hasText: 'oldAllocator' }).first()
+  await expect(back).not.toHaveClass(/is-deactivated/)
+  await expect(back.getByRole('button', { name: 'Edit', exact: true })).toBeVisible()
+  await expect(back.getByRole('button', { name: 'Deactivate', exact: true })).toBeVisible()
+  await expect(section(page).getByText('3 allocators')).toBeVisible()
+
+  // the row kept its id, so its history — the deactivation included — is intact
+  await back.click()
+  const detail = detailRows(page).first()
+  await detail.getByRole('button', { name: 'Change history', exact: true }).click()
+  await expect(detail.locator('.history-item')).toHaveCount(1)
+  await expect(detail.locator('.history-item').first()).toContainText('previous values')
 })
 
 test('adding an allocator searches the available allocators and rules', async ({ page }) => {

@@ -187,6 +187,27 @@ export async function mockPlanDetail(page, options = {}) {
       return reply({ status: 'ok', logged: true, active: false })
     }
 
+    const activate = url.pathname.match(/^\/api\/incentive-base-configs\/(\d+)\/activate$/)
+    if (activate && method === 'POST') {
+      state.writes.push({ kind: 'activate', id: Number(activate[1]) })
+      if (state.writeError) return fail(state.writeError, 500)
+      const row = state.deactivated.find((r) => r.id === Number(activate[1]))
+      if (!row) return fail('Base config not found.', 404)
+      // the row as it was goes to the log first, exactly like every other write
+      state.logs[row.id] = [
+        { ...row, log_id: 700 + row.id, config_id: row.id, changed_at: state.now },
+        ...(state.logs[row.id] || []),
+      ]
+      row.deactivated_at = null
+      row.updated_at = state.now
+      state.deactivated = state.deactivated.filter((r) => r.id !== row.id)
+      state.configs.push(row)
+      return reply({
+        status: 'ok', message: 'Base config activated successfully.', logged: true,
+        log_id: state.logs[row.id][0].log_id, active: true, row: structuredClone(row),
+      })
+    }
+
     if (url.pathname === '/api/incentive-base-configs' && method === 'POST') {
       state.writes.push({ kind: 'add', body })
       if (state.writeError) return fail(state.writeError, 500)
