@@ -241,17 +241,16 @@ shape they answer with into a plain list of names, filter on `q` and cap at
 |--------|------|----------|
 | GET | `/api/incentive-lookups/allocators?q=&limit=` | `ALLOCATOR_NAMES_URL` |
 | GET | `/api/incentive-lookups/rules?q=&limit=` | `RULE_NAMES_URL` |
-| GET | `/api/incentive-lookups/listings?city=&q=&limit=` | `LISTING_QUERIES_URL/{city}` |
+| GET | `/api/incentive-lookups/listings?q=&limit=` | `LISTING_QUERIES_URL` |
 
 ```dotenv
 ALLOCATOR_NAMES_URL=http://172.21.88.174:5000/allocator/names
 RULE_NAMES_URL=http://172.21.88.174:5000/rules/names
-LISTING_QUERIES_URL=http://172.21.88.148:5000/queries
+LISTING_QUERIES_URL=http://172.21.88.148:5000/queries/all
 ```
 
-Listings are per city, so the UI passes the plan's city name (falling back to
-its `city_id`); without one the listing field only takes typed text. The
-normalizer accepts a bare list of strings, or objects under `names`, `data`,
+Listings come from one endpoint for every city (`/queries/all`), so the listing
+field offers all of them and narrows them as you type. The normalizer accepts a bare list of strings, or objects under `names`, `data`,
 `results`, `result`, `items`, `rows`, `response`, `queries`, `allocators`,
 `rules` or `listings`, and reads each entry's `name`, `id`, `value`, `label`,
 `title`, `query`, `allocator`, `rule` or `listing` key. An unreachable or

@@ -9,8 +9,6 @@ const props = defineProps({
   modelValue: { type: [String, Number], default: '' },
   // 'allocators' | 'rules' | 'listings'
   source: { type: String, required: true },
-  // listings are looked up per city; without one the field only takes text
-  city: { type: String, default: '' },
   noun: { type: String, default: 'value' },
   placeholder: { type: String, default: 'Start typing to search…' },
   disabled: { type: Boolean, default: false },
@@ -37,16 +35,13 @@ watch(
 )
 
 const listId = computed(() => `${props.id}-options`)
-const searchable = computed(() => props.source !== 'listings' || Boolean(props.city))
 
 async function search(term) {
-  if (!searchable.value) return
   const mine = ++seq
   loading.value = true
   error.value = ''
   try {
     const params = new URLSearchParams({ q: term, limit: '50' })
-    if (props.source === 'listings') params.set('city', props.city)
     const res = await fetch(`/api/incentive-lookups/${props.source}?${params.toString()}`)
     const data = await res.json()
     if (mine !== seq) return // a newer keystroke already won
@@ -68,12 +63,10 @@ function onInput() {
   emit('update:modelValue', text.value)
   highlight.value = -1
   if (timer) clearTimeout(timer)
-  if (!searchable.value) return
   timer = setTimeout(() => search(text.value.trim()), 200)
 }
 
 function onFocus() {
-  if (!searchable.value) return
   if (!options.value.length) search(text.value.trim())
   else open.value = true
 }
@@ -145,9 +138,6 @@ function onKeydown(event) {
       {{ noun }} lookup unavailable — type the {{ noun }} manually.
     </p>
     <p v-else-if="loading" class="hint">Searching {{ noun }}s…</p>
-    <p v-else-if="!searchable" class="hint">
-      No city to look {{ noun }}s up for — type the {{ noun }} manually.
-    </p>
   </div>
 </template>
 

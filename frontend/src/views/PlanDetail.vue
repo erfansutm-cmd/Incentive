@@ -95,8 +95,6 @@ const sharedValues = computed(() => {
   }
 })
 
-// Listings are looked up per city; fall back to the raw city_id.
-const listingCity = computed(() => cityName.value || plan.value?.city_id || '')
 
 function rowKey(row, i) {
   return row.id !== undefined && row.id !== null ? String(row.id) : `idx-${i}`
@@ -817,9 +815,8 @@ onMounted(load)
             id="plan-listing"
             v-model="planForm.listing_id"
             source="listings"
-            :city="listingCity"
             noun="listing"
-            placeholder="Search the listings of this city…"
+            placeholder="Search the available listings…"
           />
         </label>
         <label class="field" for="plan-duration">
@@ -865,9 +862,8 @@ onMounted(load)
               id="add-listing"
               v-model="configForm.listing_id"
               source="listings"
-              :city="listingCity"
               noun="listing"
-              placeholder="Search the listings of this city…"
+              placeholder="Search the available listings…"
             />
           </label>
           <label class="field" for="add-duration">

@@ -39,8 +39,8 @@ DB_INCENTIVE_BASE_CONFIG_LOG_TABLE = os.getenv(
 # The browser never calls these directly; /api/incentive-lookups proxies them.
 ALLOCATOR_NAMES_URL = os.getenv("ALLOCATOR_NAMES_URL", "http://172.21.88.174:5000/allocator/names")
 RULE_NAMES_URL = os.getenv("RULE_NAMES_URL", "http://172.21.88.174:5000/rules/names")
-# Listings ("queries") are fetched per city: {LISTING_QUERIES_URL}/{city}
-LISTING_QUERIES_URL = os.getenv("LISTING_QUERIES_URL", "http://172.21.88.148:5000/queries")
+# All available listings ("queries"), for every city at once
+LISTING_QUERIES_URL = os.getenv("LISTING_QUERIES_URL", "http://172.21.88.148:5000/queries/all")
 
 # Weather API
 WEATHER_API_URL = os.getenv("weather_ENDPOINT", "http://172.21.88.66:5000/severity-forecast")

@@ -33,7 +33,7 @@ class LookupAPITests(unittest.TestCase):
         for name, value in {
             "ALLOCATOR_NAMES_URL": "http://allocators.test/allocator/names",
             "RULE_NAMES_URL": "http://rules.test/rules/names",
-            "LISTING_QUERIES_URL": "http://listings.test/queries",
+            "LISTING_QUERIES_URL": "http://listings.test/queries/all",
         }.items():
             patcher = patch.object(lookups, name, value)
             patcher.start()
@@ -94,21 +94,34 @@ class LookupAPITests(unittest.TestCase):
         self.assertEqual(data["matched"], 50)
         self.assertTrue(data["truncated"])
 
-    def test_listings_are_fetched_per_city(self):
-        self.get.return_value = response(["tehran-daily-foodZooket", "tehran-weekly-foodZooket"])
-        data = self.read("listings", city="tehran")
-        self.assertEqual(self.get.call_args[0][0], "http://listings.test/queries/tehran")
+    def test_listings_come_from_the_single_all_endpoint(self):
+        self.get.return_value = response(
+            ["tehran-daily-foodZooket", "kerman-daily-foodZooket", "kish-daily-foodZooket"]
+        )
+        data = self.read("listings")
+        # one URL for every city, no path segment per city
+        self.assertEqual(self.get.call_args[0][0], "http://listings.test/queries/all")
         self.assertEqual(data["kind"], "listings")
-        self.assertEqual([r["name"] for r in data["rows"]],
-                         ["tehran-daily-foodZooket", "tehran-weekly-foodZooket"])
+        self.assertEqual(
+            [r["name"] for r in data["rows"]],
+            ["tehran-daily-foodZooket", "kerman-daily-foodZooket", "kish-daily-foodZooket"],
+        )
 
-    def test_listings_require_a_city(self):
-        for params in [{}, {"city": ""}, {"city": "   "}]:
-            with self.subTest(params=params):
-                res = self.client.get(f"{BASE}/listings", params=params)
-                self.assertEqual(res.status_code, 400, res.text)
-                self.assertIn("city", res.json()["message"])
-        self.get.assert_not_called()
+    def test_listings_need_no_city_and_still_filter_on_q(self):
+        self.get.return_value = response(
+            ["tehran-daily-foodZooket", "kerman-daily-foodZooket", "kish-daily-foodZooket"]
+        )
+        data = self.read("listings", q="KERMAN")
+        self.assertEqual(self.get.call_args[0][0], "http://listings.test/queries/all")
+        self.assertEqual(data["term"], "KERMAN")
+        self.assertEqual([r["name"] for r in data["rows"]], ["kerman-daily-foodZooket"])
+        self.assertEqual(data["matched"], 1)
+
+    def test_a_city_parameter_is_ignored_rather_than_required(self):
+        self.get.return_value = response(["tehran-daily-foodZooket"])
+        data = self.read("listings", city="tehran")
+        self.assertEqual(self.get.call_args[0][0], "http://listings.test/queries/all")
+        self.assertEqual([r["name"] for r in data["rows"]], ["tehran-daily-foodZooket"])
 
     def test_an_unreachable_service_is_reported_as_a_bad_gateway(self):
         for exc in [requests.ConnectionError("no route to host"), requests.Timeout("timed out")]:

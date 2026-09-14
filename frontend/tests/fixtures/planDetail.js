@@ -38,7 +38,7 @@ export const lookupNames = {
     'foodZooket-kish-1T-base',
   ],
   rules: ['foodZooket-kerman-3step-base', 'foodZooket-kerman-3step-base-20260616', 'foodZooket-kish-1step-base'],
-  listings: ['kerman-daily-foodZooket', 'kerman-weekly-foodZooket'],
+  listings: ['kerman-daily-foodZooket', 'kerman-weekly-foodZooket', 'tehran-daily-foodZooket'],
 }
 
 export function makeConfig(overrides = {}) {
@@ -108,9 +108,6 @@ export async function mockPlanDetail(page, options = {}) {
     if (lookup) {
       if (state.lookupError) return fail(state.lookupError, 502)
       const kind = lookup[1]
-      if (kind === 'listings' && !url.searchParams.get('city')) {
-        return fail("Query parameter 'city' is required.", 400)
-      }
       const term = (url.searchParams.get('q') || '').toLowerCase()
       const names = (state.lookups[kind] || []).filter((n) => n.toLowerCase().includes(term))
       return reply({

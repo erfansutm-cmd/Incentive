@@ -78,21 +78,21 @@ test('listing and duration are shown once and edited for every allocator', async
   ])
 })
 
-test('the listing field searches the listings of the plan city', async ({ page }) => {
-  const state = await mockPlanDetail(page)
+test('the listing field searches every available listing', async ({ page }) => {
+  await mockPlanDetail(page)
   await page.goto('/plans/1')
   await section(page).getByRole('button', { name: 'Edit for all', exact: true }).click()
   const listing = dialog(page).locator('#plan-listing')
   await listing.click()
+  // one list for all cities, no per-city lookup
+  await expect(page.getByRole('option', { name: 'tehran-daily-foodZooket', exact: true })).toBeVisible()
   await expect(page.getByRole('option', { name: 'kerman-daily-foodZooket', exact: true })).toBeVisible()
-  await expect(page.getByRole('option', { name: 'kerman-weekly-foodZooket', exact: true })).toBeVisible()
+  await listing.fill('kerman')
+  await expect(page.getByRole('option', { name: 'tehran-daily-foodZooket', exact: true })).toHaveCount(0)
   await page.getByRole('option', { name: 'kerman-weekly-foodZooket', exact: true }).click()
   await expect(listing).toHaveValue('kerman-weekly-foodZooket')
   await dialogButton(page, 'Save for all allocators').click()
   await expect(dialog(page)).toHaveCount(0)
-  // listings are looked up per city, so the city went along
-  const listingCalls = state.writes.length
-  expect(listingCalls).toBe(1)
 })
 
 test('changing an allocator deactivates its row and creates a new one', async ({ page }) => {

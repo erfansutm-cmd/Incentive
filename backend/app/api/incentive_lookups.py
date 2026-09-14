@@ -7,7 +7,7 @@ list of names, and filter on ``q``.
 
     allocators -> {ALLOCATOR_NAMES_URL}          e.g. /allocator/names
     rules      -> {RULE_NAMES_URL}               e.g. /rules/names
-    listings   -> {LISTING_QUERIES_URL}/{city}   e.g. /queries/tehran
+    listings   -> {LISTING_QUERIES_URL}          e.g. /queries/all
 """
 
 import requests
@@ -153,15 +153,8 @@ def rule_names(
 
 @router.get("/listings")
 def listing_names(
-    city: str = Query(default="", description="City the listings belong to"),
     q: str = Query(default="", description="Case-insensitive substring filter"),
     limit: int = Query(default=200),
 ):
-    """Available listings (queries) of one city, for the plan-level listing."""
-    city = (city or "").strip()
-    if not city:
-        return JSONResponse(
-            status_code=400,
-            content={"status": "error", "message": "Query parameter 'city' is required."},
-        )
-    return _lookup(f"{LISTING_QUERIES_URL.rstrip('/')}/{city}", q, limit, "listings")
+    """Available listings (queries), for the plan-level listing field."""
+    return _lookup(LISTING_QUERIES_URL, q, limit, "listings")
