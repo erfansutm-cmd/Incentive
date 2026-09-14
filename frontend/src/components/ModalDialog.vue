@@ -44,6 +44,11 @@ dialog.modal {
   width: calc(100% - 2rem);
   max-width: 520px;
   color: var(--text);
+  /* The global .modal no longer caps its own height — the plan-detail overlays
+     scroll instead so their buttons can never be clipped. A native <dialog> has
+     no such overlay to scroll, so it keeps capping and scrolling itself. */
+  max-height: 85vh;
+  overflow-y: auto;
 }
 dialog::backdrop {
   background: rgba(30, 42, 36, 0.4);

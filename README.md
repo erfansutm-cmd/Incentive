@@ -44,6 +44,8 @@ configured through a root `.env` file:
 | `DB_CITY_MAPPING_TABLE` | `mafsho/city_mapping` |
 | `DB_DECISION_MATRIX_TABLE` | `incentive/incentive_decision_matrix` |
 | `DB_ACTIVE_CITY_TABLE` | `incentive/incentive_active_city` |
+| `DB_INCENTIVE_BASE_CONFIG_TABLE` | `incentive/incentive_base_configs` |
+| `DB_INCENTIVE_BASE_CONFIG_LOG_TABLE` | `incentive/incentive_base_configs_logs` |
 
 ```bash
 cp .env.example .env   # then fill in DB_PASSWORD
@@ -142,6 +144,222 @@ the *Add plan* form picks the type from `mafsho.incentive_type` and the
 business entity from `incentive.business_entities` (both are dropdowns —
 nothing new can be added there), and every active row has
 a *Deactivate* button behind a confirmation popup.
+
+### Base configs of a plan (per-plan allocators)
+
+The *Details* button of a plan opens `/plans/:id`
+(`frontend/src/views/PlanDetail.vue`). Under the plan's facts it lists that
+plan's rows of `incentive.incentive_base_configs`, joined on `plan_id` = the
+plan's primary key, through `backend/app/api/incentive_base_configs.py`:
+
+| Method | Path | Action |
+|--------|------|--------|
+| GET | `/api/incentive-base-configs?plan_id={id}[&include_deactivated=true]` | Base configs (allocators) of one plan |
+| POST | `/api/incentive-base-configs` | Add an allocator to a plan |
+| PUT | `/api/incentive-base-configs/plan/{id}` | Change `listing_id` / `duration` for **every** allocator of a plan |
+| PUT | `/api/incentive-base-configs/{id}` | Change one allocator in place; the row as it was is logged first |
+| POST | `/api/incentive-base-configs/{id}/deactivate` | Set `deactivated_at = NOW()`; the row is logged first |
+| POST | `/api/incentive-base-configs/{id}/activate` | Clear `deactivated_at` to bring a row back; the row is logged first |
+| GET | `/api/incentive-base-configs/{id}/logs` | Logged previous versions of one config, newest first |
+
+The table is set with `DB_INCENTIVE_BASE_CONFIG_TABLE` (default
+`incentive/incentive_base_configs`) and follows the same `schema/table`
+convention. The expected columns are:
+
+```
+id, plan_id, listing_id, allocator_id, rule_name, impact_ratio,
+duration, districts, vendors, batch_size, clustering_method,
+sensitivity_id, sensitivity_group, created_at, updated_at, deactivated_at
+```
+
+Rows come back ordered by `listing_id`, then `impact_ratio` descending, then
+`id`, so a listing's dominant allocator leads and its allocators stay adjacent.
+The response also carries `columns`, `summary_columns`, `total`,
+`active_count`, `deactivated_count` and `impact_ratio_sum` (a plan's *active*
+allocators normally add up to `1`; deactivated rows and rows without a ratio
+are left out of the sum).
+
+### The impact ratios have to add up to 100%
+
+The section header shows the share as a pill. When a plan's active allocators
+add up to `1` it reads `impact 100%`; any other total turns the pill **red** and
+puts a standing line under the table saying how far off it is — *The impact
+ratios of this plan's active allocators add up to 115%, not 100% — 15% too
+much.* Every change that leaves a plan off 100% repeats that message in its own
+toast, so adding, editing and deactivating an allocator each flag it at the
+moment it happens rather than only on a later visit. A rounding-sized
+difference (under 0.005%) is treated as exact and not reported.
+
+### Every allocator of a plan shares one listing
+
+`listing_id` is a plan-level value, so all of a plan's allocators must carry the
+same one. The section re-checks this on every load and after every change, from
+the rows it just fetched: if the **active** allocators disagree, the header shows
+a red `N listings` pill and a standing line naming them — *This plan's active
+allocators use 2 different listings (kerman-daily-foodZooket,
+tehran-daily-foodZooket), but a plan has only one.* — and the same message rides
+along in the toast of any write. Writes already refuse to split a plan (a
+per-row `listing_id` is a 409, and adding inherits the plan's listing), so this
+catches rows that got out of step some other way, such as a direct database
+edit. Deactivated rows are left out, since they are not part of the plan's
+active split.
+
+The UI shows only three fields up front — **Allocator ID**, **Rule name**,
+**Impact ratio** (as a percentage with the raw value beside it) — and keeps the
+rest of the row (`id`, `districts`, `vendors`, `batch_size`,
+`clustering_method`, `sensitivity_id`, `sensitivity_group`, `created_at`,
+`updated_at`, `deactivated_at`) behind each row's dropdown. `plan_id`,
+`listing_id` and `duration` are not repeated on every allocator: the plan is the
+plan, and the other two are shown once in the strip above the table. Clicking
+the row (or its chevron) opens that dropdown; *Expand all* / *Collapse all* does
+it for every allocator at once. Which fields are hidden follows the table's real
+columns, so an added column appears in the dropdown without a code change, and a
+missing one simply disappears. Columns ending in `_at` are rendered as readable
+dates (`Sep 14, 2026, 10:11 AM`), never as raw ISO strings.
+
+`districts` and `vendors` hold a JSON list of strings, and that JSON can contain
+`null`s. Both are shown as chips rather than as raw `["Sadra",null]`, the nulls
+are dropped, and an empty or missing list reads as `—`. The same applies inside
+a logged previous version.
+
+Deactivated configs are left out of the list until *Show deactivated (N)* is
+pressed; they then join the table greyed out, with a *Deactivated* tag, while
+the allocator count and the impact share keep describing the active rows. A
+deactivated row cannot be edited, but it can be brought back: its **Activate**
+button calls `POST /{id}/activate`, which logs the row as it was, clears
+`deactivated_at` and refreshes `updated_at`. Because every change is logged,
+re-activating keeps the same `id` and the whole history — including the
+deactivation — stays attached to the row. Activating a row that is already
+active changes nothing and logs nothing.
+
+The section loads independently of the plan itself: if the lookup fails (for
+example the table does not exist yet) the plan facts stay on screen and the
+section offers a *Retry*. A plan with no rows shows an empty state.
+
+### Listing and duration belong to the plan, not to a row
+
+`listing_id` and `duration` are the same on every allocator of a plan, so the UI
+shows them once, in a strip above the table, and edits them once: **Edit for
+all** opens a popup whose save calls `PUT /api/incentive-base-configs/plan/{id}`.
+The endpoint updates every **active** row of the plan, logs each row's previous
+values first, and does it all in one transaction; rows that already hold the new
+values are left alone and not logged. Deactivated rows are never rewritten, so
+history keeps the listing they had. Any other field sent to that endpoint is
+rejected with 400 — per-allocator fields are changed per allocator.
+
+Adding an allocator inherits the plan's listing and duration. Only the first
+allocator of a plan sets them (and its form asks for them); afterwards a payload
+carrying different ones is rejected with **409** and the `conflicts` that caused
+it, so a plan can never end up half-migrated.
+
+### Changing one allocator
+
+Per-allocator fields (`allocator_id`, `rule_name`, `impact_ratio`, `districts`,
+`vendors`, `batch_size`, `clustering_method`, `sensitivity_id`,
+`sensitivity_group`) are changed in place by `PUT /{id}`, which writes the row
+as it was to the log table first — the log is what preserves the previous
+version, so the row keeps its `id` and its history stays attached to it. The
+whole thing is one transaction: if the update fails, no log row is left behind.
+A payload that changes nothing writes no log row. `plan_id` and the plan-shared
+`listing_id` / `duration` are not settable here; sending one is rejected with
+**409** pointing at the plan-level endpoint, so a plan cannot be split one row
+at a time.
+
+In the form, **Allocator ID**, **Rule name** and **Impact ratio** are marked
+*required* and the rest *(optional)* — the same in the add and the edit popup.
+`districts` and `vendors` are edited as a list: type a value and press Enter (or
+comma) to add it, × to remove one, and an emptied list is stored as no value at
+all rather than as `[]`. Each row also has its own **Deactivate** button behind
+a confirmation.
+
+Two fields are not plain text boxes:
+
+- **Clustering method** is a combo (`frontend/src/components/FreeCombo.vue`). It
+  offers the two methods in use — `kmeans` and `rfmxs` — and opening it always
+  shows the whole list, so a method already stored can be switched without
+  clearing it first. Anything typed is just as valid: unlisted text is offered
+  back as *Use "…"* and stored as-is, because the column is free text and a new
+  method should not need a code change. A value that is not on the list (an
+  older row's `dbscan`, say) still displays and edits normally.
+- **Sensitivity group** is three boxes (`FloatTriple.vue`), one per group. The
+  column holds a JSON array of exactly three floats, so the form only ever
+  sends all three or nothing: filling one or two is refused with *'Sensitivity
+  Group' needs all three groups, or none.* and a non-numeric entry with
+  *…groups must be numbers.* Clearing all three stores no value at all. Read
+  back in a row's dropdown it renders as `G1 0.1 · G2 0.2 · G3 0.3` rather than
+  as raw JSON.
+
+### Available allocators, rules and listings
+
+The forms pick from what the incentive services actually have, through
+`backend/app/api/incentive_lookups.py`. The browser never calls those services
+directly — these endpoints proxy them over the same origin, normalize whatever
+shape they answer with into a plain list of names, filter on `q` and cap at
+`limit`:
+
+| Method | Path | Upstream |
+|--------|------|----------|
+| GET | `/api/incentive-lookups/allocators?q=&limit=` | `ALLOCATOR_NAMES_URL` |
+| GET | `/api/incentive-lookups/rules?q=&limit=` | `RULE_NAMES_URL` |
+| GET | `/api/incentive-lookups/listings?q=&limit=` | `LISTING_QUERIES_URL` |
+
+```dotenv
+ALLOCATOR_NAMES_URL=http://172.21.88.174:5000/allocator/names
+RULE_NAMES_URL=http://172.21.88.174:5000/rules/names
+LISTING_QUERIES_URL=http://172.21.88.148:5000/queries/all
+```
+
+Listings come from one endpoint for every city (`/queries/all`), so the listing
+field offers all of them. The normalizer accepts a bare list of strings, or
+objects under `names`, `data`, `results`, `result`, `items`, `rows`, `response`,
+`queries`, `allocators`, `rules` or `listings`, and reads each entry's `name`,
+`id`, `value`, `label`, `title`, `query`, `allocator`, `rule` or `listing` key.
+An unreachable or erroring service answers **502** naming the service.
+
+Listing, allocator and rule are **selects, not free text**: typing narrows the
+offered names, but only picking one sets the value, so a row can never hold a
+name the service does not have. The chosen name has a **×** to clear it again.
+If a lookup is down the field says *lookup unavailable — the list cannot be
+loaded* and stays empty rather than accepting something invented.
+
+### Change log (previous version before every change)
+
+`incentive.incentive_base_configs_logs`, set with
+`DB_INCENTIVE_BASE_CONFIG_LOG_TABLE`, holds the row as it was *before* a change:
+
+```
+log_id, config_id, plan_id, listing_id, allocator_id, rule_name, impact_ratio,
+duration, districts, vendors, batch_size, clustering_method,
+sensitivity_id, sensitivity_group, created_at, updated_at, deactivated_at,
+changed_at
+```
+
+Every `PUT` and every deactivation copies the current row into the log table
+(`config_id` = the config's id, `changed_at` = `NOW()`, `log_id`
+auto-incremented) and applies the change **in the same transaction**, so a
+failed update leaves no orphan log row and no unlogged change. Only columns
+the log table really has are copied, so a column added to both tables is
+logged without a code change.
+
+- A `PUT` whose values are all unchanged writes **no** log row and answers
+  `{"logged": false, "message": "No changes to record."}`; a real change
+  answers with the `log_id` and a `changes` map of `{field: {from, to}}` using
+  the stored values (`0.4` and `"0.4000"` count as equal).
+- `created_at`, `updated_at`, `deactivated_at` and `plan_id` are not settable
+  through `PUT`. `updated_at` is stamped with `NOW()` by the server;
+  deactivation and re-activation go through their own endpoints. Deactivating an
+  already deactivated config — or activating an already active one — changes
+  nothing and logs nothing.
+- **Writes need the log table to exist.** If it is missing the request fails
+  with its name in the message and the config is left untouched, rather than
+  silently losing history. Reads work without it — the page shows the error
+  inside the row instead.
+
+In the UI each row's dropdown has a **Change history** disclosure: it fetches
+that config's log rows on first open (nothing is requested before) and lists
+them newest first, each with its `changed_at` and the full previous row
+(`log_id`, `config_id` and `changed_at` are not repeated as fields). A failed
+history lookup offers a *Retry* and never affects the rest of the page.
 
 ## Decision Matrix
 
@@ -283,10 +501,33 @@ pip install -r requirements-dev.txt
 python -m unittest discover -s tests -v
 ```
 
+Frontend component tests run in jsdom against a mocked `/api`
+(`frontend/tests/unit/`, `frontend/tests/unit/api-mock.js`), so they need no
+browser, no backend and no database:
+
+```bash
+cd frontend
+npm ci
+npm test          # one run
+npm run test:watch
+```
+
+They mount the real `PlanDetail.vue` and cover the plan-level listing/duration
+strip, that `plan_id` / `listing_id` / `duration` stay out of a row, the
+select-only lookup fields (typing filters but never becomes a value), in-place
+edits with their logged previous values, required vs optional markers, list
+columns as chips and as a tag editor, deactivation behind a confirmation,
+re-activating a deactivated row, the impact share turning red and saying how far
+off it is whenever a change leaves a plan away from 100%, the clustering-method
+combo accepting both a listed and a typed method, the three sensitivity groups
+being all-or-none, add-allocator inheritance, lookup outages, write failures,
+change history and its retry, and the empty/error states.
+
 Browser tests use Playwright with intercepted API responses (no real database
 writes). They cover inline city-group accordions, the custom score-type picker,
 nearest-step prefill, editable creation scores, required float values, nullable
-three-value buckets, concurrent changes, separate history, and mobile/keyboard behavior.
+three-value buckets, concurrent changes, separate history, mobile/keyboard
+behavior, and the same plan-detail flows end to end.
 
 ```bash
 cd frontend
@@ -298,7 +539,8 @@ npm run build
 
 The tests start Vite automatically, or reuse it when already running. An
 existing Chromium installation can be used by setting
-`PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`.
+`PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`. Playwright's `testDir` is `tests/` and it
+ignores `tests/unit/`, so the two suites never pick each other up.
 
 ## Business Entities CRUD
 

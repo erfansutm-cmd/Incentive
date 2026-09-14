@@ -2,7 +2,17 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from .api import cities, business_entities, city_plan_mappings, decision_matrix, incentive_types, performance, weather
+from .api import (
+    cities,
+    business_entities,
+    city_plan_mappings,
+    decision_matrix,
+    incentive_base_configs,
+    incentive_lookups,
+    incentive_types,
+    performance,
+    weather,
+)
 from app.core.utils.database import engine, DB_HOST, DB_NAME, DB_PORT, DB_USER
 from app.core.utils.logger import get_logger
 
@@ -15,6 +25,8 @@ app.include_router(cities.router)
 app.include_router(business_entities.router)
 app.include_router(city_plan_mappings.router)
 app.include_router(decision_matrix.router)
+app.include_router(incentive_base_configs.router)
+app.include_router(incentive_lookups.router)
 app.include_router(incentive_types.router)
 # app.include_router(performance.router)
 app.include_router(weather.router)
