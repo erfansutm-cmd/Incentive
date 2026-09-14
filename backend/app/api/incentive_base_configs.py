@@ -37,10 +37,11 @@ LOG_PK_COLUMN = "log_id"
 CONFIG_ID_COLUMN = "config_id"
 CHANGED_AT_COLUMN = "changed_at"
 
-# The four columns the plan detail page shows up front; the rest of a row is
-# revealed behind its dropdown. Reported back to the client so the UI and the
-# API agree even when the schema differs.
-SUMMARY_COLUMNS = ("listing_id", "allocator_id", "rule_name", "impact_ratio")
+# The columns the plan detail page shows up front for each allocator; the rest
+# of a row is revealed behind its dropdown. ``listing_id`` is not among them:
+# it is shared by the whole plan and shown once above the table. Reported back
+# to the client so the UI and the API agree even when the schema differs.
+SUMMARY_COLUMNS = ("allocator_id", "rule_name", "impact_ratio")
 
 # Columns shared by every allocator of a plan: they are read and written at
 # plan level, never per row, so a plan cannot end up half-migrated.
@@ -698,6 +699,21 @@ async def update_config(config_id: str, payload: dict):
     if log_error is not None:
         return log_error
 
+    # listing_id and duration belong to the plan, not to one allocator
+    shared = [name for name in PLAN_SHARED_COLUMNS if name in (payload or {})]
+    if shared:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "status": "error",
+                "message": (
+                    f"{', '.join(shared)} is shared by every allocator of the plan. "
+                    "Use PUT /api/incentive-base-configs/plan/{plan_id} to change it."
+                ),
+                "columns": shared,
+            },
+        )
+
     data = _clean_update(payload, cols)
     if not data:
         return JSONResponse(
@@ -836,145 +852,4 @@ async def deactivate_config(config_id: str):
         "logged": True,
         "log_id": _jsonable(log_id),
         "active": False,
-    }
-
-
-@router.post("/{config_id}/replace")
-async def replace_config(config_id: str, payload: dict):
-    """Change one allocator by deactivating its row and creating a new one.
-
-    Per-allocator fields (``allocator_id``, ``rule_name``, ``impact_ratio`` and
-    the rest of ``ROW_COLUMNS``) are never edited in place: the current row is
-    logged, deactivated, and a new row is inserted with the changed values and
-    the plan's shared ``listing_id`` / ``duration`` copied over — all in one
-    transaction. The plan link and the shared columns cannot be changed here;
-    a payload that tries is rejected with 409.
-    """
-    try:
-        cols = _columns()
-    except Exception as exc:
-        status, msg = _failure(exc)
-        return JSONResponse(status_code=status, content={"status": "error", "message": msg})
-    log_cols, log_error = _load_log_columns()
-    if log_error is not None:
-        return log_error
-
-    fields = {c["Field"] for c in cols}
-    pk = _primary_key(cols) or ("id" if "id" in fields else None)
-    if not pk:
-        return JSONResponse(
-            status_code=400,
-            content={"status": "error", "message": f"Table '{TABLE_NAME}' has no primary key."},
-        )
-
-    data = {
-        name: (None if value == "" else value)
-        for name, value in (payload or {}).items()
-        if name in ROW_COLUMNS and name in fields
-    }
-    if not data:
-        return JSONResponse(
-            status_code=400,
-            content={
-                "status": "error",
-                "message": (
-                    "No per-allocator fields to change. Allowed: "
-                    + ", ".join(ROW_COLUMNS)
-                ),
-            },
-        )
-
-    try:
-        with engine.connect() as conn:
-            previous, _ = _fetch_config(conn, cols, config_id)
-    except ValueError as exc:
-        return JSONResponse(status_code=400, content={"status": "error", "message": str(exc)})
-    except Exception as exc:
-        status, msg = _failure(exc)
-        return JSONResponse(status_code=status, content={"status": "error", "message": msg})
-
-    if previous is None:
-        return JSONResponse(
-            status_code=404,
-            content={"status": "error", "message": "Base config not found."},
-        )
-
-    conflicts = _shared_conflicts(payload, previous, fields)
-    for name in (PLAN_ID_COLUMN,):
-        submitted = (payload or {}).get(name)
-        if submitted not in (None, "") and not _equal(previous.get(name), submitted):
-            conflicts.append({
-                "column": name,
-                "plan": _jsonable(previous.get(name)),
-                "submitted": _jsonable(submitted),
-            })
-    if conflicts:
-        return JSONResponse(
-            status_code=409,
-            content={
-                "status": "error",
-                "message": (
-                    "plan_id, listing_id and duration cannot be changed per allocator; "
-                    "change the shared ones for all allocators at once."
-                ),
-                "conflicts": conflicts,
-            },
-        )
-
-    changes = {
-        name: {"from": _jsonable(previous.get(name)), "to": _jsonable(value)}
-        for name, value in data.items()
-        if not _equal(previous.get(name), value)
-    }
-    if not changes:
-        return {
-            "status": "ok",
-            "message": "No changes to record.",
-            "replaced": False,
-            "changes": {},
-            "row": {k: _jsonable(v) for k, v in previous.items()},
-        }
-
-    # the new row is a copy of the old one with the changed fields applied
-    new_row = {
-        name: value
-        for name, value in previous.items()
-        if name not in (pk, CREATED_COLUMN, UPDATED_COLUMN, DEACTIVATED_COLUMN)
-    }
-    new_row.update(data)
-
-    set_parts = [f"`{DEACTIVATED_COLUMN}` = NOW()"] if DEACTIVATED_COLUMN in fields else []
-    if UPDATED_COLUMN in fields:
-        set_parts.append(f"`{UPDATED_COLUMN}` = NOW()")
-
-    try:
-        with engine.begin() as conn:
-            log_id = _insert_log(conn, log_cols, previous, previous[pk])
-            if set_parts:
-                conn.execute(
-                    text(f"UPDATE {TABLE_SQL} SET {', '.join(set_parts)} WHERE `{pk}` = :pk_value"),
-                    {"pk_value": previous[pk]},
-                )
-            new_id = _insert_config(conn, cols, new_row)
-            created = None
-            if new_id is not None:
-                found = conn.execute(
-                    text(f"SELECT * FROM {TABLE_SQL} WHERE `{pk}` = :pk_value"),
-                    {"pk_value": new_id},
-                ).first()
-                created = {k: _jsonable(v) for k, v in found._mapping.items()} if found else None
-    except Exception as exc:
-        status, msg = _failure(exc)
-        return JSONResponse(status_code=status, content={"status": "error", "message": msg})
-
-    return {
-        "status": "ok",
-        "message": "Allocator replaced: the previous row was deactivated and a new one created.",
-        "replaced": True,
-        "logged": True,
-        "log_id": _jsonable(log_id),
-        "deactivated_id": _jsonable(previous[pk]),
-        "id": _jsonable(new_id),
-        "changes": changes,
-        "row": created,
     }

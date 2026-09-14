@@ -2,6 +2,8 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import LookupSelect from '../components/LookupSelect.vue'
+import TagChips from '../components/TagChips.vue'
+import TagEditor from '../components/TagEditor.vue'
 
 const route = useRoute()
 const planId = computed(() => route.params.id)
@@ -13,9 +15,10 @@ const typeName = ref('')
 const cityName = ref('')
 
 // --- base configs (incentive_base_configs) ----------------------------------
-// One row per allocator of the plan, joined on plan_id. Only the four summary
-// fields are shown up front; the rest of a row sits behind its dropdown.
-const SUMMARY_FIELDS = ['listing_id', 'allocator_id', 'rule_name', 'impact_ratio']
+// One row per allocator of the plan, joined on plan_id. Only these fields are
+// shown up front; the rest of a row sits behind its dropdown. listing_id is not
+// among them: it is shared by the whole plan and shown once above the table.
+const SUMMARY_FIELDS = ['allocator_id', 'rule_name', 'impact_ratio']
 // listing_id and duration belong to the plan, not to a row: they are shown and
 // edited once, for every allocator at once.
 const SHARED_FIELDS = ['listing_id', 'duration']
@@ -24,7 +27,10 @@ const ROW_FIELDS = [
   'allocator_id', 'rule_name', 'impact_ratio', 'districts', 'vendors',
   'batch_size', 'clustering_method', 'sensitivity_id', 'sensitivity_group',
 ]
-const REQUIRED_ON_ADD = ['allocator_id', 'rule_name', 'impact_ratio']
+const REQUIRED_FIELDS = ['allocator_id', 'rule_name', 'impact_ratio']
+// Columns holding a JSON list of strings (districts, vendors). The stored JSON
+// can contain nulls, which are not values and are never shown or kept.
+const LIST_FIELDS = ['districts', 'vendors']
 // Log columns that only identify the entry; the header already shows changed_at.
 const HISTORY_HIDDEN = ['log_id', 'config_id', 'changed_at']
 
@@ -71,9 +77,12 @@ const tableFields = computed(() =>
 )
 
 // Everything else of the row, in table order — what the dropdown reveals.
-// plan_id is the plan itself, so it is not repeated on every allocator.
+// plan_id is the plan itself and listing_id / duration are shown once above the
+// table, so none of them is repeated on every allocator.
 const detailFields = computed(() =>
-  fieldNames.value.filter((n) => !tableFields.value.includes(n) && n !== 'plan_id')
+  fieldNames.value.filter(
+    (n) => !tableFields.value.includes(n) && n !== 'plan_id' && !SHARED_FIELDS.includes(n)
+  )
 )
 
 // The per-allocator fields this table actually has, in a stable form order.
@@ -156,6 +165,30 @@ function formatDate(value) {
   }).format(d)
 }
 
+// A list column back to its values: the stored JSON can be an array, a JSON
+// string, or hold nulls, none of which should reach the UI.
+function parseList(value) {
+  let raw = value
+  if (typeof raw === 'string') {
+    const text = raw.trim()
+    if (!text) return []
+    try {
+      raw = JSON.parse(text)
+    } catch {
+      return [text] // a plain string is a one-item list
+    }
+  }
+  if (raw === null || raw === undefined || raw === '') return []
+  const items = Array.isArray(raw) ? raw : [raw]
+  return items
+    .filter((item) => item !== null && item !== undefined && String(item).trim() !== '')
+    .map((item) => String(item).trim())
+}
+
+function isListField(field) {
+  return LIST_FIELDS.includes(String(field))
+}
+
 // Timestamp columns read as dates, everything else as plain text.
 function displayValue(field, value) {
   if (String(field).endsWith('_at')) return formatDate(value) || '—'
@@ -181,7 +214,9 @@ function historyFields(entry) {
   const names = (entry?.columns || []).length
     ? entry.columns.map((c) => c.name)
     : Object.keys(entry?.rows?.[0] || {})
-  return names.filter((n) => !HISTORY_HIDDEN.includes(n) && n !== 'plan_id')
+  return names.filter(
+    (n) => !HISTORY_HIDDEN.includes(n) && n !== 'plan_id' && !SHARED_FIELDS.includes(n)
+  )
 }
 
 function historyLabel(row, i) {
@@ -287,9 +322,9 @@ function openAdd() {
   const values = {}
   for (const field of formFields.value) {
     // a new allocator starts from the plan's usual settings, not from scratch
-    values[field] = ['batch_size', 'clustering_method'].includes(field)
-      ? template[field] ?? ''
-      : ''
+    if (isListField(field)) values[field] = []
+    else if (['batch_size', 'clustering_method'].includes(field)) values[field] = template[field] ?? ''
+    else values[field] = ''
   }
   configForm.value = {
     mode: 'add',
@@ -300,14 +335,18 @@ function openAdd() {
   }
 }
 
-function openReplace(row) {
+function openEdit(row) {
   formError.value = ''
   const values = {}
   for (const field of formFields.value) {
     const value = row[field]
-    values[field] = value === null || value === undefined ? '' : value
+    values[field] = isListField(field)
+      ? parseList(value)
+      : value === null || value === undefined
+        ? ''
+        : value
   }
-  configForm.value = { mode: 'replace', id: row.id, values, allocator: row.allocator_id }
+  configForm.value = { mode: 'edit', id: row.id, values, allocator: row.allocator_id }
 }
 
 function askDeactivate(row) {
@@ -326,7 +365,13 @@ function closePopups() {
 function payloadFrom(values) {
   const payload = {}
   for (const [field, value] of Object.entries(values)) {
-    payload[field] = typeof value === 'string' ? value.trim() : value
+    if (isListField(field)) {
+      const items = parseList(value)
+      // an empty list is stored as NULL, not as "[]"
+      payload[field] = items.length ? JSON.stringify(items) : ''
+    } else {
+      payload[field] = typeof value === 'string' ? value.trim() : value
+    }
   }
   return payload
 }
@@ -334,12 +379,14 @@ function payloadFrom(values) {
 // Only the fields that identify an allocator are required; the rest of a row
 // may legitimately be empty, so an unchanged empty field is not a problem.
 function validate(values) {
-  for (const field of REQUIRED_ON_ADD) {
+  for (const field of REQUIRED_FIELDS) {
     if (!formFields.value.includes(field)) continue
     const value = values[field]
-    if (value === null || value === undefined || String(value).trim() === '') {
-      return `'${colLabel(field)}' is required.`
-    }
+    const empty =
+      value === null ||
+      value === undefined ||
+      (Array.isArray(value) ? value.length === 0 : String(value).trim() === '')
+    if (empty) return `'${colLabel(field)}' is required.`
   }
   if (formFields.value.includes('impact_ratio')) {
     const ratio = Number(values.impact_ratio)
@@ -424,9 +471,9 @@ async function saveConfigForm() {
       })
     } else {
       res = await fetch(
-        `/api/incentive-base-configs/${encodeURIComponent(form.id)}/replace`,
+        `/api/incentive-base-configs/${encodeURIComponent(form.id)}`,
         {
-          method: 'POST',
+          method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(values),
         }
@@ -437,7 +484,7 @@ async function saveConfigForm() {
     configForm.value = null
     await loadConfigs(showDeactivated.value)
     if (form.mode === 'add') notify('Allocator added.')
-    else if (data.replaced) notify('Allocator replaced: the previous row was deactivated.')
+    else if (data.logged) notify('Allocator updated.')
     else notify('Nothing to change.')
   } catch (e) {
     formError.value = e.message
@@ -720,7 +767,7 @@ onMounted(load)
                   <button
                     v-if="!isDeactivated(row)"
                     class="btn btn-ghost btn-sm"
-                    @click="openReplace(row)"
+                    @click="openEdit(row)"
                   >
                     Edit
                   </button>
@@ -739,7 +786,14 @@ onMounted(load)
                   <dl v-if="detailFields.length" class="detail-facts">
                     <div v-for="f in detailFields" :key="f">
                       <dt>{{ colLabel(f) }}</dt>
-                      <dd>{{ displayValue(f, row[f]) }}</dd>
+                      <dd>
+                        <TagChips
+                          v-if="isListField(f)"
+                          :items="parseList(row[f])"
+                          :noun="colLabel(f)"
+                        />
+                        <template v-else>{{ displayValue(f, row[f]) }}</template>
+                      </dd>
                     </div>
                   </dl>
                   <p v-else class="config-loading">This row has no other fields.</p>
@@ -784,7 +838,14 @@ onMounted(load)
                           <dl class="detail-facts">
                             <div v-for="f in historyFields(historyOf(row, i))" :key="f">
                               <dt>{{ colLabel(f) }}</dt>
-                              <dd>{{ displayValue(f, entry[f]) }}</dd>
+                              <dd>
+                                <TagChips
+                                  v-if="isListField(f)"
+                                  :items="parseList(entry[f])"
+                                  :noun="colLabel(f)"
+                                />
+                                <template v-else>{{ displayValue(f, entry[f]) }}</template>
+                              </dd>
                             </div>
                           </dl>
                         </li>
@@ -832,11 +893,11 @@ onMounted(load)
       </div>
     </div>
 
-    <!-- add an allocator, or replace one (deactivate + create) -->
+    <!-- add an allocator, or edit one of the plan's allocators -->
     <div v-if="configForm" class="overlay" @click.self="closePopups">
       <div class="modal">
-        <h2 :id="configForm.mode === 'add' ? 'add-config-title' : 'replace-config-title'">
-          {{ configForm.mode === 'add' ? 'Add allocator' : 'Change allocator' }}
+        <h2 :id="configForm.mode === 'add' ? 'add-config-title' : 'edit-config-title'">
+          {{ configForm.mode === 'add' ? 'Add allocator' : 'Edit allocator' }}
         </h2>
         <p v-if="configForm.mode === 'add'" class="modal-hint">
           <template v-if="activeConfigs.length">
@@ -850,8 +911,11 @@ onMounted(load)
           </template>
         </p>
         <p v-else class="modal-hint">
-          Changing an allocator does not edit its row: the current row is
-          deactivated (and logged) and a new one is created with these values.
+          Editing
+          <code>{{ cellText(configForm.allocator) }}</code> on plan
+          {{ planId }}. Its values as they are now are written to the change log
+          first, so the previous version stays readable. Listing and duration
+          belong to the plan and are edited above the table.
         </p>
         <p v-if="formError" class="form-error">{{ formError }}</p>
 
@@ -875,9 +939,8 @@ onMounted(load)
         <label v-for="f in formFields" :key="f" class="field" :for="`config-${f}`">
           <span>
             {{ colLabel(f) }}
-            <em v-if="!REQUIRED_ON_ADD.includes(f) || configForm.mode === 'replace'" class="opt">
-              (optional)
-            </em>
+            <em v-if="!REQUIRED_FIELDS.includes(f)" class="opt">(optional)</em>
+            <em v-else class="req">required</em>
           </span>
           <LookupSelect
             v-if="f === 'allocator_id'"
@@ -894,6 +957,12 @@ onMounted(load)
             source="rules"
             noun="rule"
             placeholder="Search the available rules…"
+          />
+          <TagEditor
+            v-else-if="isListField(f)"
+            :id="`config-${f}`"
+            v-model="configForm.values[f]"
+            :noun="colLabel(f)"
           />
           <input
             v-else
@@ -912,7 +981,7 @@ onMounted(load)
                 ? 'Saving…'
                 : configForm.mode === 'add'
                   ? 'Add allocator'
-                  : 'Deactivate and create new'
+                  : 'Save changes'
             }}
           </button>
         </div>
@@ -1349,6 +1418,14 @@ tbody tr.detail-row:hover td {
   font-weight: 400;
   color: var(--muted);
   font-style: normal;
+}
+.field .req {
+  font-weight: 600;
+  color: var(--accent);
+  font-style: normal;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 /* let the suggestion dropdown escape the modal's scroll box */
 .overlay .modal {

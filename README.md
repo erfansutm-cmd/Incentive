@@ -157,10 +157,9 @@ plan's primary key, through `backend/app/api/incentive_base_configs.py`:
 | GET | `/api/incentive-base-configs?plan_id={id}[&include_deactivated=true]` | Base configs (allocators) of one plan |
 | POST | `/api/incentive-base-configs` | Add an allocator to a plan |
 | PUT | `/api/incentive-base-configs/plan/{id}` | Change `listing_id` / `duration` for **every** allocator of a plan |
-| POST | `/api/incentive-base-configs/{id}/replace` | Change one allocator: deactivate its row and create a new one |
+| PUT | `/api/incentive-base-configs/{id}` | Change one allocator in place; the row as it was is logged first |
 | POST | `/api/incentive-base-configs/{id}/deactivate` | Set `deactivated_at = NOW()`; the row is logged first |
 | GET | `/api/incentive-base-configs/{id}/logs` | Logged previous versions of one config, newest first |
-| PUT | `/api/incentive-base-configs/{id}` | Low-level in-place update of one row (the UI does not use it) |
 
 The table is set with `DB_INCENTIVE_BASE_CONFIG_TABLE` (default
 `incentive/incentive_base_configs`) and follows the same `schema/table`
@@ -179,17 +178,23 @@ The response also carries `columns`, `summary_columns`, `total`,
 allocators normally add up to `1`; deactivated rows and rows without a ratio
 are left out of the sum).
 
-The UI shows only four fields up front — **Listing ID**, **Allocator ID**,
-**Rule name**, **Impact ratio** (as a percentage with the raw value beside it) —
-and keeps the rest of the row (`id`, `districts`, `vendors`, `batch_size`,
+The UI shows only three fields up front — **Allocator ID**, **Rule name**,
+**Impact ratio** (as a percentage with the raw value beside it) — and keeps the
+rest of the row (`id`, `districts`, `vendors`, `batch_size`,
 `clustering_method`, `sensitivity_id`, `sensitivity_group`, `created_at`,
-`updated_at`, `deactivated_at`) behind each row's dropdown. `plan_id` is the
-plan itself, so it is not repeated on every allocator. Clicking the row (or its
-chevron) opens that dropdown; *Expand all* / *Collapse all* does it for every
-allocator at once. Which fields are hidden follows the table's real columns, so
-an added column appears in the dropdown without a code change, and a missing one
-simply disappears. Columns ending in `_at` are rendered as readable dates
-(`Sep 14, 2026, 10:11 AM`), never as raw ISO strings.
+`updated_at`, `deactivated_at`) behind each row's dropdown. `plan_id`,
+`listing_id` and `duration` are not repeated on every allocator: the plan is the
+plan, and the other two are shown once in the strip above the table. Clicking
+the row (or its chevron) opens that dropdown; *Expand all* / *Collapse all* does
+it for every allocator at once. Which fields are hidden follows the table's real
+columns, so an added column appears in the dropdown without a code change, and a
+missing one simply disappears. Columns ending in `_at` are rendered as readable
+dates (`Sep 14, 2026, 10:11 AM`), never as raw ISO strings.
+
+`districts` and `vendors` hold a JSON list of strings, and that JSON can contain
+`null`s. Both are shown as chips rather than as raw `["Sadra",null]`, the nulls
+are dropped, and an empty or missing list reads as `—`. The same applies inside
+a logged previous version.
 
 Deactivated configs are left out of the list until *Show deactivated (N)* is
 pressed; they then join the table greyed out, with a *Deactivated* tag and no
@@ -216,18 +221,25 @@ allocator of a plan sets them (and its form asks for them); afterwards a payload
 carrying different ones is rejected with **409** and the `conflicts` that caused
 it, so a plan can never end up half-migrated.
 
-### Changing one allocator deactivates it and creates a new row
+### Changing one allocator
 
 Per-allocator fields (`allocator_id`, `rule_name`, `impact_ratio`, `districts`,
 `vendors`, `batch_size`, `clustering_method`, `sensitivity_id`,
-`sensitivity_group`) are never edited in place. `POST /{id}/replace` logs the
-current row, sets its `deactivated_at`, and inserts a new row with the changed
-values and the plan's shared columns copied over — one transaction, so either
-both happen or neither does. The response carries `deactivated_id`, the new `id`
-and the `changes` map. A payload that changes nothing creates no row and logs
-nothing; a payload that tries to move the row to another plan or change the
-shared columns is rejected with **409**. Each row also has its own **Deactivate**
-button behind a confirmation.
+`sensitivity_group`) are changed in place by `PUT /{id}`, which writes the row
+as it was to the log table first — the log is what preserves the previous
+version, so the row keeps its `id` and its history stays attached to it. The
+whole thing is one transaction: if the update fails, no log row is left behind.
+A payload that changes nothing writes no log row. `plan_id` and the plan-shared
+`listing_id` / `duration` are not settable here; sending one is rejected with
+**409** pointing at the plan-level endpoint, so a plan cannot be split one row
+at a time.
+
+In the form, **Allocator ID**, **Rule name** and **Impact ratio** are marked
+*required* and the rest *(optional)* — the same in the add and the edit popup.
+`districts` and `vendors` are edited as a list: type a value and press Enter (or
+comma) to add it, × to remove one, and an emptied list is stored as no value at
+all rather than as `[]`. Each row also has its own **Deactivate** button behind
+a confirmation.
 
 ### Available allocators, rules and listings
 
@@ -250,13 +262,17 @@ LISTING_QUERIES_URL=http://172.21.88.148:5000/queries/all
 ```
 
 Listings come from one endpoint for every city (`/queries/all`), so the listing
-field offers all of them and narrows them as you type. The normalizer accepts a bare list of strings, or objects under `names`, `data`,
-`results`, `result`, `items`, `rows`, `response`, `queries`, `allocators`,
-`rules` or `listings`, and reads each entry's `name`, `id`, `value`, `label`,
-`title`, `query`, `allocator`, `rule` or `listing` key. An unreachable or
-erroring service answers **502** naming the service, and the form says *lookup
-unavailable — type the value manually* instead of blocking: the fields are plain
-text inputs as well, so a lookup outage never stops an edit.
+field offers all of them. The normalizer accepts a bare list of strings, or
+objects under `names`, `data`, `results`, `result`, `items`, `rows`, `response`,
+`queries`, `allocators`, `rules` or `listings`, and reads each entry's `name`,
+`id`, `value`, `label`, `title`, `query`, `allocator`, `rule` or `listing` key.
+An unreachable or erroring service answers **502** naming the service.
+
+Listing, allocator and rule are **selects, not free text**: typing narrows the
+offered names, but only picking one sets the value, so a row can never hold a
+name the service does not have. The chosen name has a **×** to clear it again.
+If a lookup is down the field says *lookup unavailable — the list cannot be
+loaded* and stays empty rather than accepting something invented.
 
 ### Change log (previous version before every change)
 

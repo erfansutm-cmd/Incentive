@@ -211,7 +211,7 @@ class BaseConfigAPITests(unittest.TestCase):
     def test_response_reports_the_summary_columns_and_the_full_table(self):
         data = self.read(1)
         self.assertEqual(
-            data["summary_columns"], ["listing_id", "allocator_id", "rule_name", "impact_ratio"]
+            data["summary_columns"], ["allocator_id", "rule_name", "impact_ratio"]
         )
         self.assertEqual([c["name"] for c in data["columns"]], [c["Field"] for c in COLUMNS])
         self.assertEqual(data["columns"][5]["type"], "decimal(10,4)")
@@ -303,7 +303,7 @@ class BaseConfigAPITests(unittest.TestCase):
     def test_summary_columns_skip_columns_the_table_does_not_have(self):
         self.columns = [c for c in self.columns if c["Field"] != "rule_name"]
         self.assertEqual(
-            self.read(1)["summary_columns"], ["listing_id", "allocator_id", "impact_ratio"]
+            self.read(1)["summary_columns"], ["allocator_id", "impact_ratio"]
         )
 
     def test_rows_are_ordered_by_listing_then_ratio_when_there_is_no_ratio(self):
@@ -626,93 +626,41 @@ class BaseConfigAPITests(unittest.TestCase):
             {"id": 2, "listing_id": "kerman-daily-foodZooket"},
         ])
 
-    # --- per-allocator change: deactivate the old row, create a new one ---
-    def test_replace_deactivates_the_old_row_and_creates_a_new_one(self):
-        response = self.client.post(f"{BASE}/2/replace", json={"impact_ratio": 0.75})
-        self.assertEqual(response.status_code, 200, response.text)
-        body = response.json()
-        self.assertTrue(body["replaced"])
-        self.assertEqual(body["deactivated_id"], 2)
-        self.assertEqual(body["changes"], {"impact_ratio": {"from": 0.6, "to": 0.75}})
-
-        new = body["row"]
-        self.assertNotEqual(new["id"], 2)
-        self.assertEqual(new["impact_ratio"], 0.75)
-        # the plan's shared columns and identity are carried over
-        self.assertEqual(new["plan_id"], 1)
-        self.assertEqual(new["listing_id"], "kerman-daily-foodZooket")
-        self.assertEqual(new["duration"], 1)
-        self.assertEqual(new["allocator_id"], "foodZooket-kerman-3T-range-base-20260905")
-        self.assertEqual(new["created_at"], NOW)
-        self.assertIsNone(new["deactivated_at"])
-
-        stored = {r["id"]: r for r in self.sql(f"SELECT * FROM {TABLE_SQL} WHERE plan_id = 1")}
-        self.assertEqual(stored[2]["deactivated_at"], NOW)
-        self.assertEqual(stored[2]["impact_ratio"], 0.6)  # untouched, just retired
-        self.assertIsNone(stored[new["id"]]["deactivated_at"])
-        # only the new row is active, so the plan's share follows it
-        self.assertEqual([r["id"] for r in self.read(1)["rows"]], [new["id"], 1])
-        self.assertEqual(self.read(1)["impact_ratio_sum"], 1.15)
-
-        logged = self.log_rows()
-        self.assertEqual(len(logged), 1)
-        self.assertEqual(logged[0]["config_id"], 2)
-        self.assertEqual(logged[0]["impact_ratio"], 0.6)
-        self.assertIsNone(logged[0]["deactivated_at"])  # active before the change
-
-    def test_replace_can_change_several_allocator_fields_at_once(self):
-        response = self.client.post(f"{BASE}/5/replace", json={
-            "allocator_id": "foodZooket-semnan-2T-base", "rule_name": "foodZooket-semnan-2step-base",
-            "clustering_method": "dbscan", "batch_size": 10,
-        })
-        self.assertEqual(response.status_code, 200, response.text)
-        body = response.json()
-        self.assertEqual(sorted(body["changes"]), ["allocator_id", "batch_size", "clustering_method", "rule_name"])
-        row = body["row"]
-        self.assertEqual(row["allocator_id"], "foodZooket-semnan-2T-base")
-        self.assertEqual(row["clustering_method"], "dbscan")
-        self.assertEqual(row["batch_size"], 10)
-        self.assertEqual(row["impact_ratio"], 0.8)  # untouched
-
-    def test_replace_without_changes_creates_nothing(self):
-        response = self.client.post(f"{BASE}/2/replace", json={"impact_ratio": "0.6000"})
-        self.assertEqual(response.status_code, 200, response.text)
-        body = response.json()
-        self.assertFalse(body["replaced"])
-        self.assertEqual(body["message"], "No changes to record.")
-        self.assertEqual(len(self.read(1)["rows"]), 2)
-        self.assertEqual(self.log_rows(), [])
-
-    def test_replace_rejects_the_shared_and_plan_columns(self):
+    # --- the plan-level columns are not settable per row -----------------
+    def test_update_rejects_the_plan_shared_columns(self):
         for payload in [
-            {"impact_ratio": 0.5, "listing_id": "other"},
-            {"impact_ratio": 0.5, "duration": 9},
-            {"impact_ratio": 0.5, "plan_id": 4},
+            {"listing_id": "other-listing"},
+            {"duration": 9},
+            {"impact_ratio": 0.5, "listing_id": "other-listing"},
         ]:
             with self.subTest(payload=payload):
-                response = self.client.post(f"{BASE}/2/replace", json=payload)
+                response = self.client.put(f"{BASE}/2", json=payload)
                 self.assertEqual(response.status_code, 409, response.text)
-                self.assertEqual(response.json()["status"], "error")
-        self.assertEqual(len(self.read(1)["rows"]), 2)
-        self.assertEqual(self.log_rows(), [])
-
-    def test_replace_needs_a_per_allocator_field(self):
-        for payload in [{}, {"listing_id": "x"}, {"plan_id": 1}]:
-            with self.subTest(payload=payload):
-                response = self.client.post(f"{BASE}/2/replace", json=payload)
-                self.assertEqual(response.status_code, 400, response.text)
-                self.assertIn("No per-allocator fields", response.json()["message"])
-
-    def test_replace_of_an_unknown_config_is_a_404(self):
+                body = response.json()
+                self.assertIn("shared by every allocator", body["message"])
+                self.assertIn("plan/", body["message"])
+        # nothing was written and nothing was logged
         self.assertEqual(
-            self.client.post(f"{BASE}/999/replace", json={"impact_ratio": 0.5}).status_code, 404
+            self.sql(f"SELECT listing_id, duration FROM {TABLE_SQL} WHERE id = 2"),
+            [{"listing_id": "kerman-daily-foodZooket", "duration": 1}],
         )
         self.assertEqual(self.log_rows(), [])
 
-    def test_replaced_config_history_follows_the_new_row(self):
-        new_id = self.client.post(f"{BASE}/2/replace", json={"impact_ratio": 0.75}).json()["id"]
-        self.client.post(f"{BASE}/{new_id}/replace", json={"impact_ratio": 0.9})
-        # each row carries the log of the change that retired it
+    def test_update_still_applies_the_per_allocator_columns(self):
+        response = self.client.put(f"{BASE}/2", json={
+            "impact_ratio": 0.75, "clustering_method": "dbscan", "batch_size": 5,
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertTrue(body["logged"])
+        self.assertEqual(body["changes"], {
+            "impact_ratio": {"from": 0.6, "to": 0.75},
+            "clustering_method": {"from": "kmeans", "to": "dbscan"},
+            "batch_size": {"from": 0, "to": 5},
+        })
+        # the row kept its identity: same id, and the plan-level columns untouched
+        self.assertEqual(body["row"]["id"], 2)
+        self.assertEqual(body["row"]["listing_id"], "kerman-daily-foodZooket")
+        self.assertEqual(body["row"]["duration"], 1)
         self.assertEqual(self.logs(2)["total"], 1)
-        self.assertEqual(self.logs(new_id)["total"], 1)
-        self.assertEqual(self.logs(new_id)["rows"][0]["impact_ratio"], 0.75)
+        self.assertEqual(self.logs(2)["rows"][0]["impact_ratio"], 0.6)

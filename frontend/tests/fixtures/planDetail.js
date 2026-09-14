@@ -29,7 +29,7 @@ export const logColumns = [
   { name: 'changed_at', type: 'datetime' },
 ]
 
-export const summaryColumns = ['listing_id', 'allocator_id', 'rule_name', 'impact_ratio']
+export const summaryColumns = ['allocator_id', 'rule_name', 'impact_ratio']
 
 // What the three lookup services know about.
 export const lookupNames = {
@@ -46,7 +46,7 @@ export function makeConfig(overrides = {}) {
     id: 1, plan_id: 1, listing_id: 'kerman-daily-foodZooket',
     allocator_id: 'foodZooket-kerman-3T-range-base',
     rule_name: 'foodZooket-kerman-3step-base', impact_ratio: 0.4,
-    duration: 1, districts: '', vendors: '', batch_size: 0,
+    duration: 1, districts: '["Sadra", null]', vendors: null, batch_size: 0,
     clustering_method: 'kmeans', sensitivity_id: '', sensitivity_group: '',
     created_at: '2026-09-05T10:00:00', updated_at: '2026-09-14T10:11:16',
     deactivated_at: null,
@@ -68,7 +68,7 @@ export const sampleLogs = [
   makeConfig({
     id: undefined, log_id: 2, config_id: 2, impact_ratio: 0.7, batch_size: 5,
     clustering_method: 'dbscan', updated_at: '2026-09-10T09:00:00',
-    changed_at: '2026-09-14T10:11:16',
+    districts: '["Sadra", "District 3", null]', changed_at: '2026-09-14T10:11:16',
     allocator_id: 'foodZooket-kerman-3T-range-base-20260905',
     rule_name: 'foodZooket-kerman-3step-base-20260616',
   }),
@@ -139,26 +139,40 @@ export async function mockPlanDetail(page, options = {}) {
       })
     }
 
-    const replace = url.pathname.match(/^\/api\/incentive-base-configs\/(\d+)\/replace$/)
-    if (replace && method === 'POST') {
-      state.writes.push({ kind: 'replace', id: Number(replace[1]), body })
+    const edit = url.pathname.match(/^\/api\/incentive-base-configs\/(\d+)$/)
+    if (edit && method === 'PUT') {
+      state.writes.push({ kind: 'edit', id: Number(edit[1]), body })
       if (state.writeError) return fail(state.writeError, 500)
-      const old = state.configs.find((row) => row.id === Number(replace[1]))
-      const created = {
-        ...old, ...body, id: state.nextId++,
-        created_at: state.now, updated_at: null, deactivated_at: null,
+      const shared = ['listing_id', 'duration'].filter((name) => name in body)
+      if (shared.length) {
+        return fail(
+          `${shared.join(', ')} is shared by every allocator of the plan. ` +
+            'Use PUT /api/incentive-base-configs/plan/{plan_id} to change it.',
+          409
+        )
       }
-      state.logs[old.id] = [
-        { ...old, log_id: 800 + old.id, config_id: old.id, changed_at: state.now },
-        ...(state.logs[old.id] || []),
+      const row = state.configs.find((r) => r.id === Number(edit[1]))
+      if (!row) return fail('Base config not found.', 404)
+      const changes = {}
+      for (const [key, value] of Object.entries(body)) {
+        const before = row[key] === null || row[key] === undefined ? '' : row[key]
+        const after = value === null || value === undefined ? '' : value
+        if (String(before) !== String(after)) changes[key] = { from: row[key], to: value }
+      }
+      if (!Object.keys(changes).length) {
+        return reply({
+          status: 'ok', message: 'No changes to record.', logged: false,
+          changes: {}, row: structuredClone(row),
+        })
+      }
+      state.logs[row.id] = [
+        { ...row, log_id: 800 + row.id, config_id: row.id, changed_at: state.now },
+        ...(state.logs[row.id] || []),
       ]
-      old.deactivated_at = state.now
-      state.configs = state.configs.filter((row) => row.id !== old.id)
-      state.configs.push(created)
-      state.deactivated.push(old)
+      Object.assign(row, body, { updated_at: state.now })
       return reply({
-        status: 'ok', replaced: true, logged: true, deactivated_id: old.id, id: created.id,
-        row: structuredClone(created),
+        status: 'ok', message: 'Base config updated successfully.', logged: true,
+        log_id: state.logs[row.id][0].log_id, changes, row: structuredClone(row),
       })
     }
 

@@ -20,7 +20,7 @@ test('allocators are listed with only the four summary columns up front', async 
   await page.goto('/plans/1')
   await expect(allocatorRows(page)).toHaveCount(2)
   await expect(section(page).getByRole('columnheader')).toHaveText([
-    'Details', 'Listing ID', 'Allocator ID', 'Rule Name', 'Impact Ratio', 'Actions',
+    'Details', 'Allocator ID', 'Rule Name', 'Impact Ratio', 'Actions',
   ])
   // no explanatory hint line under the heading
   await expect(section(page).locator('.hint')).toHaveCount(0)
@@ -37,21 +37,35 @@ test('allocators are listed with only the four summary columns up front', async 
   await expect(section(page).getByRole('button', { name: '+ Add allocator', exact: true })).toBeVisible()
 })
 
-test('the dropdown hides plan_id and formats the timestamps', async ({ page }) => {
+test('the dropdown hides the plan-level columns and formats the timestamps', async ({ page }) => {
   await mockPlanDetail(page)
   await page.goto('/plans/1')
   await allocatorRows(page).first().click()
   const detail = detailRows(page).first()
   await expect(detail).toContainText('Clustering Method')
-  // plan_id belongs to the plan, so it is not repeated per allocator
-  await expect(detail.getByText('Plan ID', { exact: true })).toHaveCount(0)
-  for (const label of ['ID', 'Duration', 'Batch Size', 'Created At', 'Updated At', 'Deactivated At']) {
+  // plan_id, listing_id and duration are shown once at plan level
+  for (const label of ['Plan ID', 'Listing ID', 'Duration']) {
+    await expect(detail.getByText(label, { exact: true })).toHaveCount(0)
+  }
+  for (const label of ['ID', 'Batch Size', 'Districts', 'Vendors', 'Created At', 'Updated At', 'Deactivated At']) {
     await expect(detail.getByText(label, { exact: true })).toBeVisible()
   }
   await expect(detail).not.toContainText('2026-09-14T10:11:16')
   await expect(field(detail, 'Updated At')).toContainText(/2026/)
   await expect(field(detail, 'Updated At')).toContainText(/10:11/)
   await expect(field(detail, 'Deactivated At')).toHaveText('—')
+})
+
+test('a list column is shown as chips, without the nulls its JSON holds', async ({ page }) => {
+  await mockPlanDetail(page)
+  await page.goto('/plans/1')
+  await allocatorRows(page).first().click()
+  const detail = detailRows(page).first()
+  // districts is stored as ["Sadra", null]: one chip, and no "null" in sight
+  await expect(field(detail, 'Districts').locator('.chip')).toHaveText(['Sadra'])
+  await expect(detail).not.toContainText('null')
+  // vendors is null, so it reads as an empty value rather than an empty list
+  await expect(field(detail, 'Vendors')).toHaveText('—')
 })
 
 test('listing and duration are shown once and edited for every allocator', async ({ page }) => {
@@ -65,21 +79,22 @@ test('listing and duration are shown once and edited for every allocator', async
 
   await section(page).getByRole('button', { name: 'Edit for all', exact: true }).click()
   await expect(dialog(page)).toContainText('updates all 2 of them')
-  await dialog(page).locator('#plan-listing').fill('kerman-daily-foodZooket-v2')
+  await dialog(page).locator('#plan-listing').click()
+  await page.getByRole('option', { name: 'kerman-weekly-foodZooket', exact: true }).click()
   await dialog(page).locator('#plan-duration').fill('30')
   await dialogButton(page, 'Save for all allocators').click()
 
   await expect(dialog(page)).toHaveCount(0)
   await expect(section(page).getByText('Updated 2 allocators of this plan.')).toBeVisible()
-  await expect(bar).toContainText('kerman-daily-foodZooket-v2')
+  await expect(bar).toContainText('kerman-weekly-foodZooket')
   await expect(bar).toContainText('30')
   expect(state.writes).toEqual([
-    { kind: 'plan', plan_id: '1', body: { listing_id: 'kerman-daily-foodZooket-v2', duration: 30 } },
+    { kind: 'plan', plan_id: '1', body: { listing_id: 'kerman-weekly-foodZooket', duration: 30 } },
   ])
 })
 
-test('the listing field searches every available listing', async ({ page }) => {
-  await mockPlanDetail(page)
+test('the listing field only takes a name from the list', async ({ page }) => {
+  const state = await mockPlanDetail(page)
   await page.goto('/plans/1')
   await section(page).getByRole('button', { name: 'Edit for all', exact: true }).click()
   const listing = dialog(page).locator('#plan-listing')
@@ -87,38 +102,65 @@ test('the listing field searches every available listing', async ({ page }) => {
   // one list for all cities, no per-city lookup
   await expect(page.getByRole('option', { name: 'tehran-daily-foodZooket', exact: true })).toBeVisible()
   await expect(page.getByRole('option', { name: 'kerman-daily-foodZooket', exact: true })).toBeVisible()
+  // typing narrows the list, but is not itself a value
   await listing.fill('kerman')
   await expect(page.getByRole('option', { name: 'tehran-daily-foodZooket', exact: true })).toHaveCount(0)
   await page.getByRole('option', { name: 'kerman-weekly-foodZooket', exact: true }).click()
   await expect(listing).toHaveValue('kerman-weekly-foodZooket')
   await dialogButton(page, 'Save for all allocators').click()
   await expect(dialog(page)).toHaveCount(0)
+  expect(state.writes[0].body.listing_id).toBe('kerman-weekly-foodZooket')
 })
 
-test('changing an allocator deactivates its row and creates a new one', async ({ page }) => {
+test('editing an allocator updates its row and logs the previous values', async ({ page }) => {
   const state = await mockPlanDetail(page)
   await page.goto('/plans/1')
   await allocatorRows(page).first().getByRole('button', { name: 'Edit', exact: true }).click()
-  await expect(dialog(page)).toContainText('Change allocator')
-  await expect(dialog(page)).toContainText('the current row is deactivated')
+  await expect(dialog(page)).toContainText('Edit allocator')
+  await expect(dialog(page)).toContainText('written to the change log')
+  // the identifying fields are required, the rest optional
+  await expect(dialog(page).getByText('Allocator ID').locator('..')).toContainText('required')
+  await expect(dialog(page).getByText('Districts').locator('..')).toContainText('(optional)')
 
   const ratio = dialog(page).locator('#config-impact_ratio')
   await expect(ratio).toHaveAttribute('type', 'number')
   await ratio.fill('0.75')
-  await dialogButton(page, 'Deactivate and create new').click()
+  await dialogButton(page, 'Save changes').click()
 
   await expect(dialog(page)).toHaveCount(0)
-  await expect(section(page).getByText('Allocator replaced: the previous row was deactivated.')).toBeVisible()
+  await expect(section(page).getByText('Allocator updated.')).toBeVisible()
   expect(state.writes).toHaveLength(1)
-  expect(state.writes[0]).toMatchObject({ kind: 'replace', id: 2 })
+  expect(state.writes[0]).toMatchObject({ kind: 'edit', id: 2 })
   expect(state.writes[0].body.impact_ratio).toBe(0.75)
   // the plan link and the shared columns are never sent per allocator
   expect(state.writes[0].body).not.toHaveProperty('plan_id')
   expect(state.writes[0].body).not.toHaveProperty('listing_id')
   expect(state.writes[0].body).not.toHaveProperty('duration')
-  // the retired row is gone from the active list, the new one took its place
+  // the row kept its identity: same two allocators, nothing deactivated
   await expect(allocatorRows(page)).toHaveCount(2)
   await expect(allocatorRows(page).first().locator('.ratio')).toHaveText('75%')
+  expect(state.deactivated).toEqual([])
+})
+
+test('a list column is edited by adding and removing values', async ({ page }) => {
+  const state = await mockPlanDetail(page)
+  await page.goto('/plans/1')
+  await allocatorRows(page).first().getByRole('button', { name: 'Edit', exact: true }).click()
+  // the stored ["Sadra", null] arrives as one editable chip
+  await expect(dialog(page).locator('.tag-field .chip .chip-name')).toHaveText(['Sadra'])
+
+  const districts = dialog(page).locator('#config-districts')
+  await districts.fill('District 9')
+  await districts.press('Enter')
+  await expect(dialog(page).locator('.tag-field .chip .chip-name')).toHaveText(['Sadra', 'District 9'])
+
+  await dialog(page).getByRole('button', { name: 'Remove Districts Sadra' }).click()
+  await expect(dialog(page).locator('.tag-field .chip .chip-name')).toHaveText(['District 9'])
+
+  await dialogButton(page, 'Save changes').click()
+  await expect(dialog(page)).toHaveCount(0)
+  // stored back as the JSON list the column holds, without the null
+  expect(state.writes[0].body.districts).toBe('["District 9"]')
 })
 
 test('a row can be deactivated behind a confirmation', async ({ page }) => {
@@ -154,6 +196,7 @@ test('adding an allocator searches the available allocators and rules', async ({
 
   const allocator = dialog(page).locator('#config-allocator_id')
   await expect(allocator).toHaveAttribute('role', 'combobox')
+  await allocator.click()
   await allocator.fill('kish')
   await expect(page.getByRole('option', { name: 'foodZooket-kish-1T-base', exact: true })).toBeVisible()
   await page.getByRole('option', { name: 'foodZooket-kish-1T-base', exact: true }).click()
@@ -196,10 +239,13 @@ test('the first allocator of a plan also sets its listing and duration', async (
   await expect(dialog(page).locator('.form-error')).toContainText("'Allocator ID' is required")
   expect(state.writes).toHaveLength(0)
 
-  await dialog(page).locator('#add-listing').fill('kerman-daily-foodZooket')
+  await dialog(page).locator('#add-listing').click()
+  await page.getByRole('option', { name: 'kerman-daily-foodZooket', exact: true }).click()
   await dialog(page).locator('#add-duration').fill('1')
-  await dialog(page).locator('#config-allocator_id').fill('foodZooket-kish-1T-base')
-  await dialog(page).locator('#config-rule_name').fill('foodZooket-kish-1step-base')
+  await dialog(page).locator('#config-allocator_id').click()
+  await page.getByRole('option', { name: 'foodZooket-kish-1T-base', exact: true }).click()
+  await dialog(page).locator('#config-rule_name').click()
+  await page.getByRole('option', { name: 'foodZooket-kish-1step-base', exact: true }).click()
   await dialog(page).locator('#config-impact_ratio').fill('1')
   await dialogButton(page, 'Add allocator').click()
   await expect(dialog(page)).toHaveCount(0)
@@ -208,18 +254,21 @@ test('the first allocator of a plan also sets its listing and duration', async (
   })
 })
 
-test('a lookup outage leaves the fields usable', async ({ page }) => {
+test('a lookup outage says so instead of accepting a typed name', async ({ page }) => {
   const state = await mockPlanDetail(page, { lookupError: 'Could not reach the allocators service' })
   await page.goto('/plans/1')
   await section(page).getByRole('button', { name: '+ Add allocator', exact: true }).click()
   await dialog(page).locator('#config-allocator_id').click()
   await expect(dialog(page)).toContainText('allocator lookup unavailable')
+
+  // the value can only come from the list, so a typed name is not accepted
   await dialog(page).locator('#config-allocator_id').fill('typed-by-hand')
   await dialog(page).locator('#config-rule_name').fill('typed-rule')
   await dialog(page).locator('#config-impact_ratio').fill('0.5')
   await dialogButton(page, 'Add allocator').click()
-  await expect(dialog(page)).toHaveCount(0)
-  expect(state.writes[0].body.allocator_id).toBe('typed-by-hand')
+  await expect(dialog(page).locator('.form-error')).toContainText("'Allocator ID' is required")
+  await expect(dialog(page)).toBeVisible()
+  expect(state.writes).toHaveLength(0)
 })
 
 test('a failed write keeps the popup open and shows the reason', async ({ page }) => {
