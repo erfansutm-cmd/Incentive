@@ -47,7 +47,7 @@ SUMMARY_COLUMNS = ("allocator_id", "rule_name", "impact_ratio")
 # plan level, never per row, so a plan cannot end up half-migrated.
 PLAN_SHARED_COLUMNS = ("listing_id", "duration")
 
-# Columns a per-allocator change may set (a replace keeps the shared ones).
+# Columns a per-allocator change may set; the plan-shared ones are not here.
 ROW_COLUMNS = (
     "allocator_id", "rule_name", "impact_ratio", "districts", "vendors",
     "batch_size", "clustering_method", "sensitivity_id", "sensitivity_group",

@@ -187,39 +187,6 @@ export function installMockApi(options = {}) {
       })
     }
 
-    const replace = u.pathname.match(/^\/api\/incentive-base-configs\/(\d+)\/replace$/)
-    if (replace && method === 'POST') {
-      state.writes.push({ kind: 'replace', id: Number(replace[1]), body })
-      if (state.writeError) return fail(state.writeError, 500)
-      const old = state.configs.find((row) => row.id === Number(replace[1]))
-      state.logs[old.id] = [
-        { ...old, log_id: 800 + old.id, config_id: old.id, changed_at: state.now },
-        ...(state.logs[old.id] || []),
-      ]
-      const created = {
-        ...old,
-        ...body,
-        id: state.nextId++,
-        created_at: state.now,
-        updated_at: null,
-        deactivated_at: null,
-      }
-      old.deactivated_at = state.now
-      state.configs = state.configs.filter((row) => row.id !== old.id)
-      state.configs.push(created)
-      state.deactivated.push(old)
-      return json({
-        status: 'ok',
-        replaced: true,
-        logged: true,
-        log_id: state.logs[old.id][0].log_id,
-        deactivated_id: old.id,
-        id: created.id,
-        changes: body,
-        row: structuredClone(created),
-      })
-    }
-
     const deactivate = u.pathname.match(/^\/api\/incentive-base-configs\/(\d+)\/deactivate$/)
     if (deactivate && method === 'POST') {
       state.writes.push({ kind: 'deactivate', id: Number(deactivate[1]) })
@@ -256,7 +223,6 @@ export function installMockApi(options = {}) {
       })
     }
 
-    // --- reads -----------------------------------------------------------
     const edit = u.pathname.match(/^\/api\/incentive-base-configs\/(\d+)$/)
     if (edit && method === 'PUT') {
       state.writes.push({ kind: 'edit', id: Number(edit[1]), body })

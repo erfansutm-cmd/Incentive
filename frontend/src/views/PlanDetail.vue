@@ -47,7 +47,7 @@ const expanded = ref(new Set())
 // row key -> { open, loading, error, rows, columns } of its logged versions
 const histories = ref({})
 
-// popups: plan-level edit, per-allocator add/replace, deactivate confirmation
+// popups: plan-level edit, per-allocator add/edit, deactivate confirmation
 const planForm = ref(null)
 const configForm = ref(null)
 const deactivateTarget = ref(null)

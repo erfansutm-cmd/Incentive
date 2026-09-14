@@ -346,6 +346,32 @@ describe('PlanDetail base configs', () => {
     ])
   })
 
+  it('offers the whole list again after a filter was typed and dropped', async () => {
+    const { wrapper } = await setup()
+    await button(wrapper, 'Edit for all').trigger('click')
+    const listing = modal(wrapper).find('#plan-listing')
+
+    await listing.trigger('focus')
+    await flushPromises()
+    expect(optionNames(wrapper)).toHaveLength(3)
+
+    // narrow it down, then leave without picking anything
+    await listing.setValue('tehran')
+    await wait(260)
+    await flushPromises()
+    expect(optionNames(wrapper)).toEqual(['tehran-daily-foodZooket'])
+    await listing.trigger('blur')
+    await flushPromises()
+    expect(wrapper.findAll('li[role=option]')).toHaveLength(0)
+    // leaving without picking reverts the box to the plan's own value
+    expect(listing.element.value).toBe('kerman-daily-foodZooket')
+
+    // reopening must not keep the abandoned filter
+    await listing.trigger('focus')
+    await flushPromises()
+    expect(optionNames(wrapper)).toHaveLength(3)
+  })
+
   it('says when a lookup is down instead of letting a name be typed in', async () => {
     const { wrapper, state } = await setup({ lookupError: 'Could not reach the allocators service' })
     await button(wrapper, '+ Add allocator').trigger('click')

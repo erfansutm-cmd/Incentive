@@ -138,7 +138,7 @@ def allocator_names(
     q: str = Query(default="", description="Case-insensitive substring filter"),
     limit: int = Query(default=200),
 ):
-    """Available allocator ids, for the add/replace allocator forms."""
+    """Available allocator ids, for the add/edit allocator forms."""
     return _lookup(ALLOCATOR_NAMES_URL, q, limit, "allocators")
 
 
@@ -147,7 +147,7 @@ def rule_names(
     q: str = Query(default="", description="Case-insensitive substring filter"),
     limit: int = Query(default=200),
 ):
-    """Available rule names, for the add/replace allocator forms."""
+    """Available rule names, for the add/edit allocator forms."""
     return _lookup(RULE_NAMES_URL, q, limit, "rules")
 
 

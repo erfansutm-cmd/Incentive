@@ -71,10 +71,12 @@ function onInput(event) {
   timer = setTimeout(() => search(filter.value.trim()), 200)
 }
 
+// Opening the box always offers the whole list again: whatever the previous
+// keystrokes narrowed it down to was a filter, not a new set of choices.
 function onFocus() {
   filter.value = ''
   open.value = true
-  if (!options.value.length) search('')
+  search('')
 }
 
 // Leaving the box without picking reverts to the chosen name: a typed string
