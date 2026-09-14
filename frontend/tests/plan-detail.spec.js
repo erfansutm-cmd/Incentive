@@ -128,7 +128,7 @@ test('editing an allocator updates its row and logs the previous values', async 
   await dialogButton(page, 'Save changes').click()
 
   await expect(dialog(page)).toHaveCount(0)
-  await expect(section(page).getByText('Allocator updated.')).toBeVisible()
+  await expect(page.locator('.toast')).toContainText('Allocator updated.')
   expect(state.writes).toHaveLength(1)
   expect(state.writes[0]).toMatchObject({ kind: 'edit', id: 2 })
   expect(state.writes[0].body.impact_ratio).toBe(0.75)
@@ -173,7 +173,7 @@ test('a row can be deactivated behind a confirmation', async ({ page }) => {
   await dialogButton(page, 'Deactivate').click()
 
   await expect(dialog(page)).toHaveCount(0)
-  await expect(section(page).getByText('Allocator deactivated.')).toBeVisible()
+  await expect(page.locator('.toast')).toContainText('Allocator deactivated.')
   expect(state.writes).toEqual([{ kind: 'deactivate', id: 2 }])
   await expect(allocatorRows(page)).toHaveCount(1)
   await expect(section(page).getByText('1 allocator', { exact: true })).toBeVisible()
@@ -200,13 +200,15 @@ test('a deactivated row can be activated again, keeping its history', async ({ p
   const off = allocatorRows(page).last()
   await expect(off).toHaveClass(/is-deactivated/)
 
+  // unlike Deactivate this is not a destructive step, so it acts immediately
   await off.getByRole('button', { name: 'Activate', exact: true }).click()
-  await expect(dialog(page)).toContainText('Activate allocator')
-  await expect(dialog(page)).toContainText('Nothing is deleted')
-  await dialogButton(page, 'Activate').click()
-
   await expect(dialog(page)).toHaveCount(0)
   expect(state.writes).toEqual([{ kind: 'activate', id: 3 }])
+
+  // 0.6 + 0.4 + 0.3 is back over 100%, and the result says so
+  await expect(page.locator('.toast')).toContainText('Allocator activated.')
+  await expect(page.locator('.toast')).toContainText('add up to 130%, not 100% — 30% too much.')
+
   // it is an active row again, with the same id and its logged history attached
   const back = allocatorRows(page).filter({ hasText: 'oldAllocator' }).first()
   await expect(back).not.toHaveClass(/is-deactivated/)
@@ -248,7 +250,7 @@ test('adding an allocator searches the available allocators and rules', async ({
   await dialogButton(page, 'Add allocator').click()
 
   await expect(dialog(page)).toHaveCount(0)
-  await expect(section(page).getByText('Allocator added.')).toBeVisible()
+  await expect(page.locator('.toast')).toContainText('Allocator added.')
   await expect(allocatorRows(page)).toHaveCount(3)
   expect(state.writes).toHaveLength(1)
   expect(state.writes[0]).toMatchObject({
