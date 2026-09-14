@@ -15,7 +15,7 @@ const dialogButton = (page, name) =>
 const field = (scope, label) =>
   scope.locator('.detail-facts > div').filter({ hasText: label }).locator('dd')
 
-test('allocators are listed with only the four summary columns up front', async ({ page }) => {
+test('allocators are listed with only the summary columns up front', async ({ page }) => {
   await mockPlanDetail(page)
   await page.goto('/plans/1')
   await expect(allocatorRows(page)).toHaveCount(2)
