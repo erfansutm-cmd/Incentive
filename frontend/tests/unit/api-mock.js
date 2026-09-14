@@ -223,6 +223,23 @@ export function installMockApi(options = {}) {
       })
     }
 
+    const activate = u.pathname.match(/^\/api\/incentive-base-configs\/(\d+)\/activate$/)
+    if (activate && method === 'POST') {
+      state.writes.push({ kind: 'activate', id: Number(activate[1]) })
+      if (state.writeError) return fail(state.writeError, 500)
+      const row = state.deactivated.find((r) => r.id === Number(activate[1]))
+      if (!row) return json({ status: 'ok', logged: false, active: true })
+      state.logs[row.id] = [
+        { ...row, log_id: 700 + row.id, config_id: row.id, changed_at: state.now },
+        ...(state.logs[row.id] || []),
+      ]
+      row.deactivated_at = null
+      row.updated_at = state.now
+      state.deactivated = state.deactivated.filter((r) => r.id !== row.id)
+      state.configs.push(row)
+      return json({ status: 'ok', logged: true, active: true, row: structuredClone(row) })
+    }
+
     const edit = u.pathname.match(/^\/api\/incentive-base-configs\/(\d+)$/)
     if (edit && method === 'PUT') {
       state.writes.push({ kind: 'edit', id: Number(edit[1]), body })

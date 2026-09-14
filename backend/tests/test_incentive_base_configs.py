@@ -626,6 +626,63 @@ class BaseConfigAPITests(unittest.TestCase):
             {"id": 2, "listing_id": "kerman-daily-foodZooket"},
         ])
 
+    # --- re-activating a deactivated config ------------------------------
+    def test_activate_logs_the_previous_row_and_clears_deactivated_at(self):
+        self.client.post(f"{BASE}/1/deactivate")
+        self.assertEqual([r["id"] for r in self.read(1)["rows"]], [2])
+
+        response = self.client.post(f"{BASE}/1/activate")
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertTrue(body["logged"])
+        self.assertTrue(body["active"])
+        self.assertIsNone(body["row"]["deactivated_at"])
+
+        # the row is back in the active listing, with its identity intact
+        # (rows are ordered by impact_ratio descending: 0.6 then 0.4)
+        self.assertEqual([r["id"] for r in self.read(1)["rows"]], [2, 1])
+        self.assertEqual(self.read(1, include_deactivated="true")["deactivated_count"], 0)
+        self.assertEqual(
+            self.sql(f"SELECT deactivated_at, updated_at FROM {TABLE_SQL} WHERE id = 1")[0],
+            {"deactivated_at": None, "updated_at": NOW},
+        )
+
+        # both changes are logged, oldest first by log_id: the deactivation
+        # recorded the row while it was still active, and the activation
+        # recorded it as deactivated
+        logged = self.log_rows()
+        self.assertEqual(len(logged), 2)
+        self.assertIsNone(logged[0]["deactivated_at"])
+        self.assertEqual(logged[1]["deactivated_at"], NOW)
+
+    def test_activating_an_already_active_config_logs_nothing(self):
+        response = self.client.post(f"{BASE}/1/activate")
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertFalse(body["logged"])
+        self.assertTrue(body["active"])
+        self.assertEqual(self.log_rows(), [])
+
+    def test_activating_keeps_the_full_change_history_of_the_row(self):
+        self.client.put(f"{BASE}/1", json={"impact_ratio": 0.5})
+        self.client.post(f"{BASE}/1/deactivate")
+        self.client.post(f"{BASE}/1/activate")
+        # edit, deactivation and activation each left their previous row behind
+        history = self.logs(1)
+        self.assertEqual(history["total"], 3)
+        # newest first: activation, deactivation, then the ratio edit
+        self.assertEqual([r["impact_ratio"] for r in history["rows"]], [0.5, 0.5, 0.4])
+
+    def test_activate_of_an_unknown_config_is_a_404(self):
+        self.assertEqual(self.client.post(f"{BASE}/999/activate").status_code, 404)
+        self.assertEqual(self.log_rows(), [])
+
+    def test_activate_reports_a_missing_deactivated_column(self):
+        self.columns = [c for c in self.columns if c["Field"] != "deactivated_at"]
+        response = self.client.post(f"{BASE}/1/activate")
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("deactivated_at", response.json()["message"])
+
     # --- the plan-level columns are not settable per row -----------------
     def test_update_rejects_the_plan_shared_columns(self):
         for payload in [

@@ -853,3 +853,81 @@ async def deactivate_config(config_id: str):
         "log_id": _jsonable(log_id),
         "active": False,
     }
+
+
+@router.post("/{config_id}/activate")
+async def activate_config(config_id: str):
+    """Re-activate a config (`deactivated_at = NULL`), logging the row first.
+
+    Deactivation is never a delete and every change is logged, so a row that was
+    retired can be brought back later and its history stays intact.
+    """
+    try:
+        cols = _columns()
+    except Exception as exc:
+        status, msg = _failure(exc)
+        return JSONResponse(status_code=status, content={"status": "error", "message": msg})
+    log_cols, log_error = _load_log_columns()
+    if log_error is not None:
+        return log_error
+
+    fields = {c["Field"] for c in cols}
+    if DEACTIVATED_COLUMN not in fields:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "error",
+                "message": f"Table '{TABLE_NAME}' has no '{DEACTIVATED_COLUMN}' column.",
+            },
+        )
+
+    try:
+        with engine.connect() as conn:
+            previous, pk = _fetch_config(conn, cols, config_id)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"status": "error", "message": str(exc)})
+    except Exception as exc:
+        status, msg = _failure(exc)
+        return JSONResponse(status_code=status, content={"status": "error", "message": msg})
+
+    if previous is None:
+        return JSONResponse(
+            status_code=404,
+            content={"status": "error", "message": "Base config not found."},
+        )
+    if previous[DEACTIVATED_COLUMN] is None:
+        return {
+            "status": "ok",
+            "message": "Base config is already active.",
+            "logged": False,
+            "active": True,
+        }
+
+    set_parts = [f"`{DEACTIVATED_COLUMN}` = NULL"]
+    if UPDATED_COLUMN in fields:
+        set_parts.append(f"`{UPDATED_COLUMN}` = NOW()")
+
+    try:
+        with engine.begin() as conn:
+            log_id = _insert_log(conn, log_cols, previous, previous[pk])
+            conn.execute(
+                text(f"UPDATE {TABLE_SQL} SET {', '.join(set_parts)} WHERE `{pk}` = :pk_value"),
+                {"pk_value": config_id},
+            )
+            row = conn.execute(
+                text(f"SELECT * FROM {TABLE_SQL} WHERE `{pk}` = :pk_value"),
+                {"pk_value": config_id},
+            ).first()
+            current = {k: _jsonable(v) for k, v in row._mapping.items()} if row else None
+    except Exception as exc:
+        status, msg = _failure(exc)
+        return JSONResponse(status_code=status, content={"status": "error", "message": msg})
+
+    return {
+        "status": "ok",
+        "message": "Base config activated successfully.",
+        "logged": True,
+        "log_id": _jsonable(log_id),
+        "active": True,
+        "row": current,
+    }

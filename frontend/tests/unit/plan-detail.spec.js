@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import PlanDetail from '../../src/views/PlanDetail.vue'
-import { installMockApi, wait, text, button } from './api-mock'
+import { installMockApi, makeRow, wait, text, button } from './api-mock'
 
 async function setup(options = {}) {
   const api = installMockApi(options)
@@ -171,7 +171,12 @@ describe('PlanDetail base configs', () => {
     await flushPromises()
 
     expect(modal(wrapper).exists()).toBe(false)
-    expect(toastText(wrapper)).toBe('Allocator updated.')
+    // 0.75 + 0.40 no longer adds up to 100%, and the result says so
+    expect(toastText(wrapper)).toBe(
+      'Allocator updated. The impact ratios of this plan\'s active allocators ' +
+        'add up to 115%, not 100% — 15% too much.'
+    )
+    expect(wrapper.find('.toast').classes()).toContain('warn')
     expect(state.writes).toHaveLength(1)
     expect(state.writes[0]).toMatchObject({ kind: 'edit', id: 2 })
     expect(state.writes[0].body.impact_ratio).toBe(0.75)
@@ -247,7 +252,11 @@ describe('PlanDetail base configs', () => {
     await flushPromises()
 
     expect(modal(wrapper).exists()).toBe(false)
-    expect(toastText(wrapper)).toBe('Allocator deactivated.')
+    // the remaining 40% no longer covers the plan, and the result says so
+    expect(toastText(wrapper)).toBe(
+      'Allocator deactivated. The impact ratios of this plan\'s active allocators ' +
+        'add up to 40%, not 100% — 60% short.'
+    )
     expect(state.writes).toEqual([{ kind: 'deactivate', id: 2 }])
     expect(rows(wrapper)).toHaveLength(1)
   })
@@ -270,7 +279,10 @@ describe('PlanDetail base configs', () => {
     await flushPromises()
 
     expect(modal(wrapper).exists()).toBe(false)
-    expect(toastText(wrapper)).toBe('Allocator added.')
+    expect(toastText(wrapper)).toBe(
+      'Allocator added. The impact ratios of this plan\'s active allocators ' +
+        'add up to 125%, not 100% — 25% too much.'
+    )
     expect(state.writes).toHaveLength(1)
     expect(state.writes[0]).toMatchObject({
       kind: 'add',
@@ -393,6 +405,124 @@ describe('PlanDetail base configs', () => {
     expect(state.writes).toEqual([])
   })
 
+  it('brings a deactivated allocator back with its history intact', async () => {
+    const { wrapper, state } = await setup({
+      deactivated: [{ id: 9, plan_id: 1, allocator_id: 'old-allocator', rule_name: 'old-rule', impact_ratio: 0.6, deactivated_at: '2026-09-12T08:00:00' }],
+    })
+    await button(wrapper, 'Show deactivated (1)').trigger('click')
+    await flushPromises()
+    const off = rows(wrapper)[2]
+    expect(off.classes()).toContain('is-deactivated')
+
+    await rowButtons(wrapper, 2).find((b) => b.text() === 'Activate').trigger('click')
+    await flushPromises()
+
+    expect(state.writes).toEqual([{ kind: 'activate', id: 9 }])
+    // 0.6 + 0.6 + 0.4 is over 100%, so the result carries the warning
+    expect(toastText(wrapper)).toContain('Allocator activated.')
+    expect(toastText(wrapper)).toContain('not 100%')
+    // it is an active row again: editable, and no longer marked deactivated
+    const back = rows(wrapper).find((r) => r.text().includes('old-allocator'))
+    expect(back.classes()).not.toContain('is-deactivated')
+    expect(text(back.findAll('td.actions-col button'))).toEqual(['Edit', 'Deactivate'])
+  })
+
+  it('flags a plan whose impact ratios do not add up to 100%', async () => {
+    const { wrapper } = await setup({ configs: [makeRow({ id: 1, impact_ratio: 0.4 })] })
+    // 40% on its own: the pill turns red and the section says why
+    const pill = wrapper.find('.card-head-actions .pill')
+    expect(pill.text()).toBe('impact 40%')
+    expect(pill.classes()).toContain('danger')
+    expect(wrapper.find('.impact-warning').text()).toContain(
+      'add up to 40%, not 100% — 60% short.'
+    )
+  })
+
+  it('leaves a plan that adds up to 100% unflagged', async () => {
+    const { wrapper } = await setup()
+    const pill = wrapper.find('.card-head-actions .pill')
+    expect(pill.text()).toBe('impact 100%')
+    expect(pill.classes()).toContain('accent')
+    expect(pill.classes()).not.toContain('danger')
+    expect(wrapper.find('.impact-warning').exists()).toBe(false)
+  })
+
+  it('offers clustering methods to pick from and accepts a typed one', async () => {
+    const { wrapper, state } = await setup()
+    await rowButtons(wrapper).find((b) => b.text() === 'Edit').trigger('click')
+    const method = modal(wrapper).find('#config-clustering_method')
+
+    // the stored value is shown, and the known methods are offered
+    expect(method.element.value).toBe('kmeans')
+    await method.trigger('focus')
+    await flushPromises()
+    expect(optionNames(wrapper)).toContain('rfmxs')
+
+    await method.setValue('rfmxs')
+    await flushPromises()
+    await modalButton(wrapper, 'Save changes').trigger('click')
+    await flushPromises()
+    expect(state.writes[0].body.clustering_method).toBe('rfmxs')
+
+    // and anything the user types is just as valid
+    await rowButtons(wrapper).find((b) => b.text() === 'Edit').trigger('click')
+    const again = modal(wrapper).find('#config-clustering_method')
+    await again.setValue('my-own-method')
+    await flushPromises()
+    await modalButton(wrapper, 'Save changes').trigger('click')
+    await flushPromises()
+    expect(state.writes[1].body.clustering_method).toBe('my-own-method')
+  })
+
+  it('reads the three sensitivity groups back as three inputs', async () => {
+    const { wrapper, state } = await setup({
+      configs: [makeRow({ id: 1, impact_ratio: 1, sensitivity_group: '[0.1, 0.2, 0.3]' })],
+    })
+    // shown readably in the row dropdown, not as raw JSON
+    await rows(wrapper)[0].find('button.chevron-disc').trigger('click')
+    const detail = wrapper.find('tbody tr.detail-row')
+    expect(field(detail, 'Sensitivity Group').find('dd').text()).toBe('G1 0.1  ·  G2 0.2  ·  G3 0.3')
+
+    await rowButtons(wrapper).find((b) => b.text() === 'Edit').trigger('click')
+    const groups = modal(wrapper).findAll('.triple-field input')
+    expect(groups).toHaveLength(3)
+    expect(groups.map((g) => g.element.value)).toEqual(['0.1', '0.2', '0.3'])
+
+    await groups[2].setValue('0.9')
+    await modalButton(wrapper, 'Save changes').trigger('click')
+    await flushPromises()
+    expect(state.writes[0].body.sensitivity_group).toBe('[0.1,0.2,0.9]')
+  })
+
+  it('refuses a sensitivity group that is not all three or none', async () => {
+    const { wrapper, state } = await setup({
+      configs: [makeRow({ id: 1, impact_ratio: 1, sensitivity_group: '[0.1, 0.2, 0.3]' })],
+    })
+    await rowButtons(wrapper).find((b) => b.text() === 'Edit').trigger('click')
+    const groups = modal(wrapper).findAll('.triple-field input')
+
+    // clearing one of the three leaves an incomplete set
+    await groups[1].setValue('')
+    await flushPromises()
+    expect(modal(wrapper).text()).toContain('All three groups are needed, or none')
+
+    await modalButton(wrapper, 'Save changes').trigger('click')
+    await flushPromises()
+    expect(modal(wrapper).find('.form-error').text()).toBe(
+      "'Sensitivity Group' needs all three groups, or none."
+    )
+    expect(state.writes).toEqual([])
+
+    // clearing the rest makes it "none", which is a valid value
+    await groups[0].setValue('')
+    await groups[2].setValue('')
+    await flushPromises()
+    await modalButton(wrapper, 'Save changes').trigger('click')
+    await flushPromises()
+    expect(modal(wrapper).exists()).toBe(false)
+    expect(state.writes[0].body.sensitivity_group).toBe('')
+  })
+
   it('shows a write failure inside the popup and keeps it open', async () => {
     const { wrapper, state } = await setup({ writeError: 'Cannot connect to the database' })
     await button(wrapper, 'Edit for all').trigger('click')
@@ -454,8 +584,8 @@ describe('PlanDetail base configs', () => {
     await flushPromises()
     expect(rows(wrapper)).toHaveLength(3)
     expect(rows(wrapper)[2].text()).toContain('Deactivated')
-    // a deactivated row offers no actions
-    expect(rowButtons(wrapper, 2)).toHaveLength(0)
+    // a deactivated row is not editable, but it can be brought back
+    expect(text(rowButtons(wrapper, 2))).toEqual(['Activate'])
     await button(wrapper, 'Hide deactivated').trigger('click')
     await flushPromises()
     expect(rows(wrapper)).toHaveLength(2)

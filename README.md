@@ -159,6 +159,7 @@ plan's primary key, through `backend/app/api/incentive_base_configs.py`:
 | PUT | `/api/incentive-base-configs/plan/{id}` | Change `listing_id` / `duration` for **every** allocator of a plan |
 | PUT | `/api/incentive-base-configs/{id}` | Change one allocator in place; the row as it was is logged first |
 | POST | `/api/incentive-base-configs/{id}/deactivate` | Set `deactivated_at = NOW()`; the row is logged first |
+| POST | `/api/incentive-base-configs/{id}/activate` | Clear `deactivated_at` to bring a row back; the row is logged first |
 | GET | `/api/incentive-base-configs/{id}/logs` | Logged previous versions of one config, newest first |
 
 The table is set with `DB_INCENTIVE_BASE_CONFIG_TABLE` (default
@@ -177,6 +178,17 @@ The response also carries `columns`, `summary_columns`, `total`,
 `active_count`, `deactivated_count` and `impact_ratio_sum` (a plan's *active*
 allocators normally add up to `1`; deactivated rows and rows without a ratio
 are left out of the sum).
+
+### The impact ratios have to add up to 100%
+
+The section header shows the share as a pill. When a plan's active allocators
+add up to `1` it reads `impact 100%`; any other total turns the pill **red** and
+puts a standing line under the table saying how far off it is — *The impact
+ratios of this plan's active allocators add up to 115%, not 100% — 15% too
+much.* Every change that leaves a plan off 100% repeats that message in its own
+toast, so adding, editing and deactivating an allocator each flag it at the
+moment it happens rather than only on a later visit. A rounding-sized
+difference (under 0.005%) is treated as exact and not reported.
 
 The UI shows only three fields up front — **Allocator ID**, **Rule name**,
 **Impact ratio** (as a percentage with the raw value beside it) — and keeps the
@@ -197,9 +209,14 @@ are dropped, and an empty or missing list reads as `—`. The same applies insid
 a logged previous version.
 
 Deactivated configs are left out of the list until *Show deactivated (N)* is
-pressed; they then join the table greyed out, with a *Deactivated* tag and no
-row actions, while the allocator count and the impact share keep describing the
-active rows.
+pressed; they then join the table greyed out, with a *Deactivated* tag, while
+the allocator count and the impact share keep describing the active rows. A
+deactivated row cannot be edited, but it can be brought back: its **Activate**
+button calls `POST /{id}/activate`, which logs the row as it was, clears
+`deactivated_at` and refreshes `updated_at`. Because every change is logged,
+re-activating keeps the same `id` and the whole history — including the
+deactivation — stays attached to the row. Activating a row that is already
+active changes nothing and logs nothing.
 
 The section loads independently of the plan itself: if the lookup fails (for
 example the table does not exist yet) the plan facts stay on screen and the
@@ -240,6 +257,22 @@ In the form, **Allocator ID**, **Rule name** and **Impact ratio** are marked
 comma) to add it, × to remove one, and an emptied list is stored as no value at
 all rather than as `[]`. Each row also has its own **Deactivate** button behind
 a confirmation.
+
+Two fields are not plain text boxes:
+
+- **Clustering method** is a combo (`frontend/src/components/FreeCombo.vue`). It
+  offers the known methods — `kmeans`, `rfmxs`, `dbscan`, `hierarchical`,
+  `none` — and opening it always shows the whole list, so a method already
+  stored can be switched without clearing it first. Anything typed is just as
+  valid: unlisted text is offered back as *Use "…"* and stored as-is, because
+  the column is free text and a new method should not need a code change.
+- **Sensitivity group** is three boxes (`FloatTriple.vue`), one per group. The
+  column holds a JSON array of exactly three floats, so the form only ever
+  sends all three or nothing: filling one or two is refused with *'Sensitivity
+  Group' needs all three groups, or none.* and a non-numeric entry with
+  *…groups must be numbers.* Clearing all three stores no value at all. Read
+  back in a row's dropdown it renders as `G1 0.1 · G2 0.2 · G3 0.3` rather than
+  as raw JSON.
 
 ### Available allocators, rules and listings
 
@@ -299,8 +332,9 @@ logged without a code change.
   the stored values (`0.4` and `"0.4000"` count as equal).
 - `created_at`, `updated_at`, `deactivated_at` and `plan_id` are not settable
   through `PUT`. `updated_at` is stamped with `NOW()` by the server;
-  deactivation goes through its own endpoint. Deactivating an already
-  deactivated config changes nothing and logs nothing.
+  deactivation and re-activation go through their own endpoints. Deactivating an
+  already deactivated config — or activating an already active one — changes
+  nothing and logs nothing.
 - **Writes need the log table to exist.** If it is missing the request fails
   with its name in the message and the config is left untouched, rather than
   silently losing history. Reads work without it — the page shows the error
@@ -468,8 +502,11 @@ strip, that `plan_id` / `listing_id` / `duration` stay out of a row, the
 select-only lookup fields (typing filters but never becomes a value), in-place
 edits with their logged previous values, required vs optional markers, list
 columns as chips and as a tag editor, deactivation behind a confirmation,
-add-allocator inheritance, lookup outages, write failures, change history and
-its retry, and the empty/error states.
+re-activating a deactivated row, the impact share turning red and saying how far
+off it is whenever a change leaves a plan away from 100%, the clustering-method
+combo accepting both a listed and a typed method, the three sensitivity groups
+being all-or-none, add-allocator inheritance, lookup outages, write failures,
+change history and its retry, and the empty/error states.
 
 Browser tests use Playwright with intercepted API responses (no real database
 writes). They cover inline city-group accordions, the custom score-type picker,

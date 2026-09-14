@@ -4,6 +4,8 @@ import { useRoute } from 'vue-router'
 import LookupSelect from '../components/LookupSelect.vue'
 import TagChips from '../components/TagChips.vue'
 import TagEditor from '../components/TagEditor.vue'
+import FreeCombo from '../components/FreeCombo.vue'
+import FloatTriple from '../components/FloatTriple.vue'
 
 const route = useRoute()
 const planId = computed(() => route.params.id)
@@ -28,6 +30,10 @@ const ROW_FIELDS = [
   'batch_size', 'clustering_method', 'sensitivity_id', 'sensitivity_group',
 ]
 const REQUIRED_FIELDS = ['allocator_id', 'rule_name', 'impact_ratio']
+// Clustering method is free text, but these are the ones worth offering.
+const CLUSTERING_OPTIONS = ['kmeans', 'rfmxs', 'dbscan', 'hierarchical', 'none']
+// sensitivity_group is either nothing or exactly three floats, stored as JSON.
+const TRIPLE_FIELD = 'sensitivity_group'
 // Columns holding a JSON list of strings (districts, vendors). The stored JSON
 // can contain nulls, which are not values and are never shown or kept.
 const LIST_FIELDS = ['districts', 'vendors']
@@ -93,6 +99,26 @@ const allExpanded = computed(
 )
 
 const activeConfigs = computed(() => configs.value.filter((row) => !isDeactivated(row)))
+
+// A plan's active allocators are meant to share the whole incentive between
+// them, so their ratios should add up to 1 (100%).
+const impactOffBy = computed(() => {
+  if (impactRatioSum.value === null) return null
+  const diff = Number(impactRatioSum.value) - 1
+  // a rounding-sized difference is not worth shouting about
+  return Math.abs(diff) < 0.00005 ? 0 : diff
+})
+const impactIsWrong = computed(() => impactOffBy.value !== null && impactOffBy.value !== 0)
+const impactMessage = computed(() => {
+  if (!impactIsWrong.value) return ''
+  const short = impactOffBy.value > 0
+    ? `${ratioText(impactOffBy.value)} too much`
+    : `${ratioText(-impactOffBy.value)} short`
+  return (
+    `The impact ratios of this plan's active allocators add up to ` +
+    `${ratioText(impactRatioSum.value)}, not 100% — ${short}.`
+  )
+})
 
 // listing_id / duration are read off the plan's rows: they are the same on all
 // of them, so the first active row is the plan's value.
@@ -185,6 +211,38 @@ function parseList(value) {
     .map((item) => String(item).trim())
 }
 
+// sensitivity_group is stored as a JSON list of up to three numbers.
+function parseTriple(value) {
+  let raw = value
+  if (typeof raw === 'string') {
+    const text = raw.trim()
+    if (!text) return []
+    try {
+      raw = JSON.parse(text)
+    } catch {
+      return [text]
+    }
+  }
+  if (raw === null || raw === undefined || raw === '') return []
+  const items = (Array.isArray(raw) ? raw : [raw]).slice(0, 3)
+  return items.map((item) => (item === null || item === undefined ? '' : String(item)))
+}
+
+// A triple is all three numbers or nothing; a partial set is not storable.
+function formatTriple(values) {
+  const items = (values || []).map((v) => String(v ?? '').trim())
+  const filled = items.filter((v) => v !== '')
+  if (!filled.length) return ''
+  if (filled.length < 3) return null // incomplete: the form blocks the save
+  const numbers = items.map(Number)
+  if (numbers.some((n) => !Number.isFinite(n))) return null
+  return JSON.stringify(numbers)
+}
+
+function isTripleField(field) {
+  return String(field) === TRIPLE_FIELD
+}
+
 function isListField(field) {
   return LIST_FIELDS.includes(String(field))
 }
@@ -192,6 +250,12 @@ function isListField(field) {
 // Timestamp columns read as dates, everything else as plain text.
 function displayValue(field, value) {
   if (String(field).endsWith('_at')) return formatDate(value) || '—'
+  // the three sensitivity groups read as labelled numbers, not as raw JSON
+  if (isTripleField(field)) {
+    const items = parseTriple(value).filter((v) => String(v).trim() !== '')
+    if (!items.length) return '—'
+    return items.map((v, i) => `G${i + 1} ${Number(v)}`).join('  ·  ')
+  }
   return cellText(value)
 }
 
@@ -201,6 +265,16 @@ function notify(text, kind = 'ok') {
   toastTimer = setTimeout(() => {
     toast.value = null
   }, 4000)
+}
+
+// Report the result of a write, plus a warning when the plan's active
+// allocators no longer add up to 100%.
+function notifyChange(text) {
+  if (impactIsWrong.value) {
+    notify(`${text} ${impactMessage.value}`, 'warn')
+  } else {
+    notify(text)
+  }
 }
 
 // --- change history (incentive_base_configs_logs) ---------------------------
@@ -323,6 +397,7 @@ function openAdd() {
   for (const field of formFields.value) {
     // a new allocator starts from the plan's usual settings, not from scratch
     if (isListField(field)) values[field] = []
+    else if (isTripleField(field)) values[field] = parseTriple(template[field])
     else if (['batch_size', 'clustering_method'].includes(field)) values[field] = template[field] ?? ''
     else values[field] = ''
   }
@@ -340,11 +415,9 @@ function openEdit(row) {
   const values = {}
   for (const field of formFields.value) {
     const value = row[field]
-    values[field] = isListField(field)
-      ? parseList(value)
-      : value === null || value === undefined
-        ? ''
-        : value
+    if (isListField(field)) values[field] = parseList(value)
+    else if (isTripleField(field)) values[field] = parseTriple(value)
+    else values[field] = value === null || value === undefined ? '' : value
   }
   configForm.value = { mode: 'edit', id: row.id, values, allocator: row.allocator_id }
 }
@@ -369,6 +442,10 @@ function payloadFrom(values) {
       const items = parseList(value)
       // an empty list is stored as NULL, not as "[]"
       payload[field] = items.length ? JSON.stringify(items) : ''
+    } else if (isTripleField(field)) {
+      // three floats or nothing at all; a partial set never reaches the API
+      const encoded = formatTriple(value)
+      payload[field] = encoded === null ? '' : encoded
     } else {
       payload[field] = typeof value === 'string' ? value.trim() : value
     }
@@ -391,6 +468,16 @@ function validate(values) {
   if (formFields.value.includes('impact_ratio')) {
     const ratio = Number(values.impact_ratio)
     if (!Number.isFinite(ratio)) return "'Impact Ratio' must be a number."
+  }
+  if (formFields.value.includes(TRIPLE_FIELD)) {
+    const items = (values[TRIPLE_FIELD] || []).map((v) => String(v ?? '').trim())
+    const filled = items.filter((v) => v !== '')
+    if (filled.length && filled.length < 3) {
+      return `'Sensitivity Group' needs all three groups, or none.`
+    }
+    if (filled.length === 3 && items.some((v) => !Number.isFinite(Number(v)))) {
+      return `'Sensitivity Group' groups must be numbers.`
+    }
   }
   return ''
 }
@@ -426,7 +513,7 @@ async function savePlanForm() {
     if (!res.ok) throw new Error(data.message || data.detail || 'Failed to update the plan')
     planForm.value = null
     await loadConfigs(showDeactivated.value)
-    notify(
+    notifyChange(
       data.updated
         ? `Updated ${data.updated} allocator${data.updated === 1 ? '' : 's'} of this plan.`
         : 'Nothing to change.'
@@ -440,12 +527,15 @@ async function savePlanForm() {
 
 async function saveConfigForm() {
   const form = configForm.value
-  const values = payloadFrom(form.values)
-  const problem = validate(values)
+  // Validate the raw form values, not the payload: payloadFrom has already
+  // collapsed an incomplete sensitivity triple into "none", which would let a
+  // half-filled group wipe all three instead of being refused.
+  const problem = validate(form.values)
   if (problem) {
     formError.value = problem
     return
   }
+  const values = payloadFrom(form.values)
   saving.value = true
   formError.value = ''
   try {
@@ -483,11 +573,32 @@ async function saveConfigForm() {
     if (!res.ok) throw new Error(data.message || data.detail || 'Failed to save')
     configForm.value = null
     await loadConfigs(showDeactivated.value)
-    if (form.mode === 'add') notify('Allocator added.')
-    else if (data.logged) notify('Allocator updated.')
-    else notify('Nothing to change.')
+    if (form.mode === 'add') notifyChange('Allocator added.')
+    else if (data.logged) notifyChange('Allocator updated.')
+    else notifyChange('Nothing to change.')
   } catch (e) {
     formError.value = e.message
+  } finally {
+    saving.value = false
+  }
+}
+
+// A deactivated row is never deleted and every change is logged, so it can be
+// brought back later with its history intact.
+async function confirmActivate(row) {
+  saving.value = true
+  formError.value = ''
+  try {
+    const res = await fetch(
+      `/api/incentive-base-configs/${encodeURIComponent(row.id)}/activate`,
+      { method: 'POST' }
+    )
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.message || data.detail || 'Failed to activate')
+    await loadConfigs(showDeactivated.value)
+    notifyChange(data.logged ? 'Allocator activated.' : 'Allocator was already active.')
+  } catch (e) {
+    notify(e.message, 'error')
   } finally {
     saving.value = false
   }
@@ -506,7 +617,7 @@ async function confirmDeactivate() {
     if (!res.ok) throw new Error(data.message || data.detail || 'Failed to deactivate')
     deactivateTarget.value = null
     await loadConfigs(showDeactivated.value)
-    notify(data.logged ? 'Allocator deactivated.' : 'Allocator was already deactivated.')
+    notifyChange(data.logged ? 'Allocator deactivated.' : 'Allocator was already deactivated.')
   } catch (e) {
     formError.value = e.message
   } finally {
@@ -644,7 +755,12 @@ onMounted(load)
           </div>
         </div>
         <div class="card-head-actions">
-          <span v-if="impactRatioSum !== null" class="pill accent">
+          <span
+            v-if="impactRatioSum !== null"
+            class="pill"
+            :class="impactIsWrong ? 'danger' : 'accent'"
+            :title="impactIsWrong ? impactMessage : 'Active allocators add up to 100%'"
+          >
             impact {{ ratioText(impactRatioSum) }}
           </span>
           <span v-if="!configsLoading && !configsError" class="pill">
@@ -700,6 +816,10 @@ onMounted(load)
           </button>
         </div>
       </div>
+
+      <p v-if="impactIsWrong && !configsLoading && !configsError" class="impact-warning">
+        {{ impactMessage }}
+      </p>
 
       <div v-if="configsLoading" class="config-body">
         <p class="config-loading">Loading base configs…</p>
@@ -777,6 +897,14 @@ onMounted(load)
                     @click="askDeactivate(row)"
                   >
                     Deactivate
+                  </button>
+                  <button
+                    v-if="isDeactivated(row)"
+                    class="btn btn-ghost btn-sm"
+                    :disabled="saving"
+                    @click="confirmActivate(row)"
+                  >
+                    Activate
                   </button>
                   <span v-if="isDeactivated(row)" class="row-note">Deactivated</span>
                 </td>
@@ -963,6 +1091,19 @@ onMounted(load)
             :id="`config-${f}`"
             v-model="configForm.values[f]"
             :noun="colLabel(f)"
+          />
+          <FreeCombo
+            v-else-if="f === 'clustering_method'"
+            :id="`config-${f}`"
+            v-model="configForm.values[f]"
+            :options="CLUSTERING_OPTIONS"
+            noun="method"
+            placeholder="Pick a method or type your own…"
+          />
+          <FloatTriple
+            v-else-if="isTripleField(f)"
+            :id="`config-${f}`"
+            v-model="configForm.values[f]"
           />
           <input
             v-else
@@ -1157,6 +1298,17 @@ onMounted(load)
 }
 
 /* the plan's shared listing / duration */
+.impact-warning {
+  margin: 0.6rem 0 0;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--danger);
+  border-left-width: 3px;
+  border-radius: 0.55rem;
+  background: var(--danger-soft);
+  color: var(--danger-strong);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
 .shared-bar {
   display: flex;
   align-items: center;
@@ -1426,10 +1578,6 @@ tbody tr.detail-row:hover td {
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-}
-/* let the suggestion dropdown escape the modal's scroll box */
-.overlay .modal {
-  overflow: visible;
 }
 
 .sr-only {

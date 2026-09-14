@@ -237,6 +237,11 @@ button {
   background: var(--accent-soft);
   color: var(--accent-strong);
 }
+.pill.danger {
+  background: var(--danger-soft);
+  color: var(--danger-strong);
+  border-color: var(--danger);
+}
 .pill.plain {
   background: #fff;
   border: 1px solid var(--border);
@@ -433,6 +438,9 @@ button {
 .toast.error {
   background: var(--danger);
 }
+.toast.warn {
+  background: var(--warning);
+}
 
 /* error banner */
 .banner {
@@ -482,10 +490,13 @@ button {
   inset: 0;
   background: rgba(30, 42, 36, 0.4);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   padding: 1rem;
   z-index: 50;
+  /* a tall form scrolls here, not inside the modal, so the modal never has to
+     clip its own content (which is what pushed the buttons outside the box) */
+  overflow-y: auto;
 }
 .modal {
   background: #fff;
@@ -494,8 +505,9 @@ button {
   max-width: 460px;
   padding: 1.5rem;
   box-shadow: 0 20px 60px rgba(20, 40, 30, 0.25);
-  max-height: 85vh;
-  overflow-y: auto;
+  /* centred when it fits, scrollable by the overlay when it does not */
+  margin: auto;
+  flex: 0 0 auto;
 }
 .modal h2 {
   margin: 0 0 1rem;
@@ -539,5 +551,10 @@ button {
   justify-content: flex-end;
   gap: 0.6rem;
   margin-top: 1.25rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
+}
+.modal .actions .btn {
+  white-space: nowrap;
 }
 </style>
