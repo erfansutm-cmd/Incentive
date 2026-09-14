@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
+import LookupSelect from '../components/LookupSelect.vue'
 
 const route = useRoute()
 const planId = computed(() => route.params.id)
@@ -15,6 +16,15 @@ const cityName = ref('')
 // One row per allocator of the plan, joined on plan_id. Only the four summary
 // fields are shown up front; the rest of a row sits behind its dropdown.
 const SUMMARY_FIELDS = ['listing_id', 'allocator_id', 'rule_name', 'impact_ratio']
+// listing_id and duration belong to the plan, not to a row: they are shown and
+// edited once, for every allocator at once.
+const SHARED_FIELDS = ['listing_id', 'duration']
+// Columns a per-allocator change may set; the plan link is never shown per row.
+const ROW_FIELDS = [
+  'allocator_id', 'rule_name', 'impact_ratio', 'districts', 'vendors',
+  'batch_size', 'clustering_method', 'sensitivity_id', 'sensitivity_group',
+]
+const REQUIRED_ON_ADD = ['allocator_id', 'rule_name', 'impact_ratio']
 // Log columns that only identify the entry; the header already shows changed_at.
 const HISTORY_HIDDEN = ['log_id', 'config_id', 'changed_at']
 
@@ -30,6 +40,15 @@ const configsError = ref('')
 const expanded = ref(new Set())
 // row key -> { open, loading, error, rows, columns } of its logged versions
 const histories = ref({})
+
+// popups: plan-level edit, per-allocator add/replace, deactivate confirmation
+const planForm = ref(null)
+const configForm = ref(null)
+const deactivateTarget = ref(null)
+const saving = ref(false)
+const formError = ref('')
+const toast = ref(null)
+let toastTimer = null
 
 const isActive = computed(() => {
   if (!plan.value) return false
@@ -52,11 +71,32 @@ const tableFields = computed(() =>
 )
 
 // Everything else of the row, in table order — what the dropdown reveals.
-const detailFields = computed(() => fieldNames.value.filter((n) => !tableFields.value.includes(n)))
+// plan_id is the plan itself, so it is not repeated on every allocator.
+const detailFields = computed(() =>
+  fieldNames.value.filter((n) => !tableFields.value.includes(n) && n !== 'plan_id')
+)
+
+// The per-allocator fields this table actually has, in a stable form order.
+const formFields = computed(() => ROW_FIELDS.filter((f) => fieldNames.value.includes(f)))
 
 const allExpanded = computed(
   () => configs.value.length > 0 && expanded.value.size === configs.value.length
 )
+
+const activeConfigs = computed(() => configs.value.filter((row) => !isDeactivated(row)))
+
+// listing_id / duration are read off the plan's rows: they are the same on all
+// of them, so the first active row is the plan's value.
+const sharedValues = computed(() => {
+  const source = activeConfigs.value[0] || configs.value[0] || {}
+  return {
+    listing_id: source.listing_id ?? '',
+    duration: source.duration ?? '',
+  }
+})
+
+// Listings are looked up per city; fall back to the raw city_id.
+const listingCity = computed(() => cityName.value || plan.value?.city_id || '')
 
 function rowKey(row, i) {
   return row.id !== undefined && row.id !== null ? String(row.id) : `idx-${i}`
@@ -124,6 +164,14 @@ function displayValue(field, value) {
   return cellText(value)
 }
 
+function notify(text, kind = 'ok') {
+  toast.value = { text, kind }
+  if (toastTimer) clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => {
+    toast.value = null
+  }, 4000)
+}
+
 // --- change history (incentive_base_configs_logs) ---------------------------
 // Each logged row is the config as it was *before* a change. Loaded lazily the
 // first time a row's history is opened.
@@ -135,7 +183,7 @@ function historyFields(entry) {
   const names = (entry?.columns || []).length
     ? entry.columns.map((c) => c.name)
     : Object.keys(entry?.rows?.[0] || {})
-  return names.filter((n) => !HISTORY_HIDDEN.includes(n))
+  return names.filter((n) => !HISTORY_HIDDEN.includes(n) && n !== 'plan_id')
 }
 
 function historyLabel(row, i) {
@@ -153,9 +201,7 @@ async function loadHistory(row, i) {
   const key = rowKey(row, i)
   setHistory(key, { open: true, loading: true, error: '', rows: [], columns: [] })
   try {
-    const res = await fetch(
-      `/api/incentive-base-configs/${encodeURIComponent(row.id)}/logs`
-    )
+    const res = await fetch(`/api/incentive-base-configs/${encodeURIComponent(row.id)}/logs`)
     const data = await res.json()
     if (!res.ok) throw new Error(data.message || data.detail || 'Failed to load change history')
     setHistory(key, {
@@ -226,6 +272,201 @@ function retryConfigs() {
 
 function toggleDeactivated() {
   return loadConfigs(!showDeactivated.value)
+}
+
+// --- popups -----------------------------------------------------------------
+function openPlanEdit() {
+  formError.value = ''
+  planForm.value = {
+    listing_id: sharedValues.value.listing_id,
+    duration: sharedValues.value.duration,
+  }
+}
+
+function openAdd() {
+  formError.value = ''
+  const template = activeConfigs.value[0] || {}
+  const values = {}
+  for (const field of formFields.value) {
+    // a new allocator starts from the plan's usual settings, not from scratch
+    values[field] = ['batch_size', 'clustering_method'].includes(field)
+      ? template[field] ?? ''
+      : ''
+  }
+  configForm.value = {
+    mode: 'add',
+    id: null,
+    values,
+    listing_id: sharedValues.value.listing_id,
+    duration: sharedValues.value.duration,
+  }
+}
+
+function openReplace(row) {
+  formError.value = ''
+  const values = {}
+  for (const field of formFields.value) {
+    const value = row[field]
+    values[field] = value === null || value === undefined ? '' : value
+  }
+  configForm.value = { mode: 'replace', id: row.id, values, allocator: row.allocator_id }
+}
+
+function askDeactivate(row) {
+  formError.value = ''
+  deactivateTarget.value = row
+}
+
+function closePopups() {
+  if (saving.value) return
+  planForm.value = null
+  configForm.value = null
+  deactivateTarget.value = null
+  formError.value = ''
+}
+
+function payloadFrom(values) {
+  const payload = {}
+  for (const [field, value] of Object.entries(values)) {
+    payload[field] = typeof value === 'string' ? value.trim() : value
+  }
+  return payload
+}
+
+// Only the fields that identify an allocator are required; the rest of a row
+// may legitimately be empty, so an unchanged empty field is not a problem.
+function validate(values) {
+  for (const field of REQUIRED_ON_ADD) {
+    if (!formFields.value.includes(field)) continue
+    const value = values[field]
+    if (value === null || value === undefined || String(value).trim() === '') {
+      return `'${colLabel(field)}' is required.`
+    }
+  }
+  if (formFields.value.includes('impact_ratio')) {
+    const ratio = Number(values.impact_ratio)
+    if (!Number.isFinite(ratio)) return "'Impact Ratio' must be a number."
+  }
+  return ''
+}
+
+// Numeric columns go over the wire as numbers, not as the input's text.
+function asNumber(value) {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : value
+}
+
+async function savePlanForm() {
+  const listing = String(planForm.value.listing_id ?? '').trim()
+  const duration = String(planForm.value.duration ?? '').trim()
+  if (!listing) {
+    formError.value = "'Listing ID' is required."
+    return
+  }
+  saving.value = true
+  formError.value = ''
+  try {
+    const res = await fetch(
+      `/api/incentive-base-configs/plan/${encodeURIComponent(planId.value)}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          listing_id: listing,
+          duration: duration === '' ? '' : asNumber(duration),
+        }),
+      }
+    )
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.message || data.detail || 'Failed to update the plan')
+    planForm.value = null
+    await loadConfigs(showDeactivated.value)
+    notify(
+      data.updated
+        ? `Updated ${data.updated} allocator${data.updated === 1 ? '' : 's'} of this plan.`
+        : 'Nothing to change.'
+    )
+  } catch (e) {
+    formError.value = e.message
+  } finally {
+    saving.value = false
+  }
+}
+
+async function saveConfigForm() {
+  const form = configForm.value
+  const values = payloadFrom(form.values)
+  const problem = validate(values)
+  if (problem) {
+    formError.value = problem
+    return
+  }
+  saving.value = true
+  formError.value = ''
+  try {
+    let res
+    if (form.mode === 'add') {
+      const body = { plan_id: String(planId.value), ...values }
+      // the first allocator of a plan sets its listing and duration; later ones
+      // inherit them, so they are not sent again
+      if (!activeConfigs.value.length) {
+        body.listing_id = String(form.listing_id ?? '').trim()
+        const duration = String(form.duration ?? '').trim()
+        if (duration !== '') body.duration = asNumber(duration)
+        if (!body.listing_id) {
+          formError.value = "'Listing ID' is required."
+          saving.value = false
+          return
+        }
+      }
+      res = await fetch('/api/incentive-base-configs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    } else {
+      res = await fetch(
+        `/api/incentive-base-configs/${encodeURIComponent(form.id)}/replace`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(values),
+        }
+      )
+    }
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.message || data.detail || 'Failed to save')
+    configForm.value = null
+    await loadConfigs(showDeactivated.value)
+    if (form.mode === 'add') notify('Allocator added.')
+    else if (data.replaced) notify('Allocator replaced: the previous row was deactivated.')
+    else notify('Nothing to change.')
+  } catch (e) {
+    formError.value = e.message
+  } finally {
+    saving.value = false
+  }
+}
+
+async function confirmDeactivate() {
+  const row = deactivateTarget.value
+  saving.value = true
+  formError.value = ''
+  try {
+    const res = await fetch(
+      `/api/incentive-base-configs/${encodeURIComponent(row.id)}/deactivate`,
+      { method: 'POST' }
+    )
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.message || data.detail || 'Failed to deactivate')
+    deactivateTarget.value = null
+    await loadConfigs(showDeactivated.value)
+    notify(data.logged ? 'Allocator deactivated.' : 'Allocator was already deactivated.')
+  } catch (e) {
+    formError.value = e.message
+  } finally {
+    saving.value = false
+  }
 }
 
 async function load() {
@@ -339,8 +580,6 @@ onMounted(load)
           <dd>{{ formatDate(plan.deactivated_at) || '—' }}</dd>
         </div>
       </dl>
-
-      <!-- more sections will be added here later -->
     </div>
 
     <!-- base configs of the plan (incentive_base_configs, joined on plan_id) -->
@@ -383,6 +622,37 @@ onMounted(load)
           >
             {{ allExpanded ? 'Collapse all' : 'Expand all' }}
           </button>
+          <button
+            v-if="!configsLoading && !configsError"
+            class="btn btn-primary btn-sm"
+            @click="openAdd"
+          >
+            + Add allocator
+          </button>
+        </div>
+      </div>
+
+      <!-- listing and duration are the plan's, shared by every allocator -->
+      <div v-if="!configsLoading && !configsError" class="shared-bar">
+        <dl class="shared-values">
+          <div>
+            <dt>Listing</dt>
+            <dd>{{ cellText(sharedValues.listing_id) }}</dd>
+          </div>
+          <div>
+            <dt>Duration</dt>
+            <dd>{{ cellText(sharedValues.duration) }}</dd>
+          </div>
+        </dl>
+        <div class="shared-actions">
+          <span class="shared-note">Same for every allocator of this plan</span>
+          <button
+            v-if="activeConfigs.length"
+            class="btn btn-ghost btn-sm"
+            @click="openPlanEdit"
+          >
+            Edit for all
+          </button>
         </div>
       </div>
 
@@ -410,6 +680,7 @@ onMounted(load)
             <tr>
               <th class="expand-col"><span class="sr-only">Details</span></th>
               <th v-for="f in tableFields" :key="f">{{ colLabel(f) }}</th>
+              <th class="actions-col">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -444,15 +715,29 @@ onMounted(load)
                   </template>
                   <template v-else>
                     {{ cellText(row[f]) }}
-                    <span
-                      v-if="fi === 0 && isDeactivated(row)"
-                      class="tag-off"
-                    >Deactivated</span>
+                    <span v-if="fi === 0 && isDeactivated(row)" class="tag-off">Deactivated</span>
                   </template>
+                </td>
+                <td class="actions-col" @click.stop>
+                  <button
+                    v-if="!isDeactivated(row)"
+                    class="btn btn-ghost btn-sm"
+                    @click="openReplace(row)"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    v-if="!isDeactivated(row)"
+                    class="btn btn-danger-soft btn-sm"
+                    @click="askDeactivate(row)"
+                  >
+                    Deactivate
+                  </button>
+                  <span v-if="isDeactivated(row)" class="row-note">Deactivated</span>
                 </td>
               </tr>
               <tr v-if="isOpen(row, i)" class="detail-row">
-                <td :id="`config-detail-${rowKey(row, i)}`" :colspan="tableFields.length + 1" class="detail-cell" @click.stop>
+                <td :id="`config-detail-${rowKey(row, i)}`" :colspan="tableFields.length + 2" class="detail-cell" @click.stop>
                   <dl v-if="detailFields.length" class="detail-facts">
                     <div v-for="f in detailFields" :key="f">
                       <dt>{{ colLabel(f) }}</dt>
@@ -515,6 +800,155 @@ onMounted(load)
         </table>
       </div>
     </section>
+
+    <!-- edit listing / duration for every allocator of the plan -->
+    <div v-if="planForm" class="overlay" @click.self="closePopups">
+      <div class="modal">
+        <h2 id="plan-form-title">Edit listing and duration</h2>
+        <p class="modal-hint">
+          Both are shared by every allocator of plan {{ planId }}, so saving
+          updates all {{ activeConfigs.length }} of them. Each row keeps a log
+          of its previous values.
+        </p>
+        <p v-if="formError" class="form-error">{{ formError }}</p>
+        <label class="field" for="plan-listing">
+          <span>Listing ID</span>
+          <LookupSelect
+            id="plan-listing"
+            v-model="planForm.listing_id"
+            source="listings"
+            :city="listingCity"
+            noun="listing"
+            placeholder="Search the listings of this city…"
+          />
+        </label>
+        <label class="field" for="plan-duration">
+          <span>Duration</span>
+          <input id="plan-duration" v-model="planForm.duration" type="number" step="1" />
+        </label>
+        <div class="actions">
+          <button class="btn btn-ghost" :disabled="saving" @click="closePopups">Cancel</button>
+          <button class="btn btn-primary" :disabled="saving" @click="savePlanForm">
+            {{ saving ? 'Saving…' : 'Save for all allocators' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- add an allocator, or replace one (deactivate + create) -->
+    <div v-if="configForm" class="overlay" @click.self="closePopups">
+      <div class="modal">
+        <h2 :id="configForm.mode === 'add' ? 'add-config-title' : 'replace-config-title'">
+          {{ configForm.mode === 'add' ? 'Add allocator' : 'Change allocator' }}
+        </h2>
+        <p v-if="configForm.mode === 'add'" class="modal-hint">
+          <template v-if="activeConfigs.length">
+            Added to plan {{ planId }} with its listing
+            <code>{{ cellText(sharedValues.listing_id) }}</code> and duration
+            <code>{{ cellText(sharedValues.duration) }}</code>.
+          </template>
+          <template v-else>
+            This is the first allocator of plan {{ planId }}, so it also sets
+            the listing and duration every later allocator inherits.
+          </template>
+        </p>
+        <p v-else class="modal-hint">
+          Changing an allocator does not edit its row: the current row is
+          deactivated (and logged) and a new one is created with these values.
+        </p>
+        <p v-if="formError" class="form-error">{{ formError }}</p>
+
+        <template v-if="configForm.mode === 'add' && !activeConfigs.length">
+          <label class="field" for="add-listing">
+            <span>Listing ID</span>
+            <LookupSelect
+              id="add-listing"
+              v-model="configForm.listing_id"
+              source="listings"
+              :city="listingCity"
+              noun="listing"
+              placeholder="Search the listings of this city…"
+            />
+          </label>
+          <label class="field" for="add-duration">
+            <span>Duration</span>
+            <input id="add-duration" v-model="configForm.duration" type="number" step="1" />
+          </label>
+        </template>
+
+        <label v-for="f in formFields" :key="f" class="field" :for="`config-${f}`">
+          <span>
+            {{ colLabel(f) }}
+            <em v-if="!REQUIRED_ON_ADD.includes(f) || configForm.mode === 'replace'" class="opt">
+              (optional)
+            </em>
+          </span>
+          <LookupSelect
+            v-if="f === 'allocator_id'"
+            :id="`config-${f}`"
+            v-model="configForm.values[f]"
+            source="allocators"
+            noun="allocator"
+            placeholder="Search the available allocators…"
+          />
+          <LookupSelect
+            v-else-if="f === 'rule_name'"
+            :id="`config-${f}`"
+            v-model="configForm.values[f]"
+            source="rules"
+            noun="rule"
+            placeholder="Search the available rules…"
+          />
+          <input
+            v-else
+            :id="`config-${f}`"
+            v-model="configForm.values[f]"
+            :type="['impact_ratio'].includes(f) ? 'number' : ['batch_size', 'duration'].includes(f) ? 'number' : 'text'"
+            :step="f === 'impact_ratio' ? '0.0001' : '1'"
+          />
+        </label>
+
+        <div class="actions">
+          <button class="btn btn-ghost" :disabled="saving" @click="closePopups">Cancel</button>
+          <button class="btn btn-primary" :disabled="saving" @click="saveConfigForm">
+            {{
+              saving
+                ? 'Saving…'
+                : configForm.mode === 'add'
+                  ? 'Add allocator'
+                  : 'Deactivate and create new'
+            }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- deactivate confirmation -->
+    <div v-if="deactivateTarget" class="overlay" @click.self="closePopups">
+      <div class="modal">
+        <h2 id="deactivate-title">Deactivate allocator</h2>
+        <p v-if="formError" class="form-error">{{ formError }}</p>
+        <p class="confirm-text">
+          Deactivate
+          <strong>{{ deactivateTarget.allocator_id }}</strong>
+          (<code>{{ deactivateTarget.rule_name }}</code>,
+          {{ ratioText(deactivateTarget.impact_ratio) }})
+          on plan {{ planId }}?
+        </p>
+        <p class="modal-hint">
+          It leaves the plan's active allocators and its values are kept in the
+          change log. Nothing is deleted.
+        </p>
+        <div class="actions">
+          <button class="btn btn-ghost" :disabled="saving" @click="closePopups">Cancel</button>
+          <button class="btn btn-danger" :disabled="saving" @click="confirmDeactivate">
+            {{ saving ? 'Working…' : 'Deactivate' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="toast" class="toast" :class="toast.kind">{{ toast.text }}</div>
   </div>
 </template>
 
@@ -622,7 +1056,7 @@ onMounted(load)
 /* --- base configs ------------------------------------------------------- */
 .config-section {
   margin-top: 0.85rem;
-  overflow: hidden;
+  overflow: visible;
 }
 .config-section h2 {
   margin: 0;
@@ -655,6 +1089,48 @@ onMounted(load)
   border-radius: 0.6rem;
   padding: 0.7rem 0.9rem;
   font-size: 0.88rem;
+}
+
+/* the plan's shared listing / duration */
+.shared-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.85rem 1.25rem;
+  border-top: 1px solid var(--border);
+  background: #fbfdfc;
+}
+.shared-values {
+  display: flex;
+  gap: 1.75rem;
+  flex-wrap: wrap;
+  margin: 0;
+}
+.shared-values dt {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.shared-values dd {
+  margin: 0.1rem 0 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.shared-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+}
+.shared-note {
+  font-size: 0.78rem;
+  color: var(--muted);
 }
 
 .table-scroll {
@@ -709,6 +1185,17 @@ thead th.expand-col {
 tbody td.expand-col .chevron-disc {
   margin: 0 auto;
   padding: 0;
+}
+.actions-col {
+  text-align: right;
+  white-space: nowrap;
+}
+.actions-col .btn + .btn {
+  margin-left: 0.4rem;
+}
+.row-note {
+  color: var(--muted);
+  font-size: 0.8rem;
 }
 .mono-cell {
   font-variant-numeric: tabular-nums;
@@ -834,6 +1321,44 @@ tbody tr.detail-row:hover td {
   animation: none;
 }
 
+/* popups */
+.modal code,
+.modal-hint code {
+  background: var(--surface-2);
+  padding: 0.05rem 0.35rem;
+  border-radius: 0.3rem;
+  color: var(--accent-strong);
+}
+.modal-hint {
+  margin: -0.4rem 0 1rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+.form-error {
+  color: #8c3030;
+  background: var(--danger-soft);
+  border: 1px solid #f0caca;
+  border-radius: 0.55rem;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.85rem;
+  margin: 0 0 0.6rem;
+}
+.confirm-text {
+  color: var(--text);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.field .opt {
+  font-weight: 400;
+  color: var(--muted);
+  font-style: normal;
+}
+/* let the suggestion dropdown escape the modal's scroll box */
+.overlay .modal {
+  overflow: visible;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -845,13 +1370,17 @@ tbody tr.detail-row:hover td {
   white-space: nowrap;
   border: 0;
 }
-button:focus-visible {
+button:focus-visible,
+input:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
 @media (max-width: 640px) {
   .config-body,
   .detail-cell {
+    padding: 0.85rem;
+  }
+  .shared-bar {
     padding: 0.85rem;
   }
 }

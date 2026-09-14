@@ -475,3 +475,244 @@ class BaseConfigAPITests(unittest.TestCase):
         response = self.client.get(f"{BASE}/5/logs")
         self.assertEqual(response.status_code, 500, response.text)
         self.assertIn("no such table", response.json()["message"])
+
+    # --- plan-level shared columns ---------------------------------------
+    def test_add_allocator_inherits_the_shared_columns_of_its_plan(self):
+        response = self.client.post(BASE, json={
+            "plan_id": 1, "allocator_id": "foodZooket-kerman-4T-range-base",
+            "rule_name": "foodZooket-kerman-4step-base", "impact_ratio": 0.2,
+            "batch_size": 0, "clustering_method": "kmeans",
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["inherited"], {"listing_id": "kerman-daily-foodZooket", "duration": 1})
+        row = body["row"]
+        self.assertEqual(row["plan_id"], 1)
+        self.assertEqual(row["listing_id"], "kerman-daily-foodZooket")
+        self.assertEqual(row["duration"], 1)
+        self.assertEqual(row["impact_ratio"], 0.2)
+        self.assertEqual(row["created_at"], NOW)
+        self.assertIsNone(row["updated_at"])
+        self.assertIsNone(row["deactivated_at"])
+        # it joins the plan's listing, biggest ratio first
+        self.assertEqual([r["id"] for r in self.read(1)["rows"]], [2, 1, row["id"]])
+        # adding a row is not a change, so nothing is logged
+        self.assertEqual(self.log_rows(), [])
+
+    def test_add_allocator_rejects_shared_columns_that_differ_from_the_plan(self):
+        response = self.client.post(BASE, json={
+            "plan_id": 1, "allocator_id": "x", "rule_name": "y", "impact_ratio": 0.2,
+            "listing_id": "another-listing", "duration": 7,
+        })
+        self.assertEqual(response.status_code, 409, response.text)
+        body = response.json()
+        self.assertEqual(body["status"], "error")
+        self.assertEqual(
+            [(c["column"], c["plan"], c["submitted"]) for c in body["conflicts"]],
+            [("listing_id", "kerman-daily-foodZooket", "another-listing"), ("duration", 1, 7)],
+        )
+        self.assertEqual(len(self.read(1)["rows"]), 2)
+
+    def test_add_allocator_accepts_the_shared_values_the_plan_already_has(self):
+        response = self.client.post(BASE, json={
+            "plan_id": 1, "allocator_id": "x", "rule_name": "y", "impact_ratio": 0.2,
+            "listing_id": "kerman-daily-foodZooket", "duration": "1",
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(self.read(1)["rows"]), 3)
+
+    def test_first_allocator_of_a_plan_sets_the_shared_columns(self):
+        missing = self.client.post(BASE, json={
+            "plan_id": 77, "allocator_id": "x", "rule_name": "y", "impact_ratio": 1,
+        })
+        self.assertEqual(missing.status_code, 400, missing.text)
+        self.assertIn("listing_id", missing.json()["message"])
+
+        response = self.client.post(BASE, json={
+            "plan_id": 77, "allocator_id": "x", "rule_name": "y", "impact_ratio": 1,
+            "listing_id": "new-city-daily-foodZooket", "duration": 2,
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["inherited"], {})
+        row = response.json()["row"]
+        self.assertEqual(row["listing_id"], "new-city-daily-foodZooket")
+        self.assertEqual(row["duration"], 2)
+        # the next allocator of that plan now inherits them
+        second = self.client.post(BASE, json={
+            "plan_id": 77, "allocator_id": "z", "rule_name": "w", "impact_ratio": 0.5,
+        })
+        self.assertEqual(second.json()["inherited"], {"listing_id": "new-city-daily-foodZooket", "duration": 2})
+
+    def test_add_allocator_requires_its_fields(self):
+        for payload in [
+            {}, {"plan_id": 1}, {"plan_id": 1, "allocator_id": "x"},
+            {"plan_id": 1, "allocator_id": "x", "rule_name": "y"},
+            {"plan_id": 1, "allocator_id": "x", "rule_name": "y", "impact_ratio": ""},
+        ]:
+            with self.subTest(payload=payload):
+                response = self.client.post(BASE, json=payload)
+                self.assertEqual(response.status_code, 400, response.text)
+                self.assertIn("is required", response.json()["message"])
+
+    def test_plan_update_changes_every_row_and_logs_each_previous_one(self):
+        response = self.client.put(f"{BASE}/plan/1", json={"listing_id": "kerman-daily-foodZooket-2"})
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertTrue(body["logged"])
+        self.assertEqual(body["updated"], 2)
+        self.assertEqual(body["changes"], {
+            "listing_id": {"from": "kerman-daily-foodZooket", "to": "kerman-daily-foodZooket-2"},
+        })
+
+        rows = self.read(1)["rows"]
+        self.assertEqual({r["listing_id"] for r in rows}, {"kerman-daily-foodZooket-2"})
+        self.assertEqual({r["updated_at"] for r in rows}, {NOW})
+        # every row kept its own allocator identity
+        self.assertEqual(
+            sorted(r["allocator_id"] for r in rows),
+            ["foodZooket-kerman-3T-range-base", "foodZooket-kerman-3T-range-base-20260905"],
+        )
+
+        logged = self.log_rows()
+        self.assertEqual(len(logged), 2)
+        self.assertEqual(sorted(r["config_id"] for r in logged), [1, 2])
+        self.assertEqual({r["listing_id"] for r in logged}, {"kerman-daily-foodZooket"})
+        self.assertEqual({r["changed_at"] for r in logged}, {NOW})
+
+    def test_plan_update_of_duration_applies_to_every_row(self):
+        response = self.client.put(f"{BASE}/plan/4", json={"duration": 30})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["updated"], 2)
+        self.assertEqual({r["duration"] for r in self.read(4)["rows"]}, {30})
+
+    def test_plan_update_skips_rows_that_already_match(self):
+        with self.engine.begin() as conn:
+            conn.execute(text(f"UPDATE {TABLE_SQL} SET duration = 9 WHERE id = 5"))
+        response = self.client.put(f"{BASE}/plan/4", json={"duration": 9})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["updated"], 1)
+        logged = self.log_rows()
+        self.assertEqual([r["config_id"] for r in logged], [6])
+        self.assertEqual(logged[0]["duration"], 1)
+
+    def test_plan_update_with_nothing_to_change_logs_nothing(self):
+        response = self.client.put(f"{BASE}/plan/1", json={"duration": 1})
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertFalse(body["logged"])
+        self.assertEqual(body["updated"], 0)
+        self.assertEqual(self.log_rows(), [])
+
+    def test_plan_update_only_accepts_the_shared_columns(self):
+        for payload in [{}, {"allocator_id": "x"}, {"impact_ratio": 0.5}, {"plan_id": 3}]:
+            with self.subTest(payload=payload):
+                response = self.client.put(f"{BASE}/plan/1", json=payload)
+                self.assertEqual(response.status_code, 400, response.text)
+                self.assertIn("listing_id and duration", response.json()["message"])
+        self.assertEqual(self.log_rows(), [])
+
+    def test_plan_update_of_a_plan_without_active_configs_is_a_404(self):
+        self.assertEqual(self.client.put(f"{BASE}/plan/999", json={"duration": 5}).status_code, 404)
+        self.assertEqual(self.client.put(f"{BASE}/plan/%20%20", json={"duration": 5}).status_code, 400)
+
+    def test_plan_update_ignores_deactivated_rows(self):
+        with self.engine.begin() as conn:
+            conn.execute(text(f"UPDATE {TABLE_SQL} SET deactivated_at = :at WHERE id = 2"), {"at": NOW})
+        response = self.client.put(f"{BASE}/plan/1", json={"listing_id": "renamed"})
+        self.assertEqual(response.json()["updated"], 1)
+        rows = self.sql(f"SELECT id, listing_id FROM {TABLE_SQL} WHERE plan_id = 1 ORDER BY id")
+        self.assertEqual(rows, [
+            {"id": 1, "listing_id": "renamed"},
+            {"id": 2, "listing_id": "kerman-daily-foodZooket"},
+        ])
+
+    # --- per-allocator change: deactivate the old row, create a new one ---
+    def test_replace_deactivates_the_old_row_and_creates_a_new_one(self):
+        response = self.client.post(f"{BASE}/2/replace", json={"impact_ratio": 0.75})
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertTrue(body["replaced"])
+        self.assertEqual(body["deactivated_id"], 2)
+        self.assertEqual(body["changes"], {"impact_ratio": {"from": 0.6, "to": 0.75}})
+
+        new = body["row"]
+        self.assertNotEqual(new["id"], 2)
+        self.assertEqual(new["impact_ratio"], 0.75)
+        # the plan's shared columns and identity are carried over
+        self.assertEqual(new["plan_id"], 1)
+        self.assertEqual(new["listing_id"], "kerman-daily-foodZooket")
+        self.assertEqual(new["duration"], 1)
+        self.assertEqual(new["allocator_id"], "foodZooket-kerman-3T-range-base-20260905")
+        self.assertEqual(new["created_at"], NOW)
+        self.assertIsNone(new["deactivated_at"])
+
+        stored = {r["id"]: r for r in self.sql(f"SELECT * FROM {TABLE_SQL} WHERE plan_id = 1")}
+        self.assertEqual(stored[2]["deactivated_at"], NOW)
+        self.assertEqual(stored[2]["impact_ratio"], 0.6)  # untouched, just retired
+        self.assertIsNone(stored[new["id"]]["deactivated_at"])
+        # only the new row is active, so the plan's share follows it
+        self.assertEqual([r["id"] for r in self.read(1)["rows"]], [new["id"], 1])
+        self.assertEqual(self.read(1)["impact_ratio_sum"], 1.15)
+
+        logged = self.log_rows()
+        self.assertEqual(len(logged), 1)
+        self.assertEqual(logged[0]["config_id"], 2)
+        self.assertEqual(logged[0]["impact_ratio"], 0.6)
+        self.assertIsNone(logged[0]["deactivated_at"])  # active before the change
+
+    def test_replace_can_change_several_allocator_fields_at_once(self):
+        response = self.client.post(f"{BASE}/5/replace", json={
+            "allocator_id": "foodZooket-semnan-2T-base", "rule_name": "foodZooket-semnan-2step-base",
+            "clustering_method": "dbscan", "batch_size": 10,
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(sorted(body["changes"]), ["allocator_id", "batch_size", "clustering_method", "rule_name"])
+        row = body["row"]
+        self.assertEqual(row["allocator_id"], "foodZooket-semnan-2T-base")
+        self.assertEqual(row["clustering_method"], "dbscan")
+        self.assertEqual(row["batch_size"], 10)
+        self.assertEqual(row["impact_ratio"], 0.8)  # untouched
+
+    def test_replace_without_changes_creates_nothing(self):
+        response = self.client.post(f"{BASE}/2/replace", json={"impact_ratio": "0.6000"})
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertFalse(body["replaced"])
+        self.assertEqual(body["message"], "No changes to record.")
+        self.assertEqual(len(self.read(1)["rows"]), 2)
+        self.assertEqual(self.log_rows(), [])
+
+    def test_replace_rejects_the_shared_and_plan_columns(self):
+        for payload in [
+            {"impact_ratio": 0.5, "listing_id": "other"},
+            {"impact_ratio": 0.5, "duration": 9},
+            {"impact_ratio": 0.5, "plan_id": 4},
+        ]:
+            with self.subTest(payload=payload):
+                response = self.client.post(f"{BASE}/2/replace", json=payload)
+                self.assertEqual(response.status_code, 409, response.text)
+                self.assertEqual(response.json()["status"], "error")
+        self.assertEqual(len(self.read(1)["rows"]), 2)
+        self.assertEqual(self.log_rows(), [])
+
+    def test_replace_needs_a_per_allocator_field(self):
+        for payload in [{}, {"listing_id": "x"}, {"plan_id": 1}]:
+            with self.subTest(payload=payload):
+                response = self.client.post(f"{BASE}/2/replace", json=payload)
+                self.assertEqual(response.status_code, 400, response.text)
+                self.assertIn("No per-allocator fields", response.json()["message"])
+
+    def test_replace_of_an_unknown_config_is_a_404(self):
+        self.assertEqual(
+            self.client.post(f"{BASE}/999/replace", json={"impact_ratio": 0.5}).status_code, 404
+        )
+        self.assertEqual(self.log_rows(), [])
+
+    def test_replaced_config_history_follows_the_new_row(self):
+        new_id = self.client.post(f"{BASE}/2/replace", json={"impact_ratio": 0.75}).json()["id"]
+        self.client.post(f"{BASE}/{new_id}/replace", json={"impact_ratio": 0.9})
+        # each row carries the log of the change that retired it
+        self.assertEqual(self.logs(2)["total"], 1)
+        self.assertEqual(self.logs(new_id)["total"], 1)
+        self.assertEqual(self.logs(new_id)["rows"][0]["impact_ratio"], 0.75)
