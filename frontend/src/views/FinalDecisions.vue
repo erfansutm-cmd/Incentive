@@ -209,7 +209,6 @@ function citySubtitle(c) {
         <template v-if="loading">Loading…</template>
         <template v-else>{{ visibleCount }} of {{ totalCities }} cities</template>
       </span>
-      <span class="hint toolbar-hint">Collapsed shows the best-priority entity per city</span>
     </div>
 
     <div v-if="error" class="banner error" role="alert">
@@ -225,10 +224,16 @@ function citySubtitle(c) {
     </div>
 
     <template v-else-if="!cities.length">
-      <div class="card empty">
-        <div class="empty-mark" aria-hidden="true">—</div>
+      <div class="card empty final-empty">
+        <div class="empty-illust" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="4" width="18" height="16" rx="2" ry="2" />
+            <path d="M16 2v4M8 2v4M3 10h18" />
+            <path d="M9 15l2 2 4-4" />
+          </svg>
+        </div>
         <h3>No scores for {{ selectedDate }}</h3>
-        <p>Not found. Try another date.</p>
+        <p>There’s nothing to show for this incentive date. Pick another date to explore city scores.</p>
       </div>
     </template>
 
@@ -303,9 +308,8 @@ function citySubtitle(c) {
                     <div class="city-name">{{ city.city }}</div>
                     <div class="city-meta">
                       <span class="city-id">#{{ city.city_id }}</span>
-                      <span v-if="city.box_city_name" class="box-name">{{ city.box_city_name }}</span>
+                      <span v-if="city.box_city_name && city.box_city_name !== city.city" class="box-name">{{ city.box_city_name }}</span>
                     </div>
-                    <div v-if="citySubtitle(city)" class="city-sub">{{ citySubtitle(city) }}</div>
                   </td>
                   <td class="entity-cell">
                     <template v-if="city.primary_entity">
@@ -430,11 +434,6 @@ function citySubtitle(c) {
             </tbody>
           </table>
         </div>
-
-        <div class="combined-foot">
-          <span class="hint">{{ filteredCities.length }} cities shown · {{ selectedDate }}</span>
-          <button class="btn btn-ghost btn-sm" @click="load">Refresh data</button>
-        </div>
       </section>
     </template>
 
@@ -511,6 +510,22 @@ function citySubtitle(c) {
   color: var(--accent);
   font-size: 1.7rem;
 }
+.empty-illust {
+  display: inline-grid;
+  place-items: center;
+  width: 3.2rem;
+  height: 3.2rem;
+  background: var(--accent-soft);
+  border-radius: 0.9rem;
+  color: var(--accent);
+}
+.empty-illust svg {
+  display: block;
+}
+.final-empty {
+  border: 1px dashed var(--border);
+  background: #fbfdfc;
+}
 .spinner {
   width: 18px;
   height: 18px;
@@ -543,6 +558,22 @@ function citySubtitle(c) {
   width: 100%;
   border-collapse: collapse;
   min-width: 860px;
+  table-layout: fixed;
+}
+.col-expand {
+  width: 48px;
+}
+.col-city {
+  width: 184px;
+}
+.col-entity {
+  width: 164px;
+}
+.col-score {
+  width: 108px;
+}
+.col-decisions {
+  width: 140px;
 }
 .final-table thead th {
   text-align: left;
