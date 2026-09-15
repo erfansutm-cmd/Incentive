@@ -27,7 +27,6 @@ function scoreBadgeClass(v) {
   if (v === null || v === undefined || v === '') return 'muted'
   const n = Number(v)
   if (!Number.isFinite(n)) return 'muted'
-  // Bigger scores are worse → red; smaller → green (inverted)
   if (n <= 1) return 'high'
   if (n <= 2) return 'med'
   if (n <= 3) return 'low'
@@ -45,6 +44,8 @@ const generatedAt = ref('')
 const incentiveDate = ref('')
 
 const expanded = ref(new Set())
+const sortKey = ref(null)
+const sortDir = ref('asc')
 const message = ref(null)
 let messageTimer = null
 let controller = null
@@ -69,13 +70,48 @@ const filteredCities = computed(() => {
   })
 })
 
+const sortedCities = computed(() => {
+  if (!sortKey.value) return filteredCities.value
+  const key = sortKey.value
+  const dir = sortDir.value === 'asc' ? 1 : -1
+  return [...filteredCities.value].sort((a, b) => {
+    const av = a.primary_entity?.scores?.[key]
+    const bv = b.primary_entity?.scores?.[key]
+    const aNull = av === null || av === undefined || av === ''
+    const bNull = bv === null || bv === undefined || bv === ''
+    if (aNull && bNull) return 0
+    if (aNull) return 1
+    if (bNull) return -1
+    const an = Number(av)
+    const bn = Number(bv)
+    if (!Number.isFinite(an) && !Number.isFinite(bn)) return 0
+    if (!Number.isFinite(an)) return 1
+    if (!Number.isFinite(bn)) return -1
+    if (an === bn) return String(a.city).localeCompare(String(b.city))
+    return (an - bn) * dir
+  })
+})
+
 const totalCities = computed(() => cities.value.length)
 const totalEntities = computed(() => cities.value.reduce((sum, c) => sum + (c.entity_count || 0), 0))
 const visibleCount = computed(() => filteredCities.value.length)
 
 const allExpanded = computed(
-  () => filteredCities.value.length > 0 && filteredCities.value.every((c) => expanded.value.has(String(c.city_id_raw ?? c.city_id)))
+  () => sortedCities.value.length > 0 && sortedCities.value.every((c) => expanded.value.has(String(c.city_id_raw ?? c.city_id)))
 )
+
+function toggleSort(key) {
+  if (sortKey.value === key) {
+    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortKey.value = key
+    sortDir.value = 'asc'
+  }
+}
+function sortLabel(key) {
+  if (sortKey.value !== key) return ''
+  return sortDir.value === 'asc' ? '▲' : '▼'
+}
 
 function cityKey(c) {
   return String(c.city_id_raw ?? c.city_id)
@@ -91,16 +127,13 @@ function toggleCity(c) {
 }
 function expandAll() {
   const next = new Set(expanded.value)
-  for (const c of filteredCities.value) next.add(cityKey(c))
+  for (const c of sortedCities.value) next.add(cityKey(c))
   expanded.value = next
 }
 function collapseAll() {
   const next = new Set(expanded.value)
-  for (const c of filteredCities.value) next.delete(cityKey(c))
+  for (const c of sortedCities.value) next.delete(cityKey(c))
   expanded.value = next
-}
-function clearSearch() {
-  searchQuery.value = ''
 }
 function clearFilters() {
   searchQuery.value = ''
@@ -148,13 +181,6 @@ onBeforeUnmount(() => {
   controller?.abort()
   clearTimeout(messageTimer)
 })
-
-function citySubtitle(c) {
-  const parts = []
-  if (c.city_group) parts.push(c.city_group)
-  if (c.box_city_name && c.box_city_name !== c.city) parts.push(c.box_city_name)
-  return parts.join(' · ')
-}
 </script>
 
 <template>
@@ -177,7 +203,7 @@ function citySubtitle(c) {
         </label>
         <button class="btn btn-ghost" :disabled="loading" @click="load">Refresh</button>
         <button
-          v-if="filteredCities.length"
+          v-if="sortedCities.length"
           class="btn btn-ghost"
           :disabled="loading"
           @click="allExpanded ? collapseAll() : expandAll()"
@@ -237,7 +263,7 @@ function citySubtitle(c) {
       </div>
     </template>
 
-    <template v-else-if="!filteredCities.length">
+    <template v-else-if="!sortedCities.length">
       <div class="card empty">
         <h3>No cities match your search</h3>
         <p>{{ totalCities }} cities have scores for {{ selectedDate }}, but none match your filter.</p>
@@ -288,14 +314,26 @@ function citySubtitle(c) {
                 <th class="th-expand"><span class="sr-only">Expand</span></th>
                 <th>City</th>
                 <th>Business Entity</th>
-                <th class="score-th">Performance</th>
-                <th class="score-th">Order Level</th>
-                <th class="score-th">Weather</th>
+                <th class="score-th">
+                  <button class="sort-btn" @click="toggleSort('performance')">
+                    Performance <span class="sort-arrow" :class="{ active: sortKey === 'performance' }">{{ sortLabel('performance') }}</span>
+                  </button>
+                </th>
+                <th class="score-th">
+                  <button class="sort-btn" @click="toggleSort('order_level_increase')">
+                    Order Level <span class="sort-arrow" :class="{ active: sortKey === 'order_level_increase' }">{{ sortLabel('order_level_increase') }}</span>
+                  </button>
+                </th>
+                <th class="score-th">
+                  <button class="sort-btn" @click="toggleSort('weather')">
+                    Weather <span class="sort-arrow" :class="{ active: sortKey === 'weather' }">{{ sortLabel('weather') }}</span>
+                  </button>
+                </th>
                 <th class="decisions-th">Plans</th>
               </tr>
             </thead>
             <tbody>
-              <template v-for="city in filteredCities" :key="cityKey(city)">
+              <template v-for="city in sortedCities" :key="cityKey(city)">
                 <tr class="city-row" :class="{ expanded: isExpanded(city) }" @click="toggleCity(city)">
                   <td class="expand-col">
                     <span class="chevron-disc" :class="{ open: isExpanded(city) }" aria-hidden="true">
@@ -346,8 +384,6 @@ function citySubtitle(c) {
                   <td :colspan="7" class="detail-cell" @click.stop>
                     <div class="integrated-panel">
                       <div class="panel-block scores-block">
-
-
                         <div class="mini-table-wrap">
                           <table class="mini-table">
                             <thead>
@@ -359,10 +395,7 @@ function citySubtitle(c) {
                               </tr>
                             </thead>
                             <tbody>
-                              <tr
-                                v-for="be in city.business_entities"
-                                :key="be.business_entity"
-                              >
+                              <tr v-for="be in city.business_entities" :key="be.business_entity">
                                 <td class="mini-entity">
                                   <span class="entity-name">{{ be.business_entity }}</span>
                                 </td>
@@ -458,14 +491,6 @@ function citySubtitle(c) {
 }
 .date-field input[type='date'] {
   min-width: 160px;
-}
-.toolbar-card .toolbar-hint {
-  display: none;
-}
-@media (min-width: 860px) {
-  .toolbar-card .toolbar-hint {
-    display: inline;
-  }
 }
 .empty {
   padding: 3.5rem 1.2rem;
@@ -600,6 +625,37 @@ function citySubtitle(c) {
 }
 .score-th {
   text-align: center;
+  padding: 0 !important;
+}
+.score-th .sort-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.65rem 0.9rem;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-weight: 700;
+  font-size: 0.72rem;
+}
+.score-th .sort-btn:hover {
+  background: rgba(61, 139, 109, 0.06);
+}
+.sort-arrow {
+  font-size: 0.68rem;
+  line-height: 1;
+  opacity: 0.35;
+  min-width: 0.7em;
+}
+.sort-arrow.active {
+  opacity: 1;
+  color: var(--accent-strong);
 }
 .decisions-th {
   text-align: center;
@@ -653,20 +709,8 @@ function citySubtitle(c) {
   flex-wrap: wrap;
   margin-top: 0.2rem;
 }
-.city-id {
-  font-size: 0.76rem;
-  color: var(--muted);
-  background: var(--surface-2);
-  padding: 0.1rem 0.4rem;
-  border-radius: 0.35rem;
-}
 .box-name {
   font-size: 0.78rem;
-  color: var(--muted);
-}
-.city-sub {
-  margin-top: 0.18rem;
-  font-size: 0.76rem;
   color: var(--muted);
 }
 
@@ -686,12 +730,13 @@ function citySubtitle(c) {
 .score-cell {
   text-align: center;
   white-space: nowrap;
+  vertical-align: middle;
 }
 .decisions-cell {
   text-align: center;
 }
 .score-badge {
-  display: inline-grid;
+  display: grid;
   place-items: center;
   min-width: 2.2rem;
   padding: 0.24rem 0.5rem;
@@ -703,6 +748,7 @@ function citySubtitle(c) {
   background: #fff;
   color: var(--text);
   margin: 0 auto;
+  width: fit-content;
 }
 .score-badge.small {
   min-width: 1.9rem;
@@ -806,30 +852,27 @@ function citySubtitle(c) {
 }
 .mini-table thead th {
   padding: 0.55rem 0.65rem;
-  background: var(--surface-2);
-  color: #4a6155;
+  background: #fff;
+  color: #6b7c78;
   font-size: 0.68rem;
-  font-weight: 700;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.02em;
   white-space: nowrap;
+  border-bottom: 1px solid #eef3f0;
 }
 .mini-table thead th.num {
   text-align: center;
 }
 .mini-table tbody td {
   padding: 0.6rem 0.65rem;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid #f0f2f1;
 }
 .mini-table tbody td.num {
   text-align: center;
 }
-/* hover kept subtle — no green wash that makes badges look patchy */
 .mini-table tbody tr:hover td {
   background: #fff;
-}
-.mini-table tbody tr:hover {
-  box-shadow: inset 0 0 0 1px var(--border);
 }
 .mini-entity {
   display: flex;
@@ -880,23 +923,6 @@ function citySubtitle(c) {
   margin: 0;
 }
 
-.combined-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  padding: 0.75rem 1.1rem;
-  border-top: 1px solid var(--border);
-  background: #fbfdfc;
-}
-.combined-foot .hint {
-  margin: 0;
-  font-size: 0.8rem;
-  color: var(--muted);
-}
-
-/* Responsive */
 @media (max-width: 980px) {
   .integrated-panel {
     grid-template-columns: 1fr;
@@ -927,9 +953,6 @@ function citySubtitle(c) {
   }
   .panel-block {
     padding: 0.9rem;
-  }
-  .combined-foot {
-    padding: 0.7rem 0.85rem;
   }
 }
 .sr-only {
