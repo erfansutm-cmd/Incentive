@@ -391,34 +391,32 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="showPriorityEditor" class="priority-modal-overlay" @click.self="showPriorityEditor = false">
-      <div class="priority-modal" role="dialog" aria-modal="true" aria-label="Entity order">
+      <div class="priority-modal" role="dialog" aria-modal="true" aria-label="Entity priority order">
         <div class="priority-modal-head">
           <div>
             <h4 style="margin:0; font-size:1rem">Entity order</h4>
-            <p class="hint" style="margin:0.2rem 0 0">Top is shown in collapsed city rows and is the default order inside each city</p>
+            <p class="hint" style="margin:0.2rem 0 0">Drag to reorder · top is shown in collapsed rows · default foodZooket > food > Zooket > others</p>
           </div>
           <button class="btn btn-ghost btn-sm" @click="showPriorityEditor = false">✕</button>
         </div>
-        <div class="drag-info">
-          <span class="drag-info-icon" aria-hidden="true">↕</span>
-          <div>
-            <strong>Drag & drop to reorder</strong>
-            <p class="hint" style="margin:0.15rem 0 0; line-height:1.45">Grab the <span style="letter-spacing:0.08em">⋮⋮</span> handle and drop where you want it.<br/>Higher = higher priority. Use <code>↑</code>/<code>↓</code> as alternative. <em>Default:</em> foodZooket > food > Zooket > others</p>
-          </div>
-        </div>
         <div class="priority-list">
-          <div
-            v-for="(name, i) in priorityOrder"
-            :key="name"
-            class="priority-row"
-            :class="{ dragging: draggedIdx === i, 'drag-over': dragOverIdx === i && draggedIdx !== i }"
-            draggable="true"
-            @dragstart="onDragStart(i)"
-            @dragover.prevent="onDragOver(i)"
-            @dragleave="onDragLeave()"
-            @drop.prevent="onDrop(i)"
-            @dragend="onDragEnd()"
-          >
+          <template v-for="(name, i) in priorityOrder" :key="name">
+            <div
+              v-if="draggedIdx !== null && dragOverIdx === i && draggedIdx !== i"
+              class="drop-placeholder active"
+              @dragover.prevent="onDragOver(i)"
+              @drop.prevent="onDrop(i)"
+            ></div>
+            <div
+              class="priority-row"
+              :class="{ dragging: draggedIdx === i, 'drag-over': dragOverIdx === i && draggedIdx !== i }"
+              draggable="true"
+              @dragstart="onDragStart(i)"
+              @dragover.prevent="onDragOver(i)"
+              @dragleave="onDragLeave()"
+              @drop.prevent="onDrop(i)"
+              @dragend="onDragEnd()"
+            >
             <span class="drag-handle" aria-hidden="true">⋮⋮</span>
             <span class="pri-rank">{{ i + 1 }}</span>
             <span class="entity-name flex-1">{{ name }}</span>
@@ -427,6 +425,13 @@ onBeforeUnmount(() => {
               <button class="btn btn-ghost tiny" :disabled="i === priorityOrder.length - 1" @click.stop="movePriority(i, 1)" title="Move down">↓</button>
             </div>
           </div>
+          </template>
+          <div
+            v-if="draggedIdx !== null && dragOverIdx === priorityOrder.length"
+            class="drop-placeholder active"
+            @dragover.prevent="onDragOver(priorityOrder.length)"
+            @drop.prevent="onDrop(priorityOrder.length)"
+          ></div>
           <div v-if="allKnownEntities.filter(n => !priorityOrder.includes(n)).length" class="priority-add-row">
             <span class="hint" style="font-size:0.78rem">Others (after): {{ allKnownEntities.filter(n => !priorityOrder.includes(n)).join(', ') }}</span>
             <button class="btn btn-ghost btn-sm" @click="ensurePriorityCoversAll" style="white-space:nowrap">Add all</button>
@@ -785,23 +790,23 @@ onBeforeUnmount(() => {
 .final-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 760px;
+  min-width: 900px;
   table-layout: fixed;
 }
 .col-expand {
-  width: 38px;
+  width: 40px;
 }
 .col-city {
-  width: 124px;
+  width: 132px;
 }
 .col-entity {
-  width: 104px;
+  width: 112px;
 }
 .col-score {
-  width: 62px;
+  width: 68px;
 }
 .col-decisions {
-  width: 320px;
+  width: 50%;
 }
 .final-table thead th {
   text-align: left;
@@ -1060,8 +1065,8 @@ onBeforeUnmount(() => {
 }
 .integrated-panel {
   display: grid;
-  grid-template-columns: minmax(300px, 0.68fr) 1.62fr;
-  gap: 1.2rem;
+  grid-template-columns: minmax(330px, 0.82fr) 1.45fr;
+  gap: 1.15rem;
   padding: 1.1rem 1.25rem 1.25rem;
   animation: slideDown 0.22s ease;
 }
@@ -1317,43 +1322,7 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   align-items: flex-start;
   gap: 1rem;
-  margin-bottom: 0.65rem;
-}
-.drag-info {
-  display: flex;
-  gap: 0.7rem;
-  align-items: flex-start;
-  padding: 0.65rem 0.75rem;
-  background: #f6f9f8;
-  border: 1px solid #e3ece9;
-  border-radius: 0.6rem;
   margin-bottom: 0.85rem;
-  font-size: 0.82rem;
-  line-height: 1.4;
-}
-.drag-info-icon {
-  width: 1.9rem;
-  height: 1.9rem;
-  display: grid;
-  place-items: center;
-  background: #fff;
-  border: 1px solid #e3ece9;
-  border-radius: 0.5rem;
-  color: var(--accent-strong);
-  font-weight: 700;
-  flex-shrink: 0;
-  font-size: 0.95rem;
-}
-.drag-info strong {
-  font-size: 0.84rem;
-  color: var(--text);
-}
-.drag-info code {
-  background: #fff;
-  border: 1px solid #e3ece9;
-  padding: 0.05rem 0.25rem;
-  border-radius: 0.3rem;
-  font-size: 0.76rem;
 }
 .drag-handle {
   cursor: grab;
@@ -1377,7 +1346,24 @@ onBeforeUnmount(() => {
   border-color: var(--accent) !important;
 }
 .priority-row {
-  transition: transform 0.12s ease, background 0.12s ease;
+  transition: transform 0.18s ease, background 0.18s ease, opacity 0.18s ease, margin 0.18s ease;
+}
+.drop-placeholder {
+  height: 0;
+  opacity: 0;
+  border: 1px dashed transparent;
+  border-radius: 0.55rem;
+  transition: height 0.2s cubic-bezier(0.2, 0, 0, 1), opacity 0.2s ease, margin 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+  overflow: hidden;
+  pointer-events: none;
+}
+.drop-placeholder.active {
+  height: 2.5rem;
+  opacity: 1;
+  border-color: var(--accent);
+  background: #eefaf5;
+  margin: 0.3rem 0;
+  pointer-events: auto;
 }
 
 @media (max-width: 980px) {
