@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { requestJson } from '../lib/api'
 
 const SCORE_TYPES = [
@@ -7,7 +7,6 @@ const SCORE_TYPES = [
   { value: 'order_level_increase', label: 'Order Level' },
   { value: 'weather', label: 'Weather' },
 ]
-const SCORE_LABEL = Object.fromEntries(SCORE_TYPES.map((s) => [s.value, s.label]))
 
 function tomorrowISO() {
   const d = new Date()
@@ -19,7 +18,6 @@ function formatScore(v) {
   if (v === null || v === undefined || v === '') return '—'
   const n = Number(v)
   if (Number.isFinite(n)) {
-    // show without trailing zeros but keep decimals if present
     return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(4))).replace(/\.?0+$/, (m) => m)
   }
   return String(v)
@@ -29,17 +27,19 @@ function scoreBadgeClass(v) {
   if (v === null || v === undefined || v === '') return 'muted'
   const n = Number(v)
   if (!Number.isFinite(n)) return 'muted'
-  if (n >= 4) return 'high'
-  if (n >= 3) return 'med'
-  if (n >= 2) return 'low'
+  // Bigger scores are worse → red; smaller → green (inverted)
+  if (n <= 1) return 'high'
+  if (n <= 2) return 'med'
+  if (n <= 3) return 'low'
   return 'very-low'
 }
 
 const selectedDate = ref(tomorrowISO())
 const searchQuery = ref('')
+const groupFilter = ref('')
 const loading = ref(false)
 const error = ref('')
-const cities = ref([]) // raw from API
+const cities = ref([])
 const scoreTypes = ref(SCORE_TYPES.map((s) => s.value))
 const generatedAt = ref('')
 const incentiveDate = ref('')
@@ -50,45 +50,32 @@ let messageTimer = null
 let controller = null
 let disposed = false
 
+const groupOptions = computed(() => {
+  const seen = new Set()
+  for (const c of cities.value) {
+    const g = c.city_group
+    if (g !== null && g !== undefined && String(g).trim() !== '') seen.add(String(g))
+  }
+  return [...seen].sort((a, b) => String(a).localeCompare(String(b)))
+})
+
 const filteredCities = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
-  if (!q) return cities.value
   return cities.value.filter((c) => {
-    const hay = [
-      c.city,
-      c.box_city_name,
-      c.city_group,
-      String(c.city_id),
-      String(c.city_id_raw ?? ''),
-    ]
-      .filter(Boolean)
-      .join(' ')
-      .toLowerCase()
-    if (hay.includes(q)) return true
-    // also search business entities
-    return (c.business_entities || []).some((be) =>
-      String(be.business_entity).toLowerCase().includes(q)
-    )
+    if (groupFilter.value && String(c.city_group ?? '') !== groupFilter.value) return false
+    if (!q) return true
+    const hay = [c.city, c.box_city_name].filter(Boolean).join(' ').toLowerCase()
+    return hay.includes(q)
   })
 })
 
 const totalCities = computed(() => cities.value.length)
-const totalEntities = computed(() =>
-  cities.value.reduce((sum, c) => sum + (c.entity_count || 0), 0)
-)
+const totalEntities = computed(() => cities.value.reduce((sum, c) => sum + (c.entity_count || 0), 0))
 const visibleCount = computed(() => filteredCities.value.length)
 
-const allExpanded = computed(() =>
-  filteredCities.value.length > 0 &&
-  filteredCities.value.every((c) => expanded.value.has(String(c.city_id_raw ?? c.city_id)))
+const allExpanded = computed(
+  () => filteredCities.value.length > 0 && filteredCities.value.every((c) => expanded.value.has(String(c.city_id_raw ?? c.city_id)))
 )
-
-function showMessage(text) {
-  if (disposed) return
-  clearTimeout(messageTimer)
-  message.value = text
-  messageTimer = setTimeout(() => (message.value = null), 4000)
-}
 
 function cityKey(c) {
   return String(c.city_id_raw ?? c.city_id)
@@ -100,7 +87,6 @@ function toggleCity(c) {
   const k = cityKey(c)
   if (expanded.value.has(k)) expanded.value.delete(k)
   else expanded.value.add(k)
-  // force reactivity for Set
   expanded.value = new Set(expanded.value)
 }
 function expandAll() {
@@ -116,6 +102,10 @@ function collapseAll() {
 function clearSearch() {
   searchQuery.value = ''
 }
+function clearFilters() {
+  searchQuery.value = ''
+  groupFilter.value = ''
+}
 
 async function load() {
   if (disposed) return
@@ -126,16 +116,14 @@ async function load() {
   error.value = ''
   const date = selectedDate.value
   try {
-    const data = await requestJson(
-      `/api/final-decisions?incentive_date=${encodeURIComponent(date)}`,
-      { signal: ctrl.signal }
-    )
+    const data = await requestJson(`/api/final-decisions?incentive_date=${encodeURIComponent(date)}`, {
+      signal: ctrl.signal,
+    })
     if (ctrl.signal.aborted) return
     cities.value = data.cities || []
     scoreTypes.value = data.score_types || SCORE_TYPES.map((s) => s.value)
     incentiveDate.value = data.incentive_date || date
     generatedAt.value = data.generated_at || ''
-    // keep expanded set; drop keys no longer present
     const valid = new Set(cities.value.map((c) => String(c.city_id_raw ?? c.city_id)))
     const pruned = new Set([...expanded.value].filter((k) => valid.has(k)))
     expanded.value = pruned
@@ -150,14 +138,9 @@ async function load() {
 }
 
 function onDateChange() {
-  // keep expanded? reset on date change
   expanded.value = new Set()
   load()
 }
-
-watch(selectedDate, () => {
-  // handled via input event, but watch also for programmatic changes
-})
 
 onMounted(load)
 onBeforeUnmount(() => {
@@ -211,9 +194,17 @@ function citySubtitle(c) {
           <circle cx="11" cy="11" r="6.5" />
           <path d="M16 16l4 4" />
         </svg>
-        <input v-model="searchQuery" type="search" placeholder="Search by city, box city name, group or entity…" />
+        <input v-model="searchQuery" type="search" placeholder="Search by city or box city name…" />
       </label>
-      <button v-if="searchQuery" class="btn btn-ghost btn-sm" @click="clearSearch">Clear</button>
+
+      <label class="sr-only" for="group-filter">City group</label>
+      <select id="group-filter" v-model="groupFilter" class="select-field">
+        <option value="">All groups</option>
+        <option v-for="g in groupOptions" :key="g" :value="g">{{ g }}</option>
+      </select>
+
+      <button v-if="searchQuery || groupFilter" class="btn btn-ghost btn-sm" @click="clearFilters">Clear</button>
+
       <span class="pill spacer">
         <template v-if="loading">Loading…</template>
         <template v-else>{{ visibleCount }} of {{ totalCities }} cities</template>
@@ -230,27 +221,26 @@ function citySubtitle(c) {
     <div v-else-if="loading" class="card empty" role="status">
       <div class="empty-mark" aria-hidden="true"><span class="spinner" /></div>
       <h3>Loading scores for {{ selectedDate }}…</h3>
-      <p>Fetching <code>incentive.incentive_scores</code> and city names.</p>
+      <p>Fetching scores and city names.</p>
     </div>
 
     <template v-else-if="!cities.length">
       <div class="card empty">
         <div class="empty-mark" aria-hidden="true">—</div>
         <h3>No scores for {{ selectedDate }}</h3>
-        <p>No rows found in <code>incentive.incentive_scores</code> for this incentive date. Try another date.</p>
+        <p>Not found. Try another date.</p>
       </div>
     </template>
 
     <template v-else-if="!filteredCities.length">
       <div class="card empty">
         <h3>No cities match your search</h3>
-        <p>{{ totalCities }} cities have scores for {{ selectedDate }}, but none match “{{ searchQuery }}”.</p>
-        <button class="btn btn-ghost btn-sm" @click="clearSearch">Clear search</button>
+        <p>{{ totalCities }} cities have scores for {{ selectedDate }}, but none match your filter.</p>
+        <button class="btn btn-ghost btn-sm" @click="clearFilters">Clear filter</button>
       </div>
     </template>
 
     <template v-else>
-      <!-- Two-part connected table: Scores | Decisions -->
       <section class="card combined-card" aria-label="Final decisions table">
         <div class="table-scroll">
           <table class="final-table">
@@ -275,7 +265,6 @@ function citySubtitle(c) {
                     </span>
                     Scores
                   </span>
-                  <span class="pill accent">3 types</span>
                 </th>
                 <th class="group-header decisions-header">
                   <span class="group-label">
@@ -288,35 +277,21 @@ function citySubtitle(c) {
                     </span>
                     Decisions
                   </span>
-                  <span class="pill plain">future · 4–5 plans</span>
                 </th>
               </tr>
               <tr>
                 <th class="th-expand"><span class="sr-only">Expand</span></th>
                 <th>City</th>
-                <th>Business Entity <span class="th-hint">(priority)</span></th>
-                <th class="score-th">
-                  <span class="score-th-label">Performance</span>
-                  <span class="score-th-sub">score</span>
-                </th>
-                <th class="score-th">
-                  <span class="score-th-label">Order Level</span>
-                  <span class="score-th-sub">increase</span>
-                </th>
-                <th class="score-th">
-                  <span class="score-th-label">Weather</span>
-                  <span class="score-th-sub">score</span>
-                </th>
+                <th>Business Entity</th>
+                <th class="score-th">Performance</th>
+                <th class="score-th">Order Level</th>
+                <th class="score-th">Weather</th>
                 <th class="decisions-th">Plans</th>
               </tr>
             </thead>
             <tbody>
               <template v-for="city in filteredCities" :key="cityKey(city)">
-                <tr
-                  class="city-row"
-                  :class="{ expanded: isExpanded(city) }"
-                  @click="toggleCity(city)"
-                >
+                <tr class="city-row" :class="{ expanded: isExpanded(city) }" @click="toggleCity(city)">
                   <td class="expand-col">
                     <span class="chevron-disc" :class="{ open: isExpanded(city) }" aria-hidden="true">
                       <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
@@ -370,7 +345,6 @@ function citySubtitle(c) {
                 <tr v-if="isExpanded(city)" class="detail-row">
                   <td :colspan="7" class="detail-cell" @click.stop>
                     <div class="integrated-panel">
-                      <!-- Scores detail: all entities -->
                       <div class="panel-block scores-block">
                         <div class="panel-block-head">
                           <h4>
@@ -405,7 +379,7 @@ function citySubtitle(c) {
                               >
                                 <td class="mini-entity">
                                   <span class="entity-name">{{ be.business_entity }}</span>
-                                  <span v-if="be.business_entity === city.primary_entity?.business_entity" class="pill accent tiny">primary</span>
+                                  <span v-if="be.business_entity === city.primary_entity?.business_entity" class="pill plain tiny">primary</span>
                                 </td>
                                 <td class="num">
                                   <span class="score-badge small" :class="scoreBadgeClass(be.scores.performance)">{{ formatScore(be.scores.performance) }}</span>
@@ -422,7 +396,6 @@ function citySubtitle(c) {
                         </div>
                       </div>
 
-                      <!-- Decisions placeholder: integrated view for future 4-5 plans -->
                       <div class="panel-block decisions-block">
                         <div class="panel-block-head">
                           <h4>
@@ -447,10 +420,7 @@ function citySubtitle(c) {
                               <span class="pill tiny plain">placeholder</span>
                             </div>
                           </div>
-                          <p class="hint decisions-hint">
-                            This area is prepared for plan integration. Each city will list its plans
-                            (type, business entity, status) and stay synchronized with the expanded scores.
-                          </p>
+                          <p class="hint decisions-hint">This area is prepared for plan integration. Each city will list its plans and stay synchronized with the expanded scores.</p>
                         </div>
                       </div>
                     </div>
@@ -462,9 +432,7 @@ function citySubtitle(c) {
         </div>
 
         <div class="combined-foot">
-          <span class="hint">
-            {{ filteredCities.length }} cities shown · {{ selectedDate }} · Scores from <code>incentive.incentive_scores</code> · City names from <code>incentive.incentive_active_city</code>
-          </span>
+          <span class="hint">{{ filteredCities.length }} cities shown · {{ selectedDate }}</span>
           <button class="btn btn-ghost btn-sm" @click="load">Refresh data</button>
         </div>
       </section>
@@ -533,12 +501,6 @@ function citySubtitle(c) {
   font-size: 0.9rem;
   line-height: 1.6;
 }
-.empty code {
-  background: var(--surface-2);
-  padding: 0.05rem 0.35rem;
-  border-radius: 0.3rem;
-  color: var(--accent-strong);
-}
 .empty-mark {
   display: inline-grid;
   place-items: center;
@@ -557,8 +519,16 @@ function citySubtitle(c) {
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}
 
 /* Combined two-part table */
 .combined-card {
@@ -612,14 +582,17 @@ function citySubtitle(c) {
   padding-top: 0.65rem;
   padding-bottom: 0.65rem;
 }
-.th-expand { width: 3rem; text-align: center; }
-.th-hint { font-weight: 400; text-transform: none; letter-spacing: 0; font-size: 0.68rem; opacity: 0.7; }
+.th-expand {
+  width: 3rem;
+  text-align: center;
+}
 .score-th {
   text-align: center;
 }
-.score-th-label { display: block; }
-.score-th-sub { display: block; font-weight: 400; text-transform: none; letter-spacing: 0; font-size: 0.65rem; opacity: 0.7; }
-.decisions-th { color: var(--muted); }
+.decisions-th {
+  text-align: center;
+  color: var(--muted);
+}
 
 .final-table tbody td {
   padding: 0.78rem 0.9rem;
@@ -631,16 +604,30 @@ function citySubtitle(c) {
   cursor: pointer;
   transition: background 0.15s ease;
 }
-.final-table tbody tr.city-row:hover { background: #f6faf8; }
-.final-table tbody tr.city-row.expanded { background: var(--accent-soft); }
-.final-table tbody tr.city-row.expanded:hover { background: #dceee4; }
-.final-table tbody tr.city-row.expanded td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.final-table tbody tr.city-row:hover {
+  background: #f6faf8;
+}
+.final-table tbody tr.city-row.expanded {
+  background: var(--accent-soft);
+}
+.final-table tbody tr.city-row.expanded:hover {
+  background: #dceee4;
+}
+.final-table tbody tr.city-row.expanded td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
 
-.expand-col { width: 3rem; text-align: center; }
-.expand-col .chevron-disc { margin: 0 auto; }
+.expand-col {
+  width: 3rem;
+  text-align: center;
+}
+.expand-col .chevron-disc {
+  margin: 0 auto;
+}
 
 .city-cell {
   min-width: 170px;
+  text-align: left;
 }
 .city-name {
   font-weight: 700;
@@ -673,6 +660,7 @@ function citySubtitle(c) {
 
 .entity-cell {
   white-space: nowrap;
+  text-align: left;
 }
 .entity-name {
   font-weight: 600;
@@ -686,6 +674,9 @@ function citySubtitle(c) {
 .score-cell {
   text-align: center;
   white-space: nowrap;
+}
+.decisions-cell {
+  text-align: center;
 }
 .score-badge {
   display: inline-grid;
@@ -705,14 +696,32 @@ function citySubtitle(c) {
   padding: 0.18rem 0.42rem;
   font-size: 0.82rem;
 }
-.score-badge.muted { background: #fbfdfc; color: var(--muted); }
-.score-badge.very-low { background: #f7e8e8; color: #8c3030; border-color: #f0caca; }
-.score-badge.low { background: #fdf1e6; color: #8a5a1a; border-color: #f3ddba; }
-.score-badge.med { background: #eef3f0; color: var(--accent-strong); }
-.score-badge.high { background: var(--accent-soft); color: var(--accent-strong); border-color: #cfe0d7; }
-
-.decisions-cell { text-align: center; }
-.decisions-pill { gap: 0.35rem; }
+.score-badge.muted {
+  background: #fbfdfc;
+  color: var(--muted);
+}
+.score-badge.very-low {
+  background: #f7e8e8;
+  color: #8c3030;
+  border-color: #f0caca;
+}
+.score-badge.low {
+  background: #fdf1e6;
+  color: #8a5a1a;
+  border-color: #f3ddba;
+}
+.score-badge.med {
+  background: #eef3f0;
+  color: var(--accent-strong);
+}
+.score-badge.high {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  border-color: #cfe0d7;
+}
+.decisions-pill {
+  gap: 0.35rem;
+}
 .decisions-pill .dot {
   width: 6px;
   height: 6px;
@@ -720,10 +729,14 @@ function citySubtitle(c) {
   background: var(--muted);
   display: inline-block;
 }
-.muted { color: var(--muted); }
+.muted {
+  color: var(--muted);
+}
 
 /* Expanded integrated panel */
-.detail-row:hover { background: transparent; }
+.detail-row:hover {
+  background: transparent;
+}
 .detail-cell {
   padding: 0 !important;
   background: #f8faf9;
@@ -737,18 +750,26 @@ function citySubtitle(c) {
   animation: slideDown 0.22s ease;
 }
 @media (prefers-reduced-motion: reduce) {
-  .integrated-panel { animation: none; }
+  .integrated-panel {
+    animation: none;
+  }
 }
 @keyframes slideDown {
-  from { opacity: 0; transform: translateY(-4px); }
-  to { opacity: 1; transform: none; }
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 .panel-block {
   background: #fff;
   border: 1px solid var(--border);
   border-radius: 0.8rem;
   padding: 1rem 1.1rem 1.1rem;
-  box-shadow: 0 1px 2px rgba(20,40,30,0.04), 0 8px 24px rgba(20,40,30,0.05);
+  box-shadow: 0 1px 2px rgba(20, 40, 30, 0.04), 0 8px 24px rgba(20, 40, 30, 0.05);
 }
 .panel-block-head h4 {
   margin: 0;
@@ -762,14 +783,15 @@ function citySubtitle(c) {
   font-size: 0.8rem;
   color: var(--muted);
 }
-.mini-table-wrap { overflow-x: auto; }
+.mini-table-wrap {
+  overflow-x: auto;
+}
 .mini-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.86rem;
 }
 .mini-table thead th {
-  text-align: left;
   padding: 0.55rem 0.65rem;
   background: var(--surface-2);
   color: #4a6155;
@@ -779,24 +801,26 @@ function citySubtitle(c) {
   letter-spacing: 0.03em;
   white-space: nowrap;
 }
-.mini-table thead th.num { text-align: center; }
+.mini-table thead th.num {
+  text-align: center;
+}
 .mini-table tbody td {
   padding: 0.6rem 0.65rem;
   border-top: 1px solid var(--border);
 }
-.mini-table tbody td.num { text-align: center; }
-.mini-table tbody tr.primary td {
-  background: var(--accent-soft);
+.mini-table tbody td.num {
+  text-align: center;
 }
-.mini-table tbody tr:hover td { background: #f6faf8; }
-.mini-table tbody tr.primary:hover td { background: #dceee4; }
+.mini-table tbody tr:hover td {
+  background: #f6faf8;
+}
 .mini-entity {
   display: flex;
   align-items: center;
   gap: 0.4rem;
   flex-wrap: wrap;
+  text-align: left;
 }
-
 .decisions-block {
   display: flex;
   flex-direction: column;
@@ -820,7 +844,9 @@ function citySubtitle(c) {
   background: #fafbfa;
   min-height: 72px;
 }
-.plan-card.muted { color: var(--muted); }
+.plan-card.muted {
+  color: var(--muted);
+}
 .plan-card-title {
   font-weight: 700;
   font-size: 0.88rem;
@@ -835,12 +861,6 @@ function citySubtitle(c) {
   line-height: 1.5;
   color: var(--muted);
   margin: 0;
-}
-.decisions-hint code {
-  background: var(--surface-2);
-  padding: 0.05rem 0.35rem;
-  border-radius: 0.3rem;
-  color: var(--accent-strong);
 }
 
 .combined-foot {
@@ -858,12 +878,6 @@ function citySubtitle(c) {
   font-size: 0.8rem;
   color: var(--muted);
 }
-.combined-foot .hint code {
-  background: var(--surface-2);
-  padding: 0.05rem 0.35rem;
-  border-radius: 0.3rem;
-  color: var(--accent-strong);
-}
 
 /* Responsive */
 @media (max-width: 980px) {
@@ -872,15 +886,34 @@ function citySubtitle(c) {
   }
 }
 @media (max-width: 760px) {
-  .page-head { align-items: flex-start; flex-wrap: wrap; }
-  .head-actions { width: 100%; }
-  .head-actions .btn { flex: 1 1 auto; }
-  .date-field { flex: 1 1 auto; }
-  .date-field input[type='date'] { width: 100%; }
-  .final-table { min-width: 640px; }
-  .integrated-panel { padding: 0.8rem; }
-  .panel-block { padding: 0.9rem; }
-  .combined-foot { padding: 0.7rem 0.85rem; }
+  .page-head {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .head-actions {
+    width: 100%;
+  }
+  .head-actions .btn {
+    flex: 1 1 auto;
+  }
+  .date-field {
+    flex: 1 1 auto;
+  }
+  .date-field input[type='date'] {
+    width: 100%;
+  }
+  .final-table {
+    min-width: 640px;
+  }
+  .integrated-panel {
+    padding: 0.8rem;
+  }
+  .panel-block {
+    padding: 0.9rem;
+  }
+  .combined-foot {
+    padding: 0.7rem 0.85rem;
+  }
 }
 .sr-only {
   position: absolute;
@@ -893,7 +926,9 @@ function citySubtitle(c) {
   white-space: nowrap;
   border: 0;
 }
-button:focus-visible, input:focus-visible, select:focus-visible {
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
