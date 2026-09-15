@@ -84,25 +84,19 @@ function installMockApi(rows = [makeStep()]) {
       if (state.editError) return fail(state.editError, 409)
       const original = state.rows.find((row) => row.id === id)
       if (!original) return fail('Score step not found.', 404)
-      const others = state.rows.filter(
-        (row) => row.id !== id && row.city_group === original.city_group &&
-          row.incentive_type === original.incentive_type &&
-          row.score_type === original.score_type && row.deactivated_at === null
-      )
-      if (others.some((row) => row.score === payload.score)) {
-        return fail(`Score ${payload.score} is already active for this score type. Choose another score.`, 409)
-      }
+      // the score is fixed: never part of an edit payload
+      if ('score' in payload) return fail('Fields cannot be changed: score.', 400)
       original.deactivated_at = '2026-09-08T13:30:00'
       const created = makeStep({
         ...original, id: Math.max(...state.rows.map((row) => row.id)) + 1,
-        score: payload.score, target_increase: payload.target_increase,
+        target_increase: payload.target_increase,
         pr_increase: payload.pr_increase, control_bucket: payload.control_bucket,
         created_at: '2026-09-08T13:30:00', deactivated_at: null,
       })
       state.rows.push(created)
       return json({
         status: 'ok', replaced_id: id, row: created,
-        message: `Score ${original.score} deactivated and score ${created.score} added with the new details.`,
+        message: `Score ${created.score} deactivated and added again with the new details.`,
       })
     }
     return fail(`Unexpected request: ${method} ${u.pathname}`, 404)
@@ -139,64 +133,62 @@ beforeEach(() => {
 })
 
 describe('Decision Matrix step editing', () => {
-  it('prefills the form from the row and cannot save identical details', async () => {
+  it('shows the score as fixed and cannot save unchanged values', async () => {
     const wrapper = mount(DecisionMatrixStepEditForm, {
-      props: {
-        row: makeStep(), cityGroup: 'Group A', typeName: 'DAILY',
-        nextScore: 3, activeScores: [2],
-      },
+      props: { row: makeStep(), cityGroup: 'Group A', typeName: 'DAILY' },
       attachTo: document.body,
     })
     await flushPromises()
 
     expect(wrapper.find('h2').text()).toBe('Edit score 1')
-    expect(fieldByLabel(wrapper, 'Score').element.value).toBe('1')
+    // no score input at all: the score is shown, not editable
+    expect(wrapper.findAll('input[type="number"]').length).toBe(5)
+    expect(wrapper.find('.score-fixed-value').text()).toBe('1')
+    expect(wrapper.text()).toContain('stays the same')
     expect(fieldByLabel(wrapper, 'Target increase').element.value).toBe('0.125')
     expect(fieldByLabel(wrapper, 'PR increase').element.value).toBe('1.75')
-    expect(wrapper.text()).toContain('deactivates this step')
-    expect(wrapper.text()).toContain('Suggested: 3')
-    expect(buttonWithText(wrapper, 'Deactivate & add new step').attributes('disabled')).toBeDefined()
+    expect(buttonWithText(wrapper, 'Save new values').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('Change at least one value before saving')
   })
 
-  it('emits the new details and refuses a score that is already active', async () => {
+  it('emits only the values, never the score, and only once something changed', async () => {
     const wrapper = mount(DecisionMatrixStepEditForm, {
-      props: { row: makeStep(), cityGroup: 'Group A', nextScore: 3, activeScores: [2, 5] },
+      props: { row: makeStep(), cityGroup: 'Group A' },
       attachTo: document.body,
     })
     await flushPromises()
 
-    await fieldByLabel(wrapper, 'Score').setValue('5')
-    expect(wrapper.text()).toContain('Score 5 is already active for this score type')
-    expect(buttonWithText(wrapper, 'Deactivate & add new step').attributes('disabled')).toBeDefined()
-
-    // Keeping the row's own score is allowed: that row is archived by the same save.
-    await fieldByLabel(wrapper, 'Score').setValue('1')
-    expect(wrapper.text()).not.toContain('is already active for this score type')
+    // the same value written differently is still "nothing changed"
+    await fieldByLabel(wrapper, 'Target increase').setValue('0.1250')
+    expect(buttonWithText(wrapper, 'Save new values').attributes('disabled')).toBeDefined()
 
     await fieldByLabel(wrapper, 'Target increase').setValue('0.5')
     await fieldByLabel(wrapper, 'PR increase').setValue('2.25')
-    await wrapper.findAll('input[type="number"]')[3].setValue('0.1')
-    await wrapper.findAll('input[type="number"]')[4].setValue('0.2')
-    await wrapper.findAll('input[type="number"]')[5].setValue('0.3')
-    await buttonWithText(wrapper, 'Deactivate & add new step').trigger('click')
+    await wrapper.findAll('input[type="number"]')[2].setValue('0.1')
+    await wrapper.findAll('input[type="number"]')[3].setValue('0.2')
+    await wrapper.findAll('input[type="number"]')[4].setValue('0.3')
+    await buttonWithText(wrapper, 'Save new values').trigger('click')
 
     expect(wrapper.emitted('save')[0][0]).toEqual({
-      score: 1, target_increase: 0.5, pr_increase: 2.25, control_bucket: [0.1, 0.2, 0.3],
+      target_increase: 0.5, pr_increase: 2.25, control_bucket: [0.1, 0.2, 0.3],
     })
   })
 
-  it('offers the suggested score of the series', async () => {
+  it('lets a bucket be cleared, which counts as a change', async () => {
     const wrapper = mount(DecisionMatrixStepEditForm, {
-      props: { row: makeStep({ score: 7 }), cityGroup: 'Group A', nextScore: 8, activeScores: [] },
+      props: { row: makeStep({ control_bucket: [0.2, 0.2, 0.1] }), cityGroup: 'Group A' },
       attachTo: document.body,
     })
     await flushPromises()
-    await buttonWithText(wrapper, 'Use suggested score 8').trigger('click')
-    expect(fieldByLabel(wrapper, 'Score').element.value).toBe('8')
-    expect(wrapper.text()).toContain('score 8 active')
+    expect(buttonWithText(wrapper, 'Save new values').attributes('disabled')).toBeDefined()
+    await buttonWithText(wrapper, 'Clear control bucket').trigger('click')
+    await buttonWithText(wrapper, 'Save new values').trigger('click')
+    expect(wrapper.emitted('save')[0][0]).toEqual({
+      target_increase: 0.125, pr_increase: 1.75, control_bucket: null,
+    })
   })
 
-  it('edits a step as one action: the row is deactivated and a new one is added', async () => {
+  it('edits a step as one action, keeping its score', async () => {
     const state = installMockApi([makeStep(), makeStep({ id: 2, score: 2 })])
     const wrapper = mount(DecisionMatrix, { attachTo: document.body })
     await flushPromises()
@@ -205,29 +197,31 @@ describe('Decision Matrix step editing', () => {
     const form = await openEdit(wrapper)
     expect(form.exists()).toBe(true)
     expect(form.find('h2').text()).toBe('Edit score 1')
+    expect(form.find('.score-fixed-value').text()).toBe('1')
     expect(form.text()).toContain('Score 1 → deactivated')
-    expect(form.text()).toContain('Suggested: 3 (the next free score of this series)')
+    expect(form.text()).toContain('score 1 active again with the new values')
 
-    await fieldByLabel(form, 'Score').setValue('3')
     await fieldByLabel(form, 'Target increase').setValue('0.5')
     await fieldByLabel(form, 'PR increase').setValue('2.25')
-    await buttonWithText(form, 'Deactivate & add new step').trigger('click')
+    await buttonWithText(form, 'Save new values').trigger('click')
     await flushPromises()
 
-    // one request, to the edit endpoint, carrying only the editable fields
+    // one request, to the edit endpoint, carrying the values only — no score
     expect(state.writes).toEqual([
-      { id: 1, payload: { score: 3, target_increase: 0.5, pr_increase: 2.25, control_bucket: null } },
+      { id: 1, payload: { target_increase: 0.5, pr_increase: 2.25, control_bucket: null } },
     ])
     expect(state.rows[0].deactivated_at).toBe('2026-09-08T13:30:00')
     expect(state.rows[0].score).toBe(1)
-    expect(state.rows.at(-1).score).toBe(3)
+    expect(state.rows.at(-1).score).toBe(1)
     expect(wrapper.find('dialog.modal').exists()).toBe(false)
-    expect(wrapper.find('.toast').text()).toContain('Score 1 deactivated and score 3 added')
+    expect(wrapper.find('.toast').text()).toContain('Score 1 deactivated and added again')
 
     // the new row is active, the edited one is history — and the history of the
     // edited series is revealed so the archive is visible right away
     const activeTable = wrapper.findAll('.table-scroll').find((el) => !el.classes().includes('history'))
-    expect(activeTable.findAll('tbody th strong').map((th) => th.text())).toEqual(['2', '3'])
+    // the step keeps its score: only its values changed
+    expect(activeTable.findAll('tbody th strong').map((th) => th.text())).toEqual(['1', '2'])
+    expect(activeTable.findAll('tbody tr')[0].text()).toContain('0.5')
     expect(buttonWithText(wrapper, 'Hide deactivated')).toBeTruthy()
     const historyTable = wrapper.find('.table-scroll.history')
     expect(historyTable.findAll('tbody th strong').map((th) => th.text())).toEqual(['1'])
@@ -236,22 +230,21 @@ describe('Decision Matrix step editing', () => {
     expect(wrapper.findAll('button[aria-label^="Edit score"]').length).toBe(2)
   })
 
-  it('keeps the form open with its values when the API refuses the new score', async () => {
+  it('keeps the form open with its values when the API refuses the save', async () => {
     const state = installMockApi([makeStep(), makeStep({ id: 2, score: 2 })])
     const wrapper = mount(DecisionMatrix, { attachTo: document.body })
     await flushPromises()
     await openSeries(wrapper)
 
     const form = await openEdit(wrapper)
-    await fieldByLabel(form, 'Score').setValue('4')
     await fieldByLabel(form, 'PR increase').setValue('9')
-    state.editError = 'Score 4 is already active for this score type. Choose another score.'
-    await buttonWithText(form, 'Deactivate & add new step').trigger('click')
+    state.editError = 'The matrix was changed by another request. Refresh and try again.'
+    await buttonWithText(form, 'Save new values').trigger('click')
     await flushPromises()
 
     const reopened = dialog(wrapper)
     expect(reopened.exists()).toBe(true)
-    expect(reopened.text()).toContain('Score 4 is already active for this score type')
+    expect(reopened.text()).toContain('The matrix was changed by another request')
     expect(fieldByLabel(reopened, 'PR increase').element.value).toBe('9')
     // nothing was archived
     expect(state.rows.every((row) => row.deactivated_at === null)).toBe(true)

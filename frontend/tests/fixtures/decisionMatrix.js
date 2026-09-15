@@ -109,14 +109,11 @@ export async function mockDecisionMatrix(page, options = {}) {
       if (original.deactivated_at !== null) {
         return fail('This score step is already deactivated. Add a new step instead.', 409)
       }
-      const scoreType = scoreTypeValue(original.score_type)
-      const others = state.rows.filter((row) => row.city_group === original.city_group &&
-        String(row.incentive_type) === String(original.incentive_type) &&
-        scoreTypeValue(row.score_type) === scoreType && row.deactivated_at === null && row.id !== id)
-      const chosen = payload.score ?? Math.max(0, ...others.map((row) => row.score)) + 1
-      if (others.some((row) => row.score === chosen)) {
-        return fail(`Score ${chosen} is already active for this score type. Choose another score.`, 409)
+      // the score is fixed: it is never part of an edit payload
+      if ('score' in payload || 'score_type' in payload || 'incentive_type' in payload || 'city_group' in payload) {
+        return fail(`Fields cannot be changed: ${['score', 'score_type', 'incentive_type', 'city_group'].filter((k) => k in payload).sort().join(', ')}.`, 400)
       }
+      const chosen = original.score
       const float = (value) => typeof value === 'number' && Number.isFinite(value)
       if (!float(payload.target_increase) || !float(payload.pr_increase)) return fail('Target and PR must be non-null floats.', 400)
       if (payload.control_bucket !== null && (!Array.isArray(payload.control_bucket) || payload.control_bucket.length !== 3 || !payload.control_bucket.every(float))) {
@@ -133,7 +130,7 @@ export async function mockDecisionMatrix(page, options = {}) {
       state.rows.push(row)
       return reply({
         status: 'ok', replaced_id: id, row,
-        message: `Score ${original.score} deactivated and score ${chosen} added with the new details.`,
+        message: `Score ${chosen} deactivated and added again with the new details.`,
       })
     }
     const deactivate = /^\/api\/decision-matrix\/(\d+)\/deactivate$/.exec(url.pathname)

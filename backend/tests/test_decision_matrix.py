@@ -330,21 +330,21 @@ class DecisionMatrixAPITests(unittest.TestCase):
             self.assertEqual(before[key], after[key])
         self.assertEqual(self.client.post(f"{BASE}/999/deactivate").status_code, 404)
 
-    def test_editing_archives_the_row_and_adds_a_new_one_with_the_new_details(self):
+    def test_editing_keeps_the_score_and_adds_a_new_row_with_the_new_values(self):
         original = self.add(score=4).json()["row"]
         self.now = "2026-09-09T13:00:00"
         self.lock_events.clear()  # only the edit's own lock cycle is asserted below
         response = self.client.post(f"{BASE}/{original['id']}/edit", json={
-            "score": 5, "target_increase": "0.5", "pr_increase": "2.25",
+            "target_increase": "0.5", "pr_increase": "2.25",
             "control_bucket": [0.2, 0.3, 0.5],
         })
         self.assertEqual(response.status_code, 200, response.text)
         body = response.json()
         replacement = body["row"]
-        # the new row carries the new details and is active
+        # the new row keeps the score of the row being edited, with the new values
         self.assertEqual(body["replaced_id"], original["id"])
         self.assertNotEqual(replacement["id"], original["id"])
-        self.assertEqual(replacement["score"], 5)
+        self.assertEqual(replacement["score"], 4)
         self.assertEqual(replacement["target_increase"], 0.5)
         self.assertEqual(replacement["pr_increase"], 2.25)
         self.assertEqual(replacement["control_bucket"], [0.2, 0.3, 0.5])
@@ -359,44 +359,61 @@ class DecisionMatrixAPITests(unittest.TestCase):
         self.assertEqual(archived["deactivated_at"], "2026-09-09T13:00:00")
         for key in ("score", "target_increase", "pr_increase", "control_bucket", "created_at"):
             self.assertEqual(archived[key], original[key])
-        # only the replacement is active, in the same series
+        # only the replacement is active, in the same series, with the same score
         data = self.read()
         self.assertEqual([row["id"] for row in data["rows"]], [replacement["id"]])
+        self.assertEqual([row["score"] for row in data["rows"]], [4])
         self.assertEqual(data["series"][0]["active_count"], 1)
         self.assertEqual(data["series"][0]["deactivated_count"], 1)
-        self.assertEqual(data["series"][0]["next_score"], 6)
+        self.assertEqual(data["series"][0]["next_score"], 5)
+        # both rows of the series carry the same score number, one active/one archived
+        scores = [row["score"] for row in self.read(include_deactivated=True)["rows"]]
+        self.assertEqual(scores, [4, 4])
         self.assertEqual(self.lock_events, ["acquire", "commit", "release", "commit"])
 
-    def test_editing_without_a_score_uses_the_next_free_one(self):
-        original = self.add().json()["row"]
-        self.assertEqual(original["score"], 1)
-        replacement = self.client.post(
-            f"{BASE}/{original['id']}/edit", json={"target_increase": 1, "pr_increase": 2}
-        ).json()["row"]
-        self.assertEqual(replacement["score"], 2)
+    def test_editing_cannot_change_the_score_and_changes_nothing(self):
+        original = self.add(score=4).json()["row"]
+        self.add(score=5)
+        for payload in [{"score": 9, "target_increase": 1, "pr_increase": 1},
+                        {"score": 4, "target_increase": 1, "pr_increase": 1}]:
+            with self.subTest(payload=payload):
+                response = self.client.post(f"{BASE}/{original['id']}/edit", json=payload)
+                self.assertEqual(response.status_code, 400, response.text)
+                self.assertIn("score", response.json()["message"])
+        self.assertEqual([row["score"] for row in self.read()["rows"]], [4, 5])
+        self.assertEqual(self.read(include_deactivated=True)["series"][0]["deactivated_count"], 0)
 
-    def test_editing_into_an_occupied_active_score_is_refused_and_changes_nothing(self):
-        first = self.add(score=1).json()["row"]
-        self.add(score=2)
-        before = self.read(include_deactivated=True)["rows"]
-        response = self.client.post(f"{BASE}/{first['id']}/edit", json={
-            "score": 2, "target_increase": 9, "pr_increase": 9,
-        })
-        self.assertEqual(response.status_code, 409)
-        self.assertIn("already active", response.json()["message"])
-        self.assertEqual(self.read(include_deactivated=True)["rows"], before)
-        # reusing an archived score is fine
-        self.client.post(f"{BASE}/{first['id']}/edit", json={
-            "score": 1, "target_increase": 3, "pr_increase": 4,
-        })
-        self.assertEqual([row["score"] for row in self.read()["rows"]], [1, 2])
+    def test_editing_keeps_the_stored_score_type_spelling(self):
+        custom = self.add(score_type="Delivery", score=1).json()["row"]
+        legacy = self.add(score_type="performance", score=1).json()["row"]
+        # a label-spelled legacy preset: 'Performance' is an alias of 'performance'
+        with self.engine.begin() as conn:
+            conn.execute(text(
+                "UPDATE incentive.incentive_decision_matrix SET score_type = 'Performance' "
+                "WHERE id = :id"
+            ), {"id": legacy["id"]})
+
+        for row, expected in ((custom, "Delivery"), (legacy, "Performance")):
+            with self.subTest(score_type=expected):
+                edited = self.client.post(f"{BASE}/{row['id']}/edit", json={
+                    "target_increase": 0.4, "pr_increase": 4.0,
+                }).json()["row"]
+                self.assertEqual(edited["score"], 1)
+                with self.engine.connect() as conn:
+                    stored = conn.execute(text(
+                        "SELECT score_type FROM incentive.incentive_decision_matrix WHERE id = :id"
+                    ), {"id": edited["id"]}).scalar()
+                # the new row copies the edited row's spelling, it is not rewritten
+                self.assertEqual(stored, expected)
 
     def test_editing_rejects_unknown_fields_and_invalid_values(self):
         original = self.add().json()["row"]
         for payload in [
             {"city_group": "Group B", "target_increase": 1, "pr_increase": 1},
             {"id": 5, "target_increase": 1, "pr_increase": 1},
-            {"target_increase": 1, "pr_increase": 1, "score": 0},
+            {"score": 0, "target_increase": 1, "pr_increase": 1},
+            {"target_increase": "no", "pr_increase": 1},
+            {"target_increase": 1},
             {"target_increase": 1, "pr_increase": 1, "control_bucket": [1, 2]},
         ]:
             with self.subTest(payload=payload):

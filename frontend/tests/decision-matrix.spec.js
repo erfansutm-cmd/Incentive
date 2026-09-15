@@ -586,7 +586,7 @@ test('each incentive type opens a dedicated page scoped to that type with full a
   await expect(page.getByRole('dialog')).toBeVisible()
 })
 
-test('editing a step prefills the form, then deactivates that row and adds a new one', async ({ page }) => {
+test('editing a step keeps its score and turns it into an archived row plus a new one', async ({ page }) => {
   const state = await mockDecisionMatrix(page, { rows: [
     makeStep({ id: 1, score: 1, target_increase: 0.125, pr_increase: 1.75 }),
     makeStep({ id: 2, score: 2, target_increase: 0.25, pr_increase: 2.5 }),
@@ -597,72 +597,52 @@ test('editing a step prefills the form, then deactivates that row and adds a new
 
   const dialog = await openEdit(page)
   await expect(dialog.getByRole('heading', { name: 'Edit score 1', exact: true })).toBeVisible()
-  // Prefilled with the row being edited, and it says what saving will do.
-  await expect(scoreInput(dialog)).toHaveValue('1')
+  // Prefilled with the row being edited, and the score is fixed, not an input.
+  await expect(dialog.locator('.score-fixed-value')).toHaveText('1')
+  await expect(dialog.getByText(/stays the same/)).toBeVisible()
+  await expect(dialog.getByRole('spinbutton', { name: /^Score/ })).toHaveCount(0)
   await expect(dialog.getByLabel('Target increase', { exact: true })).toHaveValue('0.125')
   await expect(dialog.getByLabel('PR increase', { exact: true })).toHaveValue('1.75')
   const preview = dialog.locator('.preview-line')
   await expect(preview).toContainText('Score 1 → deactivated')
-  await expect(dialog.getByText(/Suggested: 3/)).toBeVisible()
+  await expect(preview).toContainText('score 1 active again with the new values')
   // Nothing identical can be saved by mistake.
-  await expect(dialog.getByRole('button', { name: 'Deactivate & add new step', exact: true })).toBeDisabled()
-  await expect(dialog.getByText('Change the score or one of the values before saving', { exact: false })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Save new values', exact: true })).toBeDisabled()
+  await expect(dialog.getByText('Change at least one value before saving', { exact: false })).toBeVisible()
 
-  await scoreInput(dialog).fill('3')
   await fillValues(dialog, '0.5', '2.25', [0.1, 0.2, 0.3])
-  await expect(preview).toContainText('Score 1 → deactivated')
-  await expect(preview).toContainText('score 3 active')
-  await dialog.getByRole('button', { name: 'Deactivate & add new step', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Save new values', exact: true }).click()
 
-  // One server call, and it is the edit endpoint.
+  // One server call, to the edit endpoint, carrying the values only — no score.
   expect(state.writes).toEqual([{
     action: 'edit', id: 1,
-    payload: { score: 3, target_increase: 0.5, pr_increase: 2.25, control_bucket: [0.1, 0.2, 0.3] },
+    payload: { target_increase: 0.5, pr_increase: 2.25, control_bucket: [0.1, 0.2, 0.3] },
   }])
-  await expect(page.locator('.toast')).toContainText('Score 1 deactivated and score 3 added with the new details.')
-  // The edited row keeps its history (revealed right away); the new row is active.
+  await expect(page.locator('.toast')).toContainText('Score 1 deactivated and added again with the new details.')
+  // The step keeps its score; the archived row is revealed right away.
   const active = groupPanel(page).getByRole('region', { name: 'Delivery active steps', exact: true })
   const history = groupPanel(page).getByRole('region', { name: 'Delivery deactivated steps', exact: true })
   await expect(history.getByRole('rowheader', { name: /^1 ID/ })).toBeVisible()
-  await expect(active.getByRole('rowheader', { name: /^3 ID/ })).toBeVisible()
-  await expect(active.getByRole('rowheader', { name: /^1 ID/ })).toHaveCount(0)
+  await expect(active.getByRole('rowheader', { name: /^1 ID/ })).toBeVisible()
+  await expect(active.getByRole('rowheader', { name: /^2 ID/ })).toBeVisible()
 })
 
-test('editing can keep the same score and refuses one that is already active', async ({ page }) => {
-  const state = await mockDecisionMatrix(page, { rows: [
-    makeStep({ id: 1, score: 1 }),
-    makeStep({ id: 2, score: 2 }),
-  ] })
+test('a failing save keeps the edit form open with its values', async ({ page }) => {
+  const state = await mockDecisionMatrix(page, { rows: [makeStep({ id: 1, score: 1 })] })
   await page.goto('/decision-matrix')
   await openGroup(page)
   await openSeries(page)
 
-  let dialog = await openEdit(page, 'Edit score 2')
-  await scoreInput(dialog).fill('2')
+  const dialog = await openEdit(page)
   await fillValues(dialog, '0.9', '9')
-  // Score 1 is active: it cannot be taken over by this edit.
-  await scoreInput(dialog).fill('1')
-  await expect(dialog.getByText('Score 1 is already active for this score type. Choose another score.', { exact: true })).toBeVisible()
-  await expect(dialog.getByRole('button', { name: 'Deactivate & add new step', exact: true })).toBeDisabled()
-  // Keeping its own score is allowed: the row is deactivated by the same save.
-  await scoreInput(dialog).fill('2')
-  await expect(dialog.getByText('Score 2 is already active for this score type. Choose another score.', { exact: true })).toHaveCount(0)
-  await dialog.getByRole('button', { name: 'Deactivate & add new step', exact: true }).click()
-  await expect(page.locator('.toast')).toContainText('Score 2 deactivated and score 2 added')
-  expect(state.writes[0].payload.score).toBe(2)
-  const active = groupPanel(page).getByRole('region', { name: 'Delivery active steps', exact: true })
-  await expect(active.getByRole('rowheader', { name: /^2 ID/ })).toHaveCount(1)
-  await expect(groupPanel(page).getByRole('region', { name: 'Delivery deactivated steps', exact: true })).toBeVisible()
-
-  // A conflict found by the API keeps the form open with its values.
-  state.editError = 'Score 5 is already active for this score type. Choose another score.'
-  dialog = await openEdit(page, 'Edit score 1')
-  await fillValues(dialog, '0.5', '5')
-  await dialog.getByRole('button', { name: 'Deactivate & add new step', exact: true }).click()
-  await expect(dialog.getByText('Score 5 is already active for this score type. Choose another score.', { exact: true })).toBeVisible()
-  await expect(dialog.getByLabel('PR increase', { exact: true })).toHaveValue('5')
+  // A failing save keeps the form open with the entered values.
+  state.editError = 'The matrix was changed by another request. Refresh and try again.'
+  await dialog.getByRole('button', { name: 'Save new values', exact: true }).click()
+  await expect(dialog.getByRole('alert')).toContainText('The matrix was changed by another request')
+  await expect(dialog.getByLabel('PR increase', { exact: true })).toHaveValue('9')
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(dialog).toBeHidden()
+  await expect(page.getByRole('rowheader', { name: '1 ID 1', exact: true })).toBeVisible()
 })
 
 test('the dedicated type page edits steps the same way', async ({ page }) => {
@@ -672,17 +652,18 @@ test('the dedicated type page edits steps the same way', async ({ page }) => {
 
   const dialog = await openEdit(page)
   await expect(dialog.getByRole('heading', { name: 'Edit score 1', exact: true })).toBeVisible()
-  await scoreInput(dialog).fill('4')
+  await expect(dialog.locator('.score-fixed-value')).toHaveText('1')
   await fillValues(dialog, '0.3', '3')
-  await dialog.getByRole('button', { name: 'Deactivate & add new step', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Save new values', exact: true }).click()
 
   expect(state.writes).toEqual([{
     action: 'edit', id: 1,
-    payload: { score: 4, target_increase: 0.3, pr_increase: 3, control_bucket: null },
+    payload: { target_increase: 0.3, pr_increase: 3, control_bucket: null },
   }])
-  await expect(page.locator('.toast')).toContainText('Score 1 deactivated and score 4 added with the new details.')
+  await expect(page.locator('.toast')).toContainText('Score 1 deactivated and added again with the new details.')
   const active = page.getByRole('region', { name: 'Delivery active steps', exact: true })
-  await expect(active.getByRole('rowheader', { name: /^4 ID/ })).toBeVisible()
+  await expect(active.getByRole('rowheader', { name: /^1 ID/ })).toBeVisible()
+  await expect(active.getByRole('rowheader', { name: /^1 ID/ })).toHaveCount(1)
   await expect(page.getByRole('region', { name: 'Delivery deactivated steps', exact: true })
     .getByRole('rowheader', { name: /^1 ID/ })).toBeVisible()
 })

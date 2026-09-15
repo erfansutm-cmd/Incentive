@@ -73,18 +73,6 @@ const activeCount = computed(() => scoreTypes.value.reduce((sum, item) => sum + 
 const deactivatedCount = computed(() => scoreTypes.value.reduce((sum, item) => sum + item.deactivatedSteps.length, 0))
 // A score type can only be added when this incentive type exists in the
 // reference lookup, mirroring the main Decision Matrix page.
-const editSeries = computed(() => {
-  const target = editTarget.value
-  if (!target) return null
-  return scoreTypes.value.find((item) => item.key === seriesKey(typeId.value, target.item.score_type)) || null
-})
-// Active scores of the edited series, minus the row being edited: it is
-// deactivated by the same save, so its own score may be reused.
-const editActiveScores = computed(() =>
-  (editSeries.value?.activeSteps || [])
-    .filter((row) => String(row.id) !== String(editTarget.value?.row.id))
-    .map((row) => Number(row.score))
-)
 const canAddScoreType = computed(() =>
   !loading.value && !error.value && !saving.value &&
   types.value.some((type) => String(type.id) === typeId.value)
@@ -339,7 +327,6 @@ onBeforeUnmount(() => {
     />
     <DecisionMatrixStepEditForm
       v-if="editTarget" :row="editTarget.row" :city-group="cityGroup" :type-name="typeName"
-      :next-score="editSeries?.next_score ?? 1" :active-scores="editActiveScores"
       :saving="editing" :error="editError" @save="saveEdit" @close="closeEdit"
     />
     <ModalDialog v-if="deactivateTarget" title-id="deactivate-score-title" :busy="deactivating" @close="closeDeactivate">

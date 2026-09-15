@@ -114,19 +114,6 @@ const existingScoreTypes = computed(() => configuredTypes.value
   .find((type) => type.id === String(formContext.value?.incentiveType))
   ?.scoreTypes.map((item) => item.score_type) || []
 )
-const editSeries = computed(() => {
-  const target = editTarget.value
-  if (!target) return null
-  const type = configuredTypes.value.find((item) => item.id === String(target.type.id))
-  return type?.scoreTypes.find((item) => item.key === seriesKey(target.type.id, target.item.score_type)) || null
-})
-// Active scores of the edited series, minus the row being edited: it is
-// deactivated by the same save, so its own score may be reused.
-const editActiveScores = computed(() =>
-  (editSeries.value?.activeSteps || [])
-    .filter((row) => String(row.id) !== String(editTarget.value?.row.id))
-    .map((row) => Number(row.score))
-)
 const busy = computed(() => groupsLoading.value || matrixLoading.value || typesLoading.value || saving.value || editing.value || deactivating.value)
 const canAddType = computed(() => !busy.value && !matrixError.value && !typesError.value && availableTypes.value.length > 0)
 
@@ -527,8 +514,7 @@ onBeforeUnmount(() => {
     />
     <DecisionMatrixStepEditForm
       v-if="editTarget" :row="editTarget.row" :city-group="selectedGroup"
-      :type-name="editTarget.type.name" :next-score="editSeries?.next_score ?? 1"
-      :active-scores="editActiveScores" :saving="editing" :error="editError"
+      :type-name="editTarget.type.name" :saving="editing" :error="editError"
       @save="saveEdit" @close="closeEdit"
     />
     <ModalDialog v-if="deactivateTarget" title-id="deactivate-score-title" :busy="deactivating" @close="closeDeactivate">

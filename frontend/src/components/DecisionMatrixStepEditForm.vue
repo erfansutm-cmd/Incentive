@@ -1,8 +1,9 @@
 <script setup>
 // Editing one score step. A row is never updated in place: saving deactivates
-// the row being edited and adds a new row with the new details, so the history
-// of the series stays complete. The three fields that identify the row (city
-// group, incentive type, score type) are fixed and shown read-only.
+// the row being edited and adds a new active row with the new values, so the
+// history of the series stays complete. The **score never changes** — it
+// identifies the step inside its series — and neither do the city group, the
+// incentive type and the score type; only the values below are editable.
 import { computed, reactive } from 'vue'
 import ModalDialog from './ModalDialog.vue'
 import { scoreTypeLabel } from '../lib/decisionMatrixScoreTypes'
@@ -12,10 +13,6 @@ const props = defineProps({
   row: { type: Object, required: true },
   cityGroup: { type: String, required: true },
   typeName: { type: String, default: '' },
-  // The next free score of the series, suggested for the new row.
-  nextScore: { type: [Number, String], default: 1 },
-  // Active scores of the same series, without the row being edited.
-  activeScores: { type: Array, default: () => [] },
   saving: { type: Boolean, default: false },
   error: { type: String, default: '' },
 })
@@ -31,34 +28,42 @@ function numberText(value) {
   return Number.isFinite(Number(value)) ? String(Number(value)) : ''
 }
 
+// The score is kept: it is shown, never edited, and never sent to the API.
+const score = computed(() => props.row.score)
+const originalBucket = computed(() =>
+  Array.isArray(props.row.control_bucket)
+    ? props.row.control_bucket.map((value) => numberText(value))
+    : ['', '', '']
+)
 const form = reactive({
-  score: String(props.row.score ?? ''),
   target_increase: numberText(props.row.target_increase),
   pr_increase: numberText(props.row.pr_increase),
-  control_bucket: Array.isArray(props.row.control_bucket)
-    ? props.row.control_bucket.map((value) => numberText(value))
-    : ['', '', ''],
+  control_bucket: [...originalBucket.value],
 })
 const localError = reactive({ message: '' })
-const score = computed(() => Number(form.score))
-const validScore = computed(
-  () => String(form.score).trim() !== '' && Number.isSafeInteger(score.value) && score.value > 0
-)
 const bucketHasValues = computed(() => form.control_bucket.some((value) => String(value).trim() !== ''))
-const suggested = computed(() => Number(props.nextScore) || 1)
-// The score is the same as now and free of conflicts (the current score of the
-// row being edited does not count — it is deactivated by the same save).
-const scoreTaken = computed(
-  () => validScore.value && props.activeScores.some((value) => Number(value) === score.value)
-)
-const keepsDetails = computed(
+// Nothing to save while every value still matches the row being edited: the
+// edit would archive it and add an identical step.
+// "0.500" and "0.5" are the same value, so they do not count as a change.
+function sameNumber(value, original) {
+  const entered = Number(value)
+  const before = Number(numberText(original))
+  if (String(value).trim() !== '' && Number.isFinite(entered) && Number.isFinite(before)) {
+    return entered === before
+  }
+  return String(value).trim() === numberText(original)
+}
+const bucketChanged = computed(() => {
+  if (!bucketHasValues.value) return originalBucket.value.some((value) => String(value).trim() !== '')
+  return form.control_bucket.some((value, index) => !sameNumber(value, props.row.control_bucket?.[index]))
+})
+const changed = computed(
   () =>
-    validScore.value &&
-    score.value === Number(props.row.score) &&
-    String(form.target_increase) === numberText(props.row.target_increase) &&
-    String(form.pr_increase) === numberText(props.row.pr_increase)
+    !sameNumber(form.target_increase, props.row.target_increase) ||
+    !sameNumber(form.pr_increase, props.row.pr_increase) ||
+    bucketChanged.value
 )
-const canSubmit = computed(() => validScore.value && !scoreTaken.value && !keepsDetails.value)
+const canSubmit = computed(() => changed.value)
 
 function requiredFloat(value, label) {
   if (
@@ -69,16 +74,16 @@ function requiredFloat(value, label) {
   }
   return Number(value)
 }
-function useSuggestion() {
-  form.score = String(suggested.value)
+function clearBucket() {
+  form.control_bucket = ['', '', '']
   localError.message = ''
 }
 function submit() {
   if (props.saving || !canSubmit.value) return
   localError.message = ''
   try {
+    // The score is fixed, so it is not part of the payload.
     emit('save', {
-      score: score.value,
       target_increase: requiredFloat(form.target_increase, 'Target increase'),
       pr_increase: requiredFloat(form.pr_increase, 'PR increase'),
       control_bucket: bucketHasValues.value
@@ -94,7 +99,7 @@ function submit() {
 <template>
   <ModalDialog title-id="matrix-edit-title" :busy="saving" @close="emit('close')">
     <form @submit.prevent="submit" @input="localError.message = ''">
-      <h2 id="matrix-edit-title">Edit score {{ row.score }}</h2>
+      <h2 id="matrix-edit-title">Edit score {{ score }}</h2>
       <p class="context">
         <strong>{{ cityGroup }}</strong>
         <template v-if="typeName"> <span aria-hidden="true">/</span> {{ typeName }}</template>
@@ -102,23 +107,15 @@ function submit() {
       </p>
       <p class="hint intro">
         Saving <strong>deactivates this step</strong> and <strong>adds a new step</strong> with the
-        details below. The row as it is now stays in the deactivated history.
+        values below. The row as it is now stays in the deactivated history.
       </p>
 
       <fieldset :disabled="saving">
-        <label class="field">
-          <span>Score</span>
-          <input
-            v-model="form.score" type="number" min="1" :max="Number.MAX_SAFE_INTEGER" step="1"
-            required aria-describedby="matrix-edit-score-hint"
-          />
-          <small id="matrix-edit-score-hint" class="hint">
-            Suggested: {{ suggested }} (the next free score of this series).
-          </small>
-        </label>
-        <p v-if="scoreTaken" class="form-error" role="alert">
-          Score {{ form.score }} is already active for this score type. Choose another score.
-        </p>
+        <div class="score-fixed">
+          <span class="score-fixed-label">Score</span>
+          <span class="score-fixed-value">{{ score }}</span>
+          <span class="hint">stays the same — editing changes the values, not the step's score</span>
+        </div>
 
         <div class="value-fields">
           <label v-for="field in floatFields" :key="field.name" class="field">
@@ -143,8 +140,7 @@ function submit() {
             </label>
           </div>
           <button
-            v-if="bucketHasValues" type="button" class="copy-values"
-            @click="form.control_bucket = ['', '', '']"
+            v-if="bucketHasValues" type="button" class="copy-values" @click="clearBucket"
           >Clear control bucket</button>
         </fieldset>
       </fieldset>
@@ -152,18 +148,14 @@ function submit() {
       <div class="preview" aria-live="polite">
         <span class="preview-label">After saving</span>
         <span class="preview-line">
-          Score {{ row.score }} → deactivated
+          Score {{ score }} → deactivated
           <span aria-hidden="true">·</span>
-          <template v-if="validScore">score {{ form.score }} active</template>
-          <template v-else>enter a score for the new step</template>
+          score {{ score }} active again with the new values
         </span>
-        <button v-if="form.score !== String(suggested)" type="button" class="copy-values" @click="useSuggestion">
-          Use suggested score {{ suggested }}
-        </button>
       </div>
 
-      <p v-if="keepsDetails" class="hint keep-hint">
-        Change the score or one of the values before saving — the edit would create an identical step.
+      <p v-if="!canSubmit" class="hint keep-hint">
+        Change at least one value before saving — the edit would create an identical step.
       </p>
       <p v-if="localError.message || error" class="form-error" role="alert">
         {{ localError.message || error }}
@@ -171,7 +163,7 @@ function submit() {
       <div class="actions">
         <button type="button" class="btn btn-ghost" :disabled="saving" @click="emit('close')">Cancel</button>
         <button type="submit" class="btn btn-primary" :disabled="saving || !canSubmit">
-          {{ saving ? 'Saving…' : 'Deactivate & add new step' }}
+          {{ saving ? 'Saving…' : 'Save new values' }}
         </button>
       </div>
     </form>
@@ -184,6 +176,9 @@ function submit() {
 .hint { color: var(--muted); font-size: 0.8rem; line-height: 1.5; }
 .intro { margin: 0 0 1rem; }
 fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.score-fixed { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.3rem 0.6rem; padding: 0.6rem 0.75rem; margin: 0 0 0.85rem; border: 1px solid var(--border); border-radius: 0.55rem; background: #fbfdfc; }
+.score-fixed-label { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+.score-fixed-value { display: inline-grid; place-items: center; min-width: 1.8rem; padding: 0.15rem 0.5rem; border-radius: 0.45rem; background: var(--surface-2); color: var(--accent-strong); font-weight: 700; font-variant-numeric: tabular-nums; }
 .value-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 1rem; }
 .value-fields input, .bucket-values input { width: 100%; }
 .bucket-field { padding: 0.9rem; margin: 0.2rem 0 0; border: 1px solid var(--border); border-radius: 0.6rem; }

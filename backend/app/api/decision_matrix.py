@@ -5,7 +5,8 @@ step; no placeholder rows or additional tables are needed for an empty matrix.
 
 Editing a step is one action that keeps the history complete: the edited row is
 deactivated and a new active row with the corrected details is inserted in the
-same locked transaction (``POST /{id}/edit``). Rows are never updated in place.
+same locked transaction (``POST /{id}/edit``). Rows are never updated in place and
+the score of a step never changes — only its target/PR increases and bucket.
 """
 
 import datetime
@@ -422,17 +423,21 @@ def add_step(payload: dict):
 
 @router.post("/{step_id}/edit")
 def edit_step(step_id: int, payload: dict):
-    """Edit a step as one action: deactivate it and add the corrected copy.
+    """Edit a step's values as one action: deactivate it and add the corrected copy.
 
     Rows are never updated in place: the row being edited is archived
     (``deactivated_at = NOW()``) and a new active row carrying the submitted
-    details is inserted in the same locked transaction, so the history of the
-    series stays complete and a failed write leaves the original active.
+    target/PR increases and control bucket is inserted in the same locked
+    transaction, so the history of the series stays complete and a failed write
+    leaves the original active.
+
+    The **score is fixed**: it identifies the step inside its series, so the new
+    row keeps it and sending ``score`` is refused. City group, incentive type and
+    score type are fixed too — an edit changes the values, not the step identity.
     """
     try:
-        # Same schedule as an addition: city group, incentive type and score type
-        # are fixed by the row being edited; score and the values are reviewed.
-        allowed = {"score", *VALUE_COLUMNS}
+        # Only the three values are editable; score and the series keys are fixed.
+        allowed = set(VALUE_COLUMNS)
         unknown = set(payload) - allowed
         if unknown:
             raise MatrixError(f"Fields cannot be changed: {', '.join(sorted(unknown))}.")
@@ -450,44 +455,19 @@ def edit_step(step_id: int, payload: dict):
                     "This score step is already deactivated. Add a new step instead.", 409
                 )
 
-            requested_score = (
-                _positive_integer(payload["score"], "score") if "score" in payload else None
-            )
+            score = _positive_integer(source.get("score"), "score")
+            # The row keeps its identity: the series columns are copied from the
+            # original row as stored, custom score-type spelling included.
             params = {
-                "city_group": _clean_value(source.get("city_group"), cols["city_group"]),
+                "city_group": _clean_value(original["city_group"], cols["city_group"]),
                 "incentive_type": _positive_integer(
-                    source.get("incentive_type"), "incentive_type"
+                    original["incentive_type"], "incentive_type"
                 ),
-                "score_type": _clean_value(source.get("score_type"), cols["score_type"]),
+                "score_type": _clean_value(original["score_type"], cols["score_type"]),
+                "score": score,
                 **_value_params(payload, cols),
             }
-            score_filter = "`score_type` = :score_type"
-            if params["score_type"] in SCORE_TYPE_LABELS:
-                params["score_type_label"] = SCORE_TYPE_LABELS[params["score_type"]].lower()
-                score_filter = "LOWER(TRIM(`score_type`)) IN (:score_type, :score_type_label)"
-            # Same series as the row being edited (names compare case-insensitively).
-            series = (
-                "`city_group` = :city_group AND `incentive_type` = :incentive_type "
-                f"AND {score_filter}"
-            )
-            previous = list(conn.execute(text(
-                f"SELECT `score_type`, {ACTIVE_MAX_SCORE} AS max_score FROM {TABLE_SQL} "
-                f"WHERE {series} GROUP BY `score_type`"
-            ), params).mappings())
-            next_score = max((int(item["max_score"]) for item in previous), default=0) + 1
-            if previous and params["score_type"] not in SCORE_TYPE_LABELS:
-                # Custom names keep their existing spelling under CI collations.
-                params["score_type"] = previous[0]["score_type"]
-            params["score"] = requested_score if requested_score is not None else next_score
-            existing = conn.execute(text(
-                f"SELECT `id` FROM {TABLE_SQL} WHERE {series} AND `score` = :score "
-                "AND `deactivated_at` IS NULL LIMIT 1"
-            ), params).first()
-            if existing is not None:
-                raise MatrixError(
-                    f"Score {params['score']} is already active for this score type. Choose another score.",
-                    409,
-                )
+            # Archive first: the new row reuses the same score, so it must be free.
             archived = conn.execute(text(
                 f"UPDATE {TABLE_SQL} SET `deactivated_at` = NOW() "
                 "WHERE `id` = :id AND `deactivated_at` IS NULL"
@@ -510,15 +490,13 @@ def edit_step(step_id: int, payload: dict):
             result = _row_json(row)
         return {
             "status": "ok",
-            "message": (
-                f"Score {source.get('score')} deactivated and score {params['score']} added "
-                "with the new details."
-            ),
+            "message": f"Score {score} deactivated and added again with the new details.",
             "row": result,
             "replaced_id": step_id,
         }
     except Exception as exc:
         return _error(exc)
+
 
 
 @router.post("/{step_id}/deactivate")
