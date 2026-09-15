@@ -1,7 +1,7 @@
 """Final Decisions tests against an isolated SQLite store; never touch the configured DB.
 
 The endpoint SQL runs for real with attached ``incentive`` / ``mafsho`` schemas,
-so the plan join (``incentive_plans`` → ``incentive_city_plan_mapping`` →
+so the plan join (``final_incentive_plans`` → ``incentive_city_plan_mapping`` →
 ``incentive_type``) and the type-name resolution are exercised end to end.
 Run: python -m unittest discover -s tests -v
 """

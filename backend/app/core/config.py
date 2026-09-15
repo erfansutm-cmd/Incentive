@@ -43,7 +43,7 @@ DB_INCENTIVE_SCORES_TABLE = os.getenv(
 # incentive_city_plan_mapping on plan_mapping_id to reach the city, the
 # incentive type and the business entity.
 DB_INCENTIVE_PLANS_TABLE = os.getenv(
-    "DB_INCENTIVE_PLANS_TABLE", "incentive/incentive_plans"
+    "DB_INCENTIVE_PLANS_TABLE", "incentive/final_incentive_plans"
 )
 # Display order ("top first") of the plan types in the Final Decisions tab.
 # Comma separated type names; whatever is not listed follows alphabetically.

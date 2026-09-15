@@ -20,8 +20,20 @@ function onBackdrop(event) {
 }
 
 // Native dialogs trap focus, support Escape and restore focus on close.
-onMounted(() => dialog.value.showModal())
-onBeforeUnmount(() => dialog.value?.close())
+// Without showModal() (very old browsers) the dialog is simply opened, so the
+// form still works instead of failing to appear.
+onMounted(() => {
+  const element = dialog.value
+  if (!element) return
+  if (typeof element.showModal === 'function') element.showModal()
+  else element.setAttribute('open', '')
+})
+onBeforeUnmount(() => {
+  const element = dialog.value
+  if (!element) return
+  if (typeof element.close === 'function') element.close()
+  else element.removeAttribute('open')
+})
 </script>
 
 <template>

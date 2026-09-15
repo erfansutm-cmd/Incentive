@@ -4,7 +4,9 @@ defineProps({
   label: { type: String, required: true },
   deactivated: { type: Boolean, default: false },
 })
-const emit = defineEmits(['deactivate'])
+// `edit` asks the parent to open the edit form (deactivate this row and add a
+// new one with the new details); `deactivate` archives the row as it is.
+const emit = defineEmits(['edit', 'deactivate'])
 function formatBucketValue(value) {
   if (value === null || value === undefined) return '—'
   if (typeof value === 'number') {
@@ -52,6 +54,7 @@ function formatDate(value) {
           <td class="date-cell">{{ formatDate(row.created_at) }}</td>
           <td v-if="deactivated" class="date-cell">{{ formatDate(row.deactivated_at) }}</td>
           <td v-else class="actions-col">
+            <button class="btn btn-ghost btn-sm" :aria-label="`Edit score ${row.score}`" @click="emit('edit', row)">Edit</button>
             <button class="btn btn-danger-soft btn-sm" :aria-label="`Deactivate score ${row.score}`" @click="emit('deactivate', row)">Deactivate</button>
           </td>
         </tr>
@@ -77,6 +80,7 @@ tbody tr:hover { background: #f6faf8; }
 .muted { color: var(--muted); }
 .date-cell { white-space: nowrap; color: var(--muted); font-size: 0.78rem; }
 .actions-col { text-align: right; white-space: nowrap; }
+.actions-col .btn + .btn { margin-left: 0.35rem; }
 .history { background: #fafbfa; color: var(--inactive-text); }
 .history .score-cell strong { background: var(--surface-2); color: var(--inactive-text); }
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }

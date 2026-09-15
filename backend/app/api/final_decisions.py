@@ -22,7 +22,7 @@ incentive type — ``FINAL_DECISION_PLAN_TYPE_ORDER``, by default
 ``default`` → ``DAILY`` → ``ON-TOP-FOOD`` → anything else alphabetically. The UI
 shows that order, marks the top plan and lets the user reorder it in a popup.
 
-Plans are best-effort: if ``incentive_plans`` cannot be read the scores still
+Plans are best-effort: if ``final_incentive_plans`` cannot be read the scores still
 load and the response carries ``plans_error`` so the tab can say so.
 """
 

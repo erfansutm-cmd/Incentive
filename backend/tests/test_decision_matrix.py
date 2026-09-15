@@ -330,10 +330,99 @@ class DecisionMatrixAPITests(unittest.TestCase):
             self.assertEqual(before[key], after[key])
         self.assertEqual(self.client.post(f"{BASE}/999/deactivate").status_code, 404)
 
-    def test_edit_endpoint_is_removed_and_cannot_change_existing_steps(self):
+    def test_editing_archives_the_row_and_adds_a_new_one_with_the_new_details(self):
+        original = self.add(score=4).json()["row"]
+        self.now = "2026-09-09T13:00:00"
+        self.lock_events.clear()  # only the edit's own lock cycle is asserted below
+        response = self.client.post(f"{BASE}/{original['id']}/edit", json={
+            "score": 5, "target_increase": "0.5", "pr_increase": "2.25",
+            "control_bucket": [0.2, 0.3, 0.5],
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        replacement = body["row"]
+        # the new row carries the new details and is active
+        self.assertEqual(body["replaced_id"], original["id"])
+        self.assertNotEqual(replacement["id"], original["id"])
+        self.assertEqual(replacement["score"], 5)
+        self.assertEqual(replacement["target_increase"], 0.5)
+        self.assertEqual(replacement["pr_increase"], 2.25)
+        self.assertEqual(replacement["control_bucket"], [0.2, 0.3, 0.5])
+        self.assertEqual(replacement["created_at"], "2026-09-09T13:00:00")
+        self.assertIsNone(replacement["deactivated_at"])
+        # city group / incentive type / score type stay the ones of the edited row
+        self.assertEqual(replacement["city_group"], original["city_group"])
+        self.assertEqual(replacement["incentive_type"], original["incentive_type"])
+        self.assertEqual(replacement["score_type"], original["score_type"])
+        # the edited row is archived, not updated, and its old values are intact
+        archived = next(row for row in self.read(include_deactivated=True)["rows"] if row["id"] == original["id"])
+        self.assertEqual(archived["deactivated_at"], "2026-09-09T13:00:00")
+        for key in ("score", "target_increase", "pr_increase", "control_bucket", "created_at"):
+            self.assertEqual(archived[key], original[key])
+        # only the replacement is active, in the same series
+        data = self.read()
+        self.assertEqual([row["id"] for row in data["rows"]], [replacement["id"]])
+        self.assertEqual(data["series"][0]["active_count"], 1)
+        self.assertEqual(data["series"][0]["deactivated_count"], 1)
+        self.assertEqual(data["series"][0]["next_score"], 6)
+        self.assertEqual(self.lock_events, ["acquire", "commit", "release", "commit"])
+
+    def test_editing_without_a_score_uses_the_next_free_one(self):
+        original = self.add().json()["row"]
+        self.assertEqual(original["score"], 1)
+        replacement = self.client.post(
+            f"{BASE}/{original['id']}/edit", json={"target_increase": 1, "pr_increase": 2}
+        ).json()["row"]
+        self.assertEqual(replacement["score"], 2)
+
+    def test_editing_into_an_occupied_active_score_is_refused_and_changes_nothing(self):
+        first = self.add(score=1).json()["row"]
+        self.add(score=2)
+        before = self.read(include_deactivated=True)["rows"]
+        response = self.client.post(f"{BASE}/{first['id']}/edit", json={
+            "score": 2, "target_increase": 9, "pr_increase": 9,
+        })
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("already active", response.json()["message"])
+        self.assertEqual(self.read(include_deactivated=True)["rows"], before)
+        # reusing an archived score is fine
+        self.client.post(f"{BASE}/{first['id']}/edit", json={
+            "score": 1, "target_increase": 3, "pr_increase": 4,
+        })
+        self.assertEqual([row["score"] for row in self.read()["rows"]], [1, 2])
+
+    def test_editing_rejects_unknown_fields_and_invalid_values(self):
+        original = self.add().json()["row"]
+        for payload in [
+            {"city_group": "Group B", "target_increase": 1, "pr_increase": 1},
+            {"id": 5, "target_increase": 1, "pr_increase": 1},
+            {"target_increase": 1, "pr_increase": 1, "score": 0},
+            {"target_increase": 1, "pr_increase": 1, "control_bucket": [1, 2]},
+        ]:
+            with self.subTest(payload=payload):
+                response = self.client.post(f"{BASE}/{original['id']}/edit", json=payload)
+                self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual([row["id"] for row in self.read()["rows"]], [original["id"]])
+
+    def test_editing_a_deactivated_or_unknown_step_is_refused(self):
+        original = self.add().json()["row"]
+        self.client.post(f"{BASE}/{original['id']}/deactivate")
+        response = self.client.post(f"{BASE}/{original['id']}/edit", json={
+            "target_increase": 1, "pr_increase": 1,
+        })
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("Add a new step", response.json()["message"])
+        missing = self.client.post(f"{BASE}/999/edit", json={"target_increase": 1, "pr_increase": 1})
+        self.assertEqual(missing.status_code, 404)
+        self.assertEqual(len(self.read(include_deactivated=True)["rows"]), 1)
+
+    def test_editing_uses_the_same_lock_as_score_allocation(self):
         row = self.add().json()["row"]
-        response = self.client.put(f"{BASE}/{row['id']}", json={"target_increase": 9.5})
-        self.assertIn(response.status_code, (404, 405))
+        self.lock_result = 0
+        response = self.client.post(f"{BASE}/{row['id']}/edit", json={
+            "target_increase": 5, "pr_increase": 5,
+        })
+        self.assertEqual(response.status_code, 409)
         self.assertEqual(self.read()["rows"][0]["target_increase"], row["target_increase"])
 
     def test_deactivation_uses_the_same_lock_as_score_allocation(self):

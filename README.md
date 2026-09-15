@@ -46,7 +46,7 @@ configured through a root `.env` file:
 | `DB_ACTIVE_CITY_TABLE` | `incentive/incentive_active_city` |
 | `DB_INCENTIVE_BASE_CONFIG_TABLE` | `incentive/incentive_base_configs` |
 | `DB_INCENTIVE_BASE_CONFIG_LOG_TABLE` | `incentive/incentive_base_configs_logs` |
-| `DB_INCENTIVE_PLANS_TABLE` | `incentive/incentive_plans` |
+| `DB_INCENTIVE_PLANS_TABLE` | `incentive/final_incentive_plans` |
 
 ```bash
 cp .env.example .env   # then fill in DB_PASSWORD
@@ -407,12 +407,48 @@ The hierarchy is **City group → Incentive type → Score type → Score steps*
    boolean, non-numeric member, NaN, or infinity is rejected. **Clear control
    bucket** restores null. Arrays are stored as JSON and decoded on read; the UI
    shows them as lists, e.g. `[0.1, 0.2, 0.3]`.
-7. Existing steps have **no Edit action or update endpoint**. **Deactivate** asks
-   for confirmation, then sets `deactivated_at = NOW()`. Deactivated steps remain
-   in their own collapsible, read-only history table, never mixed into active
-   steps. Neither table has a Status column. Deactivation does not delete or
-   renumber old rows; a new row can reuse a deactivated score without changing
+7. Every active step has **Edit** and **Deactivate**. Edit is **one action that
+   keeps the history complete**: the row being edited is deactivated and a new
+   active row with the corrected details is added, in the same locked
+   transaction — rows are never updated in place. **Deactivate** asks for
+   confirmation, then just sets `deactivated_at = NOW()`. Deactivated steps
+   remain in their own collapsible, read-only history table, never mixed into
+   active steps. Neither table has a Status column. Deactivation does not delete
+   or renumber old rows; a new row can reuse a deactivated score without changing
    its history.
+
+### Editing a step
+
+`POST /api/decision-matrix/{id}/edit` is deliberately **not** an update: it
+archives the row and inserts its replacement. The row being edited is set to
+`deactivated_at = NOW()` and a new row with the submitted `score`,
+`target_increase`, `pr_increase` and `control_bucket` is inserted, both inside
+the same named-lock transaction that an addition uses. So:
+
+- history stays complete — the previous version is still there, with its own
+  `created_at`, and is never rewritten;
+- a half-finished edit is impossible: if anything fails (validation, a duplicate
+  score, the lock), the original row stays active and nothing is inserted;
+- `city_group`, `incentive_type` and `score_type` identify the row, so they are
+  **not** editable through this endpoint; sending them is a `400`. A deactivated
+  row cannot be edited either (`409`), and an unknown id is a `404`.
+
+The new score defaults to `MAX(active score) + 1` of the same series when the
+payload omits it, and must be unique among that series' **active** rows — the row
+being edited does not count, since it is archived by the same call, so a step can
+keep its number while its values change. Reusing a deactivated score is fine.
+
+The response carries the new row (`row`) and the id it replaced (`replaced_id`).
+In the UI, **Edit** opens a form prefilled from the row: the score (with the
+suggested next score of the series), target increase, PR increase and the
+three-value control bucket. It shows what saving will do
+(*Score 3 → deactivated · score 4 active*) and refuses a no-op save, so the form
+cannot create an identical step. Identical values plus the same score are
+disabled; a score already active in the series is called out before saving, and a
+`409` from the API keeps the form (with its values) open. After a successful
+save the edited series' history is revealed, so the archived row is visible right
+away. The same form is used on the main page and on the per-type page
+(`/decision-matrix/type`).
 
 Preset score types use fixed database/API values with separate UI captions:
 
@@ -462,6 +498,7 @@ The city-group source is independent of `DB_CITIES_TABLE` and `DB_CITY_MAPPING_T
 | GET | `/api/decision-matrix/city-groups` | Distinct groups from active cities, independent of matrix contents |
 | GET | `/api/decision-matrix?city_group={group}[&include_deactivated=true]` | Rows and metadata for one group; counts include history, suggested scores use active rows only |
 | POST | `/api/decision-matrix` | Create a step with a chosen score (or default to the next active score), required target/PR floats, and an optional three-float bucket |
+| POST | `/api/decision-matrix/{id}/edit` | Edit a step in one action: deactivate it and add a new active row with the submitted details |
 | POST | `/api/decision-matrix/{id}/deactivate` | Soft deactivate a step; repeated calls preserve its first deactivation timestamp |
 
 Example creation payload (the group and incentive ID must exist in their lookups):
@@ -630,7 +667,7 @@ not mixed in.
 
 ### When the plans table cannot be read
 
-Plans are best effort, so a missing or unreachable `incentive_plans` table never
+Plans are best effort, so a missing or unreachable `final_incentive_plans` table never
 hides the scores: the cities and their scores still render, the *Plans* panel
 says what went wrong and offers a **Retry**, the collapsed rows read
 *Plans unavailable*, and the response carries the message in `plans_error`

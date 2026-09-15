@@ -32,7 +32,7 @@ export async function mockDecisionMatrix(page, options = {}) {
     rows: structuredClone(options.rows || []),
     groups: ['Group A', 'Group B', "O'Hare / A&B"],
     types: [...incentiveTypes], columns: structuredClone(columns),
-    writes: [], reads: [], groupError: '', typeError: '', matrixError: '', saveError: '', deactivateError: '',
+    writes: [], reads: [], groupError: '', typeError: '', matrixError: '', saveError: '', deactivateError: '', editError: '',
     groupDelays: {},
     ...options,
   }
@@ -96,6 +96,45 @@ export async function mockDecisionMatrix(page, options = {}) {
       })
       state.rows.push(row)
       return reply({ status: 'ok', message: `Score ${chosen} added successfully.`, row })
+    }
+    // Editing is one action on the server: deactivate the row, add a new one.
+    const edit = /^\/api\/decision-matrix\/(\d+)\/edit$/.exec(url.pathname)
+    if (edit && request.method() === 'POST') {
+      const id = Number(edit[1])
+      const payload = request.postDataJSON()
+      state.writes.push({ action: 'edit', id, payload })
+      if (state.editError) return fail(state.editError)
+      const original = state.rows.find((row) => row.id === id)
+      if (!original) return fail('Score step not found.', 404)
+      if (original.deactivated_at !== null) {
+        return fail('This score step is already deactivated. Add a new step instead.', 409)
+      }
+      const scoreType = scoreTypeValue(original.score_type)
+      const others = state.rows.filter((row) => row.city_group === original.city_group &&
+        String(row.incentive_type) === String(original.incentive_type) &&
+        scoreTypeValue(row.score_type) === scoreType && row.deactivated_at === null && row.id !== id)
+      const chosen = payload.score ?? Math.max(0, ...others.map((row) => row.score)) + 1
+      if (others.some((row) => row.score === chosen)) {
+        return fail(`Score ${chosen} is already active for this score type. Choose another score.`, 409)
+      }
+      const float = (value) => typeof value === 'number' && Number.isFinite(value)
+      if (!float(payload.target_increase) || !float(payload.pr_increase)) return fail('Target and PR must be non-null floats.', 400)
+      if (payload.control_bucket !== null && (!Array.isArray(payload.control_bucket) || payload.control_bucket.length !== 3 || !payload.control_bucket.every(float))) {
+        return fail('Control bucket must be null or three floats.', 400)
+      }
+      original.deactivated_at = '2026-09-08T13:30:00'
+      const row = makeStep({
+        ...original, id: Math.max(0, ...state.rows.map((item) => item.id)) + 1,
+        score: chosen, target_increase: Number(payload.target_increase),
+        pr_increase: Number(payload.pr_increase),
+        control_bucket: payload.control_bucket === null ? null : payload.control_bucket,
+        created_at: '2026-09-08T13:30:00', deactivated_at: null,
+      })
+      state.rows.push(row)
+      return reply({
+        status: 'ok', replaced_id: id, row,
+        message: `Score ${original.score} deactivated and score ${chosen} added with the new details.`,
+      })
     }
     const deactivate = /^\/api\/decision-matrix\/(\d+)\/deactivate$/.exec(url.pathname)
     if (deactivate && request.method() === 'POST') {

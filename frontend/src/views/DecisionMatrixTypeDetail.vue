@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
+import DecisionMatrixStepEditForm from '../components/DecisionMatrixStepEditForm.vue'
 import DecisionMatrixStepForm from '../components/DecisionMatrixStepForm.vue'
 import DecisionMatrixStepsTable from '../components/DecisionMatrixStepsTable.vue'
 import ModalDialog from '../components/ModalDialog.vue'
@@ -21,6 +22,9 @@ const historyShown = ref(new Set())
 const formContext = ref(null)
 const saving = ref(false)
 const formError = ref('')
+const editTarget = ref(null)
+const editing = ref(false)
+const editError = ref('')
 const deactivateTarget = ref(null)
 const deactivating = ref(false)
 const deactivateError = ref('')
@@ -69,6 +73,18 @@ const activeCount = computed(() => scoreTypes.value.reduce((sum, item) => sum + 
 const deactivatedCount = computed(() => scoreTypes.value.reduce((sum, item) => sum + item.deactivatedSteps.length, 0))
 // A score type can only be added when this incentive type exists in the
 // reference lookup, mirroring the main Decision Matrix page.
+const editSeries = computed(() => {
+  const target = editTarget.value
+  if (!target) return null
+  return scoreTypes.value.find((item) => item.key === seriesKey(typeId.value, target.item.score_type)) || null
+})
+// Active scores of the edited series, minus the row being edited: it is
+// deactivated by the same save, so its own score may be reused.
+const editActiveScores = computed(() =>
+  (editSeries.value?.activeSteps || [])
+    .filter((row) => String(row.id) !== String(editTarget.value?.row.id))
+    .map((row) => Number(row.score))
+)
 const canAddScoreType = computed(() =>
   !loading.value && !error.value && !saving.value &&
   types.value.some((type) => String(type.id) === typeId.value)
@@ -163,6 +179,38 @@ async function saveStep(payload) {
   }
 }
 
+function askEdit(item, row) {
+  editError.value = ''
+  editTarget.value = { item, row }
+}
+function closeEdit() {
+  if (!editing.value) editTarget.value = null
+}
+async function saveEdit(details) {
+  if (!editTarget.value || editing.value) return
+  editing.value = true
+  editError.value = ''
+  try {
+    // One action on the server: deactivate this row, add the new details.
+    const data = await requestJson(
+      `/api/decision-matrix/${encodeURIComponent(editTarget.value.row.id)}/edit`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(details) }
+    )
+    if (disposed) return
+    editTarget.value = null
+    historyShown.value.add(seriesKey(data.row.incentive_type, data.row.score_type))
+    showMessage(data.message || 'Score step edited successfully.')
+    await load()
+  } catch (e) {
+    editError.value = e.message
+    if (e.status === 409) {
+      // Refresh occupied scores and history, but keep the form values.
+      await load()
+    }
+  } finally {
+    editing.value = false
+  }
+}
 function askDeactivate(item, row) {
   deactivateError.value = ''
   deactivateTarget.value = { label: item.label, row }
@@ -264,6 +312,7 @@ onBeforeUnmount(() => {
         <p v-if="!item.activeSteps.length" class="steps-empty">No active steps. Add a new step to start again.</p>
         <DecisionMatrixStepsTable
           v-else :steps="item.activeSteps" :label="`${item.label} active steps`"
+          @edit="askEdit(item, $event)"
           @deactivate="askDeactivate(item, $event)"
         />
 
@@ -287,6 +336,11 @@ onBeforeUnmount(() => {
       v-if="formContext" :context="formContext" :columns="columns" :types="[]"
       :existing-score-types="existingScoreTypes" :steps="rows" :saving="saving" :error="formError"
       @save="saveStep" @close="closeForm"
+    />
+    <DecisionMatrixStepEditForm
+      v-if="editTarget" :row="editTarget.row" :city-group="cityGroup" :type-name="typeName"
+      :next-score="editSeries?.next_score ?? 1" :active-scores="editActiveScores"
+      :saving="editing" :error="editError" @save="saveEdit" @close="closeEdit"
     />
     <ModalDialog v-if="deactivateTarget" title-id="deactivate-score-title" :busy="deactivating" @close="closeDeactivate">
       <h2 id="deactivate-score-title">Deactivate score {{ deactivateTarget.row.score }}?</h2>

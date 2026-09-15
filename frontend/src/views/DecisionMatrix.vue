@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import DecisionMatrixStepEditForm from '../components/DecisionMatrixStepEditForm.vue'
 import DecisionMatrixStepForm from '../components/DecisionMatrixStepForm.vue'
 import DecisionMatrixStepsTable from '../components/DecisionMatrixStepsTable.vue'
 import ModalDialog from '../components/ModalDialog.vue'
@@ -24,6 +25,9 @@ const historyShown = ref(new Set())
 const formContext = ref(null)
 const saving = ref(false)
 const formError = ref('')
+const editTarget = ref(null)
+const editing = ref(false)
+const editError = ref('')
 const deactivateTarget = ref(null)
 const deactivating = ref(false)
 const deactivateError = ref('')
@@ -110,7 +114,20 @@ const existingScoreTypes = computed(() => configuredTypes.value
   .find((type) => type.id === String(formContext.value?.incentiveType))
   ?.scoreTypes.map((item) => item.score_type) || []
 )
-const busy = computed(() => groupsLoading.value || matrixLoading.value || typesLoading.value || saving.value || deactivating.value)
+const editSeries = computed(() => {
+  const target = editTarget.value
+  if (!target) return null
+  const type = configuredTypes.value.find((item) => item.id === String(target.type.id))
+  return type?.scoreTypes.find((item) => item.key === seriesKey(target.type.id, target.item.score_type)) || null
+})
+// Active scores of the edited series, minus the row being edited: it is
+// deactivated by the same save, so its own score may be reused.
+const editActiveScores = computed(() =>
+  (editSeries.value?.activeSteps || [])
+    .filter((row) => String(row.id) !== String(editTarget.value?.row.id))
+    .map((row) => Number(row.score))
+)
+const busy = computed(() => groupsLoading.value || matrixLoading.value || typesLoading.value || saving.value || editing.value || deactivating.value)
 const canAddType = computed(() => !busy.value && !matrixError.value && !typesError.value && availableTypes.value.length > 0)
 
 function toggleSet(state, key) {
@@ -247,6 +264,42 @@ async function saveStep(payload) {
     }
   } finally {
     saving.value = false
+  }
+}
+function askEdit(type, item, row) {
+  editError.value = ''
+  editTarget.value = { type, item, row }
+}
+function closeEdit() {
+  if (!editing.value) editTarget.value = null
+}
+async function saveEdit(details) {
+  const target = editTarget.value
+  if (!target || editing.value) return
+  editing.value = true
+  editError.value = ''
+  try {
+    // One action on the server: deactivate this row, add the new details.
+    const data = await requestJson(
+      `/api/decision-matrix/${encodeURIComponent(target.row.id)}/edit`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(details) }
+    )
+    if (disposed) return
+    editTarget.value = null
+    expandedType.value = String(data.row.incentive_type)
+    openScores.value.add(seriesKey(data.row.incentive_type, data.row.score_type))
+    // History changed, so keep it on screen for the edited series.
+    historyShown.value.add(seriesKey(data.row.incentive_type, data.row.score_type))
+    showMessage(data.message || 'Score step edited successfully.')
+    await loadMatrix()
+  } catch (error) {
+    editError.value = error.message
+    if (error.status === 409) {
+      // Refresh occupied scores and history, but keep the form values.
+      await loadMatrix()
+    }
+  } finally {
+    editing.value = false
   }
 }
 function askDeactivate(type, item, row) {
@@ -434,6 +487,7 @@ onBeforeUnmount(() => {
                               </p>
                               <DecisionMatrixStepsTable
                                 v-else :steps="item.activeSteps" :label="`${scoreTypeLabel(item.score_type)} active steps`"
+                                @edit="askEdit(type, item, $event)"
                                 @deactivate="askDeactivate(type, item, $event)"
                               />
                               <section v-if="item.deactivated_count" class="history-section" :aria-label="`${scoreTypeLabel(item.score_type)} deactivated history`">
@@ -470,6 +524,12 @@ onBeforeUnmount(() => {
       v-if="formContext" :context="formContext" :columns="columns" :types="availableTypes"
       :existing-score-types="existingScoreTypes" :steps="rows" :saving="saving" :error="formError"
       @save="saveStep" @close="closeForm"
+    />
+    <DecisionMatrixStepEditForm
+      v-if="editTarget" :row="editTarget.row" :city-group="selectedGroup"
+      :type-name="editTarget.type.name" :next-score="editSeries?.next_score ?? 1"
+      :active-scores="editActiveScores" :saving="editing" :error="editError"
+      @save="saveEdit" @close="closeEdit"
     />
     <ModalDialog v-if="deactivateTarget" title-id="deactivate-score-title" :busy="deactivating" @close="closeDeactivate">
       <h2 id="deactivate-score-title">Deactivate score {{ deactivateTarget.row.score }}?</h2>
