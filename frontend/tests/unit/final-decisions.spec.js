@@ -254,6 +254,18 @@ describe('Final Decisions plans', () => {
     ])
   })
 
+  it('says when plans fall on cities without scores for the date', async () => {
+    const partial = structuredClone(response)
+    partial.plans_without_scores = 2
+    partial.plans_without_scores_cities = ['Tehran', 'Qom']
+    const { wrapper } = await setup(partial)
+
+    const notice = wrapper.find('.banner.notice')
+    expect(notice.exists()).toBe(true)
+    expect(notice.text()).toContain('2 plans are not listed')
+    expect(notice.text()).toContain('Tehran, Qom')
+  })
+
   it('closes the order popup on Escape', async () => {
     const { wrapper } = await setup()
     await openOrderEditor(wrapper, 'Entity order')

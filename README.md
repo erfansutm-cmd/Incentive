@@ -636,6 +636,11 @@ says what went wrong and offers a **Retry**, the collapsed rows read
 *Plans unavailable*, and the response carries the message in `plans_error`
 alongside `total_plans` and `plan_type_order`.
 
+Plans of a city that has no scores on the date have no row to live under. They
+are not dropped silently either: the response counts them in
+`plans_without_scores`, names their cities in `plans_without_scores_cities`, and
+the tab shows a notice above the table.
+
 ### Final Decisions tests
 
 `backend/tests/test_final_decisions.py` runs the endpoint SQL against an isolated

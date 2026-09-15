@@ -538,6 +538,16 @@ def list_final_decisions(
 
             total_entities = sum(c["entity_count"] for c in cities)
             total_plans = sum(c["plan_count"] for c in cities)
+            # Plans of a city that has no scores on this date are not listed
+            # anywhere: report them instead of dropping them silently.
+            scored = {c["city_id_raw"] for c in cities}
+            hidden_plans = [cid for cid in plans_by_city if cid not in scored]
+            hidden_cities = sorted(
+                {
+                    str(_city_display(city_map.get(cid) or {"city_id": cid})).strip()
+                    for cid in hidden_plans
+                }
+            )
             return {
                 "incentive_date": target_date,
                 "score_types": SCORE_TYPES,
@@ -546,6 +556,8 @@ def list_final_decisions(
                 "total_cities": len(cities),
                 "total_business_entities": total_entities,
                 "total_plans": total_plans,
+                "plans_without_scores": sum(len(plans_by_city[cid]) for cid in hidden_plans),
+                "plans_without_scores_cities": hidden_cities,
                 "plan_type_order": _plan_type_order(),
                 "plan_type_names": sorted(plan_type_names.values()),
                 "plans_error": plans_error,

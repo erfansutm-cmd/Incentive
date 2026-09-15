@@ -111,6 +111,8 @@ const scoreTypes = ref(SCORE_TYPES.map((s) => s.value))
 const generatedAt = ref('')
 const incentiveDate = ref('')
 const plansError = ref('')
+const plansWithoutScores = ref(0)
+const plansWithoutScoresCities = ref([])
 
 const expanded = ref(new Set())
 const sortKey = ref(null)
@@ -402,6 +404,8 @@ async function load() {
     incentiveDate.value = data.incentive_date || date
     generatedAt.value = data.generated_at || ''
     plansError.value = data.plans_error || ''
+    plansWithoutScores.value = Number(data.plans_without_scores) || 0
+    plansWithoutScoresCities.value = data.plans_without_scores_cities || []
     const apiOrder = (data.plan_type_order || [])
       .map((name) => String(name).trim())
       .filter(Boolean)
@@ -420,6 +424,8 @@ async function load() {
       error.value = e.message
       cities.value = []
       plansError.value = ''
+      plansWithoutScores.value = 0
+      plansWithoutScoresCities.value = []
     }
   } finally {
     if (!ctrl.signal.aborted) loading.value = false
@@ -558,6 +564,18 @@ onBeforeUnmount(() => {
       @reset="resetPlanTypeOrder"
       @close="showTypeOrderEditor = false"
     />
+
+    <div v-if="!error && plansWithoutScores" class="banner notice" role="status">
+      <strong>
+        {{ plansWithoutScores }} {{ plansWithoutScores === 1 ? 'plan is' : 'plans are' }} not listed
+      </strong>
+      <p>
+        {{ plansWithoutScores === 1 ? 'It belongs' : 'They belong' }} to a city without scores on
+        {{ incentiveDate }}<template v-if="plansWithoutScoresCities.length">
+          ({{ plansWithoutScoresCities.join(', ') }})</template>,
+        so {{ plansWithoutScores === 1 ? 'it does' : 'they do' }} not appear below.
+      </p>
+    </div>
 
     <div v-if="error" class="banner error" role="alert">
       <strong>Could not load final decisions</strong>
@@ -1215,6 +1233,16 @@ onBeforeUnmount(() => {
   text-align: center;
   padding: 0.6rem 0.9rem !important;
 }
+.banner.notice {
+  background: #fdf7ec;
+  border: 1px solid #f0d9b5;
+  color: #8a5a1a;
+  margin-bottom: 0;
+}
+.banner.notice p {
+  margin: 0.25rem 0 0;
+}
+
 /* --- plans: the collapsed row preview ----------------------------------- */
 .plan-preview {
   display: flex;

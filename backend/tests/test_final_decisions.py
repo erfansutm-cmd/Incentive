@@ -45,6 +45,7 @@ MAPPINGS = [
     (118, 10, 3, "foodZooket", "2026-09-14T09:00:00"),
     (132, 20, 1, "food", None),
     (122, 20, 4, "foodZooket", None),
+    (170, 99, 1, "food", None),  # city 99 has no scores, so no city row either
 ]
 
 # incentive.final_incentive_plans: exactly the columns the tab reads
@@ -56,6 +57,7 @@ PLANS = [
     (4, DATE, 132, 1.000, 1.200, None),
     (5, DATE, 8, 1.000, 1.300, "[0.2, 0.2, 0.1]"),
     (6, "2026-09-17", 23, 1.000, 9.999, None),  # another date, must not leak in
+    (7, DATE, 170, 1.000, 1.400, None),         # a city without scores: never listed
 ]
 
 
@@ -170,6 +172,15 @@ class FinalDecisionsAPITests(unittest.TestCase):
         self.assertIn("2026-09-15", plan["updated_at"])
         self.assertIn("13:17:22", plan["updated_at"])
         self.assertTrue(plan["mapping_active"])
+
+    def test_plans_of_a_city_without_scores_are_counted_but_not_listed(self):
+        data = self.read(incentive_date=DATE)
+
+        self.assertEqual(data["total_plans"], 5)
+        self.assertEqual(data["plans_without_scores"], 1)
+        self.assertEqual(data["plans_without_scores_cities"], ["City #99"])
+        for city in data["cities"]:
+            self.assertNotIn(99, [plan["city_id"] for plan in city["plans"]])
 
     def test_a_plan_without_a_bucket_keeps_it_null(self):
         data = self.read(incentive_date=DATE)
