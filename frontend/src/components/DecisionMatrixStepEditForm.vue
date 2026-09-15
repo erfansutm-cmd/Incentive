@@ -99,24 +99,20 @@ function submit() {
 <template>
   <ModalDialog title-id="matrix-edit-title" :busy="saving" @close="emit('close')">
     <form @submit.prevent="submit" @input="localError.message = ''">
-      <h2 id="matrix-edit-title">Edit score {{ score }}</h2>
+      <div class="form-head">
+        <h2 id="matrix-edit-title">Edit score {{ score }}</h2>
+        <span
+          class="pill tiny plain score-fixed"
+          title="Editing changes the values, not the step's score"
+        >score fixed</span>
+      </div>
       <p class="context">
         <strong>{{ cityGroup }}</strong>
         <template v-if="typeName"> <span aria-hidden="true">/</span> {{ typeName }}</template>
         <span aria-hidden="true">/</span> {{ scoreTypeLabel(row.score_type) }}
       </p>
-      <p class="hint intro">
-        Saving <strong>deactivates this step</strong> and <strong>adds a new step</strong> with the
-        values below. The row as it is now stays in the deactivated history.
-      </p>
 
       <fieldset :disabled="saving">
-        <div class="score-fixed">
-          <span class="score-fixed-label">Score</span>
-          <span class="score-fixed-value">{{ score }}</span>
-          <span class="hint">stays the same — editing changes the values, not the step's score</span>
-        </div>
-
         <div class="value-fields">
           <label v-for="field in floatFields" :key="field.name" class="field">
             <span>{{ field.label }}</span>
@@ -128,7 +124,7 @@ function submit() {
 
         <fieldset class="bucket-field">
           <legend>Control bucket <span class="hint">(optional)</span></legend>
-          <p class="hint">Leave all three blank for null, or enter three float values.</p>
+          <p class="hint">Blank for null, or all three.</p>
           <div class="bucket-values">
             <label v-for="(_, index) in form.control_bucket" :key="index" class="field">
               <span>Group {{ index + 1 }}</span>
@@ -140,23 +136,18 @@ function submit() {
             </label>
           </div>
           <button
-            v-if="bucketHasValues" type="button" class="copy-values" @click="clearBucket"
-          >Clear control bucket</button>
+            v-if="bucketHasValues" type="button" class="copy-values"
+            aria-label="Clear control bucket" @click="clearBucket"
+          >Clear</button>
         </fieldset>
       </fieldset>
 
-      <div class="preview" aria-live="polite">
+      <p class="preview" aria-live="polite">
         <span class="preview-label">After saving</span>
-        <span class="preview-line">
-          Score {{ score }} → deactivated
-          <span aria-hidden="true">·</span>
-          score {{ score }} active again with the new values
-        </span>
-      </div>
-
-      <p v-if="!canSubmit" class="hint keep-hint">
-        Change at least one value before saving — the edit would create an identical step.
+        <span class="preview-line">Score {{ score }} → deactivated · added again with the new values</span>
       </p>
+
+      <p v-if="!canSubmit" class="hint keep-hint">No changes yet.</p>
       <p v-if="localError.message || error" class="form-error" role="alert">
         {{ localError.message || error }}
       </p>
@@ -171,14 +162,13 @@ function submit() {
 </template>
 
 <style scoped>
-.context { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.45rem; padding: 0.65rem 0.8rem; background: var(--accent-soft); border: 1px solid #cfdfd7; border-radius: 0.6rem; font-size: 0.88rem; overflow-wrap: anywhere; }
+.context { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.45rem; padding: 0.5rem 0.7rem; margin: 0.55rem 0 0.9rem; background: var(--accent-soft); border: 1px solid #cfdfd7; border-radius: 0.6rem; font-size: 0.88rem; overflow-wrap: anywhere; }
 .context span { color: var(--muted); }
 .hint { color: var(--muted); font-size: 0.8rem; line-height: 1.5; }
-.intro { margin: 0 0 1rem; }
 fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
-.score-fixed { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.3rem 0.6rem; padding: 0.6rem 0.75rem; margin: 0 0 0.85rem; border: 1px solid var(--border); border-radius: 0.55rem; background: #fbfdfc; }
-.score-fixed-label { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
-.score-fixed-value { display: inline-grid; place-items: center; min-width: 1.8rem; padding: 0.15rem 0.5rem; border-radius: 0.45rem; background: var(--surface-2); color: var(--accent-strong); font-weight: 700; font-variant-numeric: tabular-nums; }
+.form-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.form-head h2 { margin: 0; }
+.score-fixed { cursor: help; }
 .value-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 1rem; }
 .value-fields input, .bucket-values input { width: 100%; }
 .bucket-field { padding: 0.9rem; margin: 0.2rem 0 0; border: 1px solid var(--border); border-radius: 0.6rem; }

@@ -441,16 +441,16 @@ transaction that an addition uses. So:
 - a deactivated row cannot be edited (`409`), and an unknown id is a `404`.
 
 The response carries the new row (`row`) and the id it replaced (`replaced_id`).
-In the UI, **Edit** opens a form prefilled from the row: target increase, PR
-increase and the three-value control bucket, with the score shown read-only next
-to *stays the same — editing changes the values, not the step's score*. The form
-shows what saving will do (*Score 3 → deactivated · score 3 active again with the
-new values*), refuses a no-op save (nothing changed → the button stays disabled,
-so no identical duplicate is created), and an error from the API keeps the form —
-with the values entered — open. After a successful save the edited series'
-history is revealed, so the archived row and the new one are both visible. The
-same form is used on the main page and on the per-type page
-(`/decision-matrix/type`).
+In the UI, **Edit** opens a short form prefilled from the row — target increase,
+PR increase and the three-value control bucket — with the score in the heading
+and a `score fixed` chip next to it (the tooltip spells it out: *editing changes
+the values, not the step's score*). One line says what saving will do (*Score 3 →
+deactivated · added again with the new values*); nothing changed reads
+*No changes yet.* and keeps the button disabled, so no identical duplicate is
+created. An error from the API keeps the form — with the values entered — open.
+After a successful save the edited series' history is revealed, so the archived
+row and the new one are both visible. The same form is used on the main page and
+on the per-type page (`/decision-matrix/type`).
 
 Preset score types use fixed database/API values with separate UI captions:
 

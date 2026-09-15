@@ -140,15 +140,14 @@ describe('Decision Matrix step editing', () => {
     })
     await flushPromises()
 
+    // the score lives in the heading and is flagged as fixed: no score input
     expect(wrapper.find('h2').text()).toBe('Edit score 1')
-    // no score input at all: the score is shown, not editable
     expect(wrapper.findAll('input[type="number"]').length).toBe(5)
-    expect(wrapper.find('.score-fixed-value').text()).toBe('1')
-    expect(wrapper.text()).toContain('stays the same')
+    expect(wrapper.find('.score-fixed').text()).toBe('score fixed')
     expect(fieldByLabel(wrapper, 'Target increase').element.value).toBe('0.125')
     expect(fieldByLabel(wrapper, 'PR increase').element.value).toBe('1.75')
     expect(buttonWithText(wrapper, 'Save new values').attributes('disabled')).toBeDefined()
-    expect(wrapper.text()).toContain('Change at least one value before saving')
+    expect(wrapper.text()).toContain('No changes yet')
   })
 
   it('emits only the values, never the score, and only once something changed', async () => {
@@ -181,7 +180,8 @@ describe('Decision Matrix step editing', () => {
     })
     await flushPromises()
     expect(buttonWithText(wrapper, 'Save new values').attributes('disabled')).toBeDefined()
-    await buttonWithText(wrapper, 'Clear control bucket').trigger('click')
+    // the button is labelled "Clear" next to the fields (aria-label stays explicit)
+    await buttonWithText(wrapper, 'Clear').trigger('click')
     await buttonWithText(wrapper, 'Save new values').trigger('click')
     expect(wrapper.emitted('save')[0][0]).toEqual({
       target_increase: 0.125, pr_increase: 1.75, control_bucket: null,
@@ -197,9 +197,9 @@ describe('Decision Matrix step editing', () => {
     const form = await openEdit(wrapper)
     expect(form.exists()).toBe(true)
     expect(form.find('h2').text()).toBe('Edit score 1')
-    expect(form.find('.score-fixed-value').text()).toBe('1')
+    expect(form.find('.score-fixed').text()).toBe('score fixed')
     expect(form.text()).toContain('Score 1 → deactivated')
-    expect(form.text()).toContain('score 1 active again with the new values')
+    expect(form.text()).toContain('added again with the new values')
 
     await fieldByLabel(form, 'Target increase').setValue('0.5')
     await fieldByLabel(form, 'PR increase').setValue('2.25')

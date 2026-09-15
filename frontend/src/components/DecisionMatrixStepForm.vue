@@ -173,7 +173,7 @@ function submit() {
         </div>
         <fieldset class="bucket-field">
           <legend>Control bucket <span class="hint">(optional)</span></legend>
-          <p class="hint">Leave all three blank for null, or enter three float values.</p>
+          <p class="hint">Blank for null, or all three.</p>
           <div class="bucket-values">
             <label v-for="(_, index) in form.control_bucket" :key="index" class="field">
               <span>Group {{ index + 1 }}</span>

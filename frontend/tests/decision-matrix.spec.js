@@ -625,17 +625,16 @@ test('editing a step keeps its score and turns it into an archived row plus a ne
   const dialog = await openEdit(page)
   await expect(dialog.getByRole('heading', { name: 'Edit score 1', exact: true })).toBeVisible()
   // Prefilled with the row being edited, and the score is fixed, not an input.
-  await expect(dialog.locator('.score-fixed-value')).toHaveText('1')
-  await expect(dialog.getByText(/stays the same/)).toBeVisible()
+  await expect(dialog.getByText('score fixed', { exact: true })).toBeVisible()
   await expect(dialog.getByRole('spinbutton', { name: /^Score/ })).toHaveCount(0)
   await expect(dialog.getByLabel('Target increase', { exact: true })).toHaveValue('0.125')
   await expect(dialog.getByLabel('PR increase', { exact: true })).toHaveValue('1.75')
   const preview = dialog.locator('.preview-line')
   await expect(preview).toContainText('Score 1 → deactivated')
-  await expect(preview).toContainText('score 1 active again with the new values')
+  await expect(preview).toContainText('added again with the new values')
   // Nothing identical can be saved by mistake.
   await expect(dialog.getByRole('button', { name: 'Save new values', exact: true })).toBeDisabled()
-  await expect(dialog.getByText('Change at least one value before saving', { exact: false })).toBeVisible()
+  await expect(dialog.getByText('No changes yet.', { exact: true })).toBeVisible()
 
   await fillValues(dialog, '0.5', '2.25', [0.1, 0.2, 0.3])
   await dialog.getByRole('button', { name: 'Save new values', exact: true }).click()
@@ -679,7 +678,7 @@ test('the dedicated type page edits steps the same way', async ({ page }) => {
 
   const dialog = await openEdit(page)
   await expect(dialog.getByRole('heading', { name: 'Edit score 1', exact: true })).toBeVisible()
-  await expect(dialog.locator('.score-fixed-value')).toHaveText('1')
+  await expect(dialog.getByText('score fixed', { exact: true })).toBeVisible()
   await fillValues(dialog, '0.3', '3')
   await dialog.getByRole('button', { name: 'Save new values', exact: true }).click()
 
