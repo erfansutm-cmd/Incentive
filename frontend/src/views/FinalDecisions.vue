@@ -306,16 +306,12 @@ function citySubtitle(c) {
                   </td>
                   <td class="city-cell">
                     <div class="city-name">{{ city.city }}</div>
-                    <div class="city-meta">
-                      <span class="city-id">#{{ city.city_id }}</span>
-                      <span v-if="city.box_city_name && city.box_city_name !== city.city" class="box-name">{{ city.box_city_name }}</span>
+                    <div v-if="city.box_city_name && city.box_city_name !== city.city" class="city-meta">
+                      <span class="box-name">{{ city.box_city_name }}</span>
                     </div>
                   </td>
                   <td class="entity-cell">
-                    <template v-if="city.primary_entity">
-                      <span class="entity-name">{{ city.primary_entity.business_entity }}</span>
-                      <span v-if="city.entity_count > 1" class="pill tiny">{{ city.entity_count }} entities</span>
-                    </template>
+                    <span v-if="city.primary_entity" class="entity-name">{{ city.primary_entity.business_entity }}</span>
                     <span v-else class="muted">—</span>
                   </td>
                   <td class="score-cell">
@@ -350,20 +346,7 @@ function citySubtitle(c) {
                   <td :colspan="7" class="detail-cell" @click.stop>
                     <div class="integrated-panel">
                       <div class="panel-block scores-block">
-                        <div class="panel-block-head">
-                          <h4>
-                            <span class="icon-tile sm accent" aria-hidden="true">
-                              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M12 3.6l8.4 4.2-8.4 4.2-8.4-4.2z" />
-                                <path d="M4.4 12.4L12 16.2l7.6-3.8" />
-                                <path d="M4.4 16.6L12 20.4l7.6-3.8" />
-                              </svg>
-                            </span>
-                            All business entities
-                            <span class="pill">{{ city.entity_count }}</span>
-                          </h4>
-                          <p class="hint">Sorted by priority: foodZooket · food · Zooket · others</p>
-                        </div>
+
 
                         <div class="mini-table-wrap">
                           <table class="mini-table">
@@ -379,11 +362,9 @@ function citySubtitle(c) {
                               <tr
                                 v-for="be in city.business_entities"
                                 :key="be.business_entity"
-                                :class="{ primary: be.business_entity === city.primary_entity?.business_entity }"
                               >
                                 <td class="mini-entity">
                                   <span class="entity-name">{{ be.business_entity }}</span>
-                                  <span v-if="be.business_entity === city.primary_entity?.business_entity" class="pill plain tiny">primary</span>
                                 </td>
                                 <td class="num">
                                   <span class="score-badge small" :class="scoreBadgeClass(be.scores.performance)">{{ formatScore(be.scores.performance) }}</span>
@@ -721,6 +702,7 @@ function citySubtitle(c) {
   border: 1px solid var(--border);
   background: #fff;
   color: var(--text);
+  margin: 0 auto;
 }
 .score-badge.small {
   min-width: 1.9rem;
@@ -842,8 +824,12 @@ function citySubtitle(c) {
 .mini-table tbody td.num {
   text-align: center;
 }
+/* hover kept subtle — no green wash that makes badges look patchy */
 .mini-table tbody tr:hover td {
-  background: #f6faf8;
+  background: #fff;
+}
+.mini-table tbody tr:hover {
+  box-shadow: inset 0 0 0 1px var(--border);
 }
 .mini-entity {
   display: flex;
