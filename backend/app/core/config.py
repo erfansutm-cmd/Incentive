@@ -35,6 +35,10 @@ DB_INCENTIVE_BASE_CONFIG_LOG_TABLE = os.getenv(
     "DB_INCENTIVE_BASE_CONFIG_LOG_TABLE", "incentive/incentive_base_configs_logs"
 )
 
+DB_INCENTIVE_SCORES_TABLE = os.getenv(
+    "DB_INCENTIVE_SCORES_TABLE", "incentive/incentive_scores"
+)
+
 # Allocator / rule / listing lookups behind the base-config forms.
 # The browser never calls these directly; /api/incentive-lookups proxies them.
 ALLOCATOR_NAMES_URL = os.getenv("ALLOCATOR_NAMES_URL", "http://172.21.88.174:5000/allocator/names")

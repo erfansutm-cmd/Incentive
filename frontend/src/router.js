@@ -5,6 +5,7 @@ import BusinessEntities from './views/BusinessEntities.vue'
 import PlanDetail from './views/PlanDetail.vue'
 import DecisionMatrix from './views/DecisionMatrix.vue'
 import DecisionMatrixTypeDetail from './views/DecisionMatrixTypeDetail.vue'
+import FinalDecisions from './views/FinalDecisions.vue'
 
 export default createRouter({
   history: createWebHistory(),
@@ -28,6 +29,12 @@ export default createRouter({
       path: '/business-entities',
       name: 'business-entities',
       component: BusinessEntities,
+      meta: { wide: true },
+    },
+    {
+      path: '/final-decisions',
+      name: 'final-decisions',
+      component: FinalDecisions,
       meta: { wide: true },
     },
   ],
