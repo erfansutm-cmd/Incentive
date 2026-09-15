@@ -462,8 +462,23 @@ onBeforeUnmount(() => {
                   <td :colspan="7" class="detail-cell" @click.stop>
                     <div class="integrated-panel">
                       <div class="panel-block scores-block">
+                        <div class="scores-caption">
+                          <span class="caption-label">Entities</span>
+                          <span class="pill plain tiny">{{ city.business_entities.length }}</span>
+                          <template v-if="entitySortKey">
+                            <span class="caption-sort">· {{ entitySortKey === 'performance' ? 'Performance' : entitySortKey === 'order_level_increase' ? 'Order Level' : 'Weather' }} {{ entitySortDir === 'asc' ? '↑' : '↓' }}</span>
+                            <button class="btn btn-ghost tiny" style="padding:0.12rem 0.35rem; font-size:0.72rem" @click="clearEntitySort">reset</button>
+                          </template>
+                          <span v-else class="hint" style="font-size:0.73rem">· priority order</span>
+                        </div>
                         <div class="mini-table-wrap">
                           <table class="mini-table">
+                            <colgroup>
+                              <col style="width: 44%" />
+                              <col style="width: 19%" />
+                              <col style="width: 19%" />
+                              <col style="width: 18%" />
+                            </colgroup>
                             <thead>
                               <tr>
                                 <th>Business Entity</th>
@@ -762,7 +777,7 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
 }
 .sort-btn.mini {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
   gap: 0.3rem;
@@ -771,10 +786,15 @@ onBeforeUnmount(() => {
   font: inherit;
   color: inherit;
   cursor: pointer;
-  padding: 0;
+  padding: 0.62rem 0.6rem;
+  width: 100%;
 }
 .sort-btn.mini:hover {
   color: var(--accent-strong);
+  background: rgba(61, 139, 109, 0.06);
+}
+.mini-table thead th.num {
+  padding: 0 !important;
 }
 .decisions-th {
   text-align: center;
@@ -922,8 +942,8 @@ onBeforeUnmount(() => {
 }
 .integrated-panel {
   display: grid;
-  grid-template-columns: 1.15fr 1fr;
-  gap: 1rem;
+  grid-template-columns: minmax(330px, 0.82fr) 1.45fr;
+  gap: 1.15rem;
   padding: 1.1rem 1.25rem 1.25rem;
   animation: slideDown 0.22s ease;
 }
@@ -949,6 +969,12 @@ onBeforeUnmount(() => {
   padding: 1rem 1.1rem 1.1rem;
   box-shadow: 0 1px 2px rgba(20, 40, 30, 0.04), 0 8px 24px rgba(20, 40, 30, 0.05);
 }
+.panel-block.scores-block {
+  padding: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
 .panel-block-head h4 {
   margin: 0;
   display: flex;
@@ -961,44 +987,80 @@ onBeforeUnmount(() => {
   font-size: 0.8rem;
   color: var(--muted);
 }
+.scores-caption {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.scores-caption .caption-label {
+  font-weight: 700;
+  color: var(--text);
+  font-size: 0.84rem;
+}
+.scores-caption .caption-sort {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
 .mini-table-wrap {
-  overflow-x: auto;
+  overflow: hidden;
+  border: 1px solid #e9efec;
+  border-radius: 10px;
+  background: #fff;
 }
 .mini-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.86rem;
+  font-size: 0.84rem;
+  table-layout: fixed;
 }
 .mini-table thead th {
-  padding: 0.55rem 0.65rem;
-  background: #fff;
-  color: #6b7c78;
-  font-size: 0.68rem;
-  font-weight: 600;
+  padding: 0.62rem 0.6rem;
+  background: #f6f9f8;
+  color: #3a524a;
+  font-size: 0.66rem;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.05em;
   white-space: nowrap;
-  border-bottom: 1px solid #eef3f0;
+  border-bottom: 1px solid #e3ece9;
 }
 .mini-table thead th.num {
   text-align: center;
 }
+.mini-table thead th:first-child {
+  text-align: left;
+  padding-left: 0.85rem;
+}
 .mini-table tbody td {
-  padding: 0.6rem 0.65rem;
-  border-top: 1px solid #f0f2f1;
+  padding: 0.58rem 0.6rem;
+  border-top: 1px solid #f2f5f4;
+}
+.mini-table tbody td:first-child {
+  padding-left: 0.85rem;
 }
 .mini-table tbody td.num {
   text-align: center;
 }
+.mini-table tbody tr:nth-child(even) td {
+  background: #fcfdfc;
+}
 .mini-table tbody tr:hover td {
-  background: #fff;
+  background: #f6f9f8;
 }
 .mini-entity {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  flex-wrap: wrap;
   text-align: left;
+  min-width: 0;
+}
+.mini-entity .entity-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 .decisions-block {
   display: flex;
