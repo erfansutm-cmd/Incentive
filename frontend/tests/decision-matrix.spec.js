@@ -165,6 +165,33 @@ test('an empty matrix supports its first step with a user-chosen score and requi
   await expect(page.getByRole('rowheader', { name: '4 ID 1', exact: true })).toBeVisible()
 })
 
+test('score 0 is a valid step: it is sent as 0 and it blocks an active duplicate', async ({ page }) => {
+  const state = await mockDecisionMatrix(page, { rows: [] })
+  await page.goto('/decision-matrix')
+  await openGroup(page)
+  const dialog = await addTypeForm(page)
+  await chooseScoreType(dialog, 'Performance')
+  // The first step of a series may be score 0.
+  await expect(scoreInput(dialog)).toHaveAttribute('min', '0')
+  await scoreInput(dialog).fill('0')
+  await fillValues(dialog, '0.2', '1.4')
+  await dialog.getByRole('button', { name: 'Save first step', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  expect(state.writes[0].payload.score).toBe(0)
+  await expect(groupPanel(page).getByRole('rowheader', { name: '0 ID 1', exact: true })).toBeVisible()
+
+  // 0 is occupied now: the next free score is suggested and 0 is refused.
+  await groupPanel(page).getByRole('button', { name: '+ Add step', exact: true }).click()
+  const second = page.getByRole('dialog')
+  await expect(scoreInput(second)).toHaveValue('1')
+  await scoreInput(second).fill('0')
+  await fillValues(second, '0.3', '1.5')
+  await expect(second.getByRole('alert')).toContainText('Score 0 is already active for this score type')
+  await expect(second.getByRole('button', { name: 'Save step', exact: true })).toBeDisabled()
+  expect(state.writes).toHaveLength(1)
+  await second.getByRole('button', { name: 'Cancel', exact: true }).click()
+})
+
 test('the custom score-type dropdown supports keyboard selection, custom names, and Escape', async ({ page }) => {
   const state = await mockDecisionMatrix(page, { rows: [makeStep()] })
   await page.goto('/decision-matrix')

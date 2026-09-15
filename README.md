@@ -392,9 +392,11 @@ The hierarchy is **City group → Incentive type → Score type → Score steps*
 4. The button reads **+ Add step**, without a number in parentheses. Inside the
    form, **Score** suggests `MAX(active score) + 1` in the selected city group,
    incentive type, and score type (or **1** if no steps are active). The **Score
-   field is editable**: choose any unused positive whole number, including gaps
-   or a previously deactivated score. The API rejects an already-active score
-   with **409** and never silently substitutes another score.
+   field is editable**: choose any unused whole number of **0 or more**,
+   including gaps or a previously deactivated score — a series may start at
+   score 0, and 0 occupies its slot like any other score. The API rejects an
+   already-active score with **409** and never silently substitutes another
+   score.
 5. `target_increase` and `pr_increase` are **required finite floats**. The form
    initially copies them from the nearest **active** step in the same
    group/incentive/score type, measured by absolute score distance; a tie picks
@@ -463,8 +465,8 @@ label-spelled presets are recognized as aliases for reads, score suggestions, an
 duplicate detection without rewriting any existing history.
 
 `id`, `created_at`, and `deactivated_at` are server-managed. The existing matrix
-should have an auto-increment `id`, a positive-integer `score`, and nullable
-`deactivated_at`. The expected columns are:
+should have an auto-increment `id`, a non-negative integer `score` (0 is
+valid), and nullable `deactivated_at`. The expected columns are:
 
 ```
 id, incentive_type, city_group, score_type, score,

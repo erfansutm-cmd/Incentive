@@ -7,6 +7,9 @@ Editing a step is one action that keeps the history complete: the edited row is
 deactivated and a new active row with the corrected details is inserted in the
 same locked transaction (``POST /{id}/edit``). Rows are never updated in place and
 the score of a step never changes — only its target/PR increases and bucket.
+
+Scores are whole numbers of 0 or more: the first step of a series may be score 0,
+and 0 occupies its slot like any other score (an active duplicate is refused).
 """
 
 import datetime
@@ -154,17 +157,33 @@ def _required_text(value, name):
     return value
 
 
-def _positive_integer(value, name):
+def _whole_number(value, name, *, minimum=1):
+    """Validate an integer field against its allowed minimum.
+
+    Ids and incentive types start at 1, but **a score may be 0**: the score only
+    orders the steps inside one series, so a series whose first step is 0 is
+    valid.
+    """
+    message = (f"'{name}' must be a positive whole number." if minimum
+               else f"'{name}' must be a whole number of 0 or more.")
     try:
         number = decimal.Decimal(_required_text(value, name))
     except decimal.InvalidOperation:
-        raise MatrixError(f"'{name}' must be a positive whole number.") from None
-    if not number.is_finite() or number < 1 or number != number.to_integral_value():
-        raise MatrixError(f"'{name}' must be a positive whole number.")
+        raise MatrixError(message) from None
+    if not number.is_finite() or number < minimum or number != number.to_integral_value():
+        raise MatrixError(message)
     # These fields are stored as MySQL integer identifiers/scores.
     if number > 18446744073709551615:
         raise MatrixError(f"'{name}' is too large.")
     return int(number)
+
+
+def _positive_integer(value, name):
+    return _whole_number(value, name, minimum=1)
+
+
+def _score(value, name="score"):
+    return _whole_number(value, name, minimum=0)
 
 
 def _clean_value(value, col, *, use_default=True):
@@ -342,7 +361,7 @@ def list_steps(
 
 @router.post("")
 def add_step(payload: dict):
-    """Create a step at a chosen positive score, or default to MAX(active) + 1.
+    """Create a step at a chosen score (0 or more), or default to MAX(active) + 1.
 
     Scores must be unique among active rows in the same group/type/score type.
     Historical scores may be reused without modifying their archived rows.
@@ -355,9 +374,8 @@ def add_step(payload: dict):
         city_group = _required_text(payload.get("city_group"), "city_group")
         type_id = _positive_integer(payload.get("incentive_type"), "incentive_type")
         score_type = _score_type_value(_required_text(payload.get("score_type"), "score_type"))
-        requested_score = (
-            _positive_integer(payload["score"], "score") if "score" in payload else None
-        )
+        # A score of 0 is valid; only a missing score falls back to MAX(active) + 1.
+        requested_score = _score(payload["score"]) if "score" in payload else None
 
         with _write_transaction() as conn:
             cols = {c["Field"]: c for c in _columns(conn)}
@@ -455,7 +473,7 @@ def edit_step(step_id: int, payload: dict):
                     "This score step is already deactivated. Add a new step instead.", 409
                 )
 
-            score = _positive_integer(source.get("score"), "score")
+            score = _score(source.get("score"))
             # The row keeps its identity: the series columns are copied from the
             # original row as stored, custom score-type spelling included.
             params = {

@@ -201,7 +201,28 @@ class DecisionMatrixAPITests(unittest.TestCase):
         self.assertNotEqual(replacement["id"], row["id"])
         self.assertEqual(len(self.read(include_deactivated=True)["rows"]), 2)
 
-    def test_custom_positive_scores_are_saved_and_only_active_duplicates_are_rejected(self):
+    def test_a_zero_score_is_a_valid_step_and_is_guarded_like_any_other(self):
+        first = self.add(score=0)
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(first.json()["row"]["score"], 0)
+        self.assertEqual([row["score"] for row in self.read()["rows"]], [0])
+        self.assertEqual(self.read()["rows"][0]["score_type"], "Delivery")
+        # 0 occupies its slot like any other score.
+        duplicate = self.add(score=0)
+        self.assertEqual(duplicate.status_code, 409)
+        self.assertIn("already active", duplicate.json()["message"])
+        # The next free score above 0 is 1.
+        self.assertEqual(self.read()["series"][0]["next_score"], 1)
+        self.assertEqual(self.add().json()["row"]["score"], 1)
+        # …and 0 is free again once its row is archived.
+        self.client.post(f"{BASE}/{first.json()['row']['id']}/deactivate")
+        self.now = "2026-09-08T13:00:00"
+        replacement = self.add(score=0)
+        self.assertEqual(replacement.status_code, 200, replacement.text)
+        self.assertEqual(replacement.json()["row"]["score"], 0)
+        self.assertEqual([row["score"] for row in self.read()["rows"]], [0, 1])
+
+    def test_custom_scores_are_saved_and_only_active_duplicates_are_rejected(self):
         self.assertEqual(self.add(score=7).json()["row"]["score"], 7)
         self.assertEqual(self.add(score=3).json()["row"]["score"], 3)
         self.assertEqual(self.read()["series"][0]["next_score"], 8)
@@ -232,7 +253,7 @@ class DecisionMatrixAPITests(unittest.TestCase):
         invalid = [
             {"score_type": "  "}, {"city_group": []}, {"score_type": {}},
             {"incentive_type": True}, {"incentive_type": "1junk"}, {"incentive_type": 1.5},
-            {"score": 0}, {"score": -1}, {"score": 1.5}, {"score": True}, {"score": "NaN"},
+            {"score": -1}, {"score": -0.5}, {"score": 1.5}, {"score": True}, {"score": "NaN"},
             {"target_increase": "no"}, {"target_increase": "NaN"}, {"pr_increase": "Infinity"},
             {"target_increase": []}, {"pr_increase": True}, {"target_increase": ""},
             {"control_bucket": 1.5}, {"control_bucket": -1}, {"score_type": "a" * 101},
@@ -382,6 +403,21 @@ class DecisionMatrixAPITests(unittest.TestCase):
                 self.assertIn("score", response.json()["message"])
         self.assertEqual([row["score"] for row in self.read()["rows"]], [4, 5])
         self.assertEqual(self.read(include_deactivated=True)["series"][0]["deactivated_count"], 0)
+
+    def test_editing_a_zero_score_step_keeps_the_zero(self):
+        row = self.add(score=0).json()["row"]
+        self.lock_events.clear()
+        response = self.client.post(f"{BASE}/{row['id']}/edit", json={
+            "target_increase": "0.5", "pr_increase": "2.25", "control_bucket": [0.1, 0.2, 0.3],
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["row"]["score"], 0)
+        self.assertEqual(response.json()["row"]["target_increase"], 0.5)
+        self.assertEqual(response.json()["row"]["control_bucket"], [0.1, 0.2, 0.3])
+        rows = self.read(include_deactivated=True)["rows"]
+        self.assertEqual([(row_["score"], row_["deactivated_at"] is None) for row_ in rows],
+                         [(0, False), (0, True)])
+        self.assertEqual(self.read()["series"][0]["next_score"], 1)
 
     def test_editing_keeps_the_stored_score_type_spelling(self):
         custom = self.add(score_type="Delivery", score=1).json()["row"]

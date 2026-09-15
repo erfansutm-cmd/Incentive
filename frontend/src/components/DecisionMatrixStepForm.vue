@@ -31,14 +31,15 @@ const validationError = ref('')
 const title = computed(() => ({ type: 'Add incentive type', scoreType: 'Add score type', step: 'Add step' })[props.context.mode])
 const scoreTypeColumn = computed(() => props.columns.find((col) => col.name === 'score_type'))
 const score = computed(() => Number(form.score))
-const validScore = computed(() => String(form.score).trim() !== '' && Number.isSafeInteger(score.value) && score.value > 0)
+// A score is a whole number of 0 or more: the first step of a series may be 0.
+const validScore = computed(() => String(form.score).trim() !== '' && Number.isSafeInteger(score.value) && score.value >= 0)
 const normalize = (value) => String(value ?? '').trim().toLowerCase()
 const activeSteps = computed(() => props.steps.filter((row) =>
   normalize(row.city_group) === normalize(props.context.cityGroup) &&
   String(row.incentive_type) === String(form.incentive_type) &&
   normalize(scoreTypeValue(row.score_type)) === normalize(scoreTypeValue(form.score_type)) &&
   (row.deactivated_at === null || row.deactivated_at === undefined) &&
-  Number.isFinite(Number(row.score)) && Number(row.score) > 0
+  Number.isFinite(Number(row.score)) && Number(row.score) >= 0
 ))
 const nearestStep = computed(() => {
   if (!validScore.value) return null
@@ -145,10 +146,10 @@ function submit() {
         <label class="field">
           <span>Score</span>
           <input
-            v-model="form.score" type="number" min="1" :max="Number.MAX_SAFE_INTEGER" step="1" required
+            v-model="form.score" type="number" min="0" :max="Number.MAX_SAFE_INTEGER" step="1" required
             aria-describedby="matrix-score-hint"
           />
-          <small id="matrix-score-hint" class="hint">Suggested from active steps. You can choose another unused positive whole number.</small>
+          <small id="matrix-score-hint" class="hint">Suggested from active steps. You can choose another unused whole number (0 or more).</small>
         </label>
         <p v-if="duplicateType" class="form-error" role="alert">This score type already exists. Open its panel to add a step.</p>
         <p v-else-if="scoreConflict" class="form-error" role="alert">Score {{ form.score }} is already active for this score type. Choose another score.</p>
