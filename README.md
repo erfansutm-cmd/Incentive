@@ -47,6 +47,8 @@ configured through a root `.env` file:
 | `DB_INCENTIVE_BASE_CONFIG_TABLE` | `incentive/incentive_base_configs` |
 | `DB_INCENTIVE_BASE_CONFIG_LOG_TABLE` | `incentive/incentive_base_configs_logs` |
 | `DB_INCENTIVE_PLANS_TABLE` | `incentive/final_incentive_plans` |
+| `FINAL_DECISION_PLAN_TYPE_ORDER` | `DAILY,ON-TOP-FOOD` — plan-type columns, top first |
+| `FINAL_DECISION_GROUP_ORDER` | `Tehran Group,Top 4,Tier 1,Tier 2,Tier 3` — city groups, top first |
 
 ```bash
 cp .env.example .env   # then fill in DB_PASSWORD
@@ -614,6 +616,17 @@ answers `GET /api/final-decisions?incentive_date=YYYY-MM-DD` (default: tomorrow)
 from `backend/app/api/final_decisions.py` and puts the two halves of the daily
 decision on one screen.
 
+**City order.** Cities are listed by their city group, top first: **Tehran
+Group** → **Top 4** → **Tier 1** → **Tier 2** → **Tier 3** → every other group
+alphabetically. The order comes from `FINAL_DECISION_GROUP_ORDER` (comma
+separated group names) and is returned as `group_order`. Groups are matched
+ignoring capitalization and separators — `TOP_4`, `top-4` and `Top 4` are the
+same group, and a group named plain `Tehran` belongs with `Tehran Group` — a tier
+that is not listed (`Tier 4`) follows the listed tiers in numeric order, and a
+city without a group comes last. Inside a group the order stays the active city
+table's `id`. Sorting a score column keeps that order for equal scores, and
+**↺ Default order** goes back to it.
+
 **Scores.** Every city of `incentive.incentive_active_city` that has rows in
 `incentive.incentive_scores` on that date gets a line, one per business entity.
 The collapsed row shows the entity that comes first in the **Entity order**
@@ -639,22 +652,30 @@ tab shows it. Per plan the tab shows:
 | Updated at | `updated_at` / `updated_by` | `15 Sep 2026, 13:17 · System` |
 | Plan page | `plan_mapping_id` | *Details* opens `/plans/{plan_mapping_id}` in a new tab |
 
-A city with several plans shows the first one in the collapsed row (type, entity,
-target/PR/bucket, updated at) plus a `+N more` pill; expanding the city lists
-every plan as a card, and even the collapsed row keeps the scores next to it.
+**Plans are columns, like the scores.** The table header gets one column per
+incentive type that has plans on that date, in the plan-type order below, and
+every city shows its plan of that type **in line** in the matching cell: business
+entity, the changes (`T 1.000 · PR 1.200 · B 0.2 · 0.2 · 0.1`) and *Details* to
+`/plans/{plan_mapping_id}`. The city's top plan carries the **top** badge and a
+slightly tinted cell, a plan whose mapping is deactivated is flagged **mapping
+off**, and a city without a plan of that type shows `—`. Expanding a city still
+lists every plan as a card with the full detail (three decimals, bucket chips,
+`updated_at` / `updated_by`) next to the scores of all its entities.
 
 ### Plan order (top first)
 
-Plans of a city are listed by incentive type, top first: `default` → `DAILY` →
-`ON-TOP-FOOD` → the rest alphabetically, so the plan that matters most is the one
-summarized in the collapsed row and the one wearing the **top** badge in the
-expanded panel. The order comes from `FINAL_DECISION_PLAN_TYPE_ORDER` (comma
-separated type names, anything unlisted follows alphabetically) and is returned
-as `plan_type_order`.
+The plan-type columns are ordered `DAILY` → `ON-TOP-FOOD` → the rest
+alphabetically, so the plan that matters most is the first column and the one
+wearing the **top** badge. The order comes from
+`FINAL_DECISION_PLAN_TYPE_ORDER` (comma separated type names, anything unlisted
+follows alphabetically) and is returned as `plan_type_order`. There is no
+`default` plan type in this database, so it is not part of the order — a plan
+whose type is not listed simply gets its column at the end, like any other
+unlisted type.
 
 The **Plan type order** button opens a popup that reorders it — drag a row, use
 its ↑ / ↓ buttons, *Add all* for types that are not in the list yet, or
-*Reset to default* to go back to the configured order. The table follows the
+*Reset to default* to go back to the configured order. The columns follow the
 popup immediately, and the choice is remembered in the browser
 (`localStorage`, `frontend/src/lib/storedOrder.js`) so a reload keeps it;
 *Reset to default* clears it again. The same popup component
@@ -684,9 +705,11 @@ the tab shows a notice above the table.
 SQLite store with attached `incentive` / `mafsho` schemas, so the plan join, the
 type-name lookup, the date filter, the bucket decoding and the ordering are all
 exercised for real. It also covers the graceful *plans table missing* path.
-`frontend/tests/unit/final-decisions.spec.js` mounts the real view against a
-mocked `/api` and covers the collapsed-row summary, the plan cards, the
-type-order popup (reorder and reset) and the empty/error states.
+The same file checks the city groups (`group_order`, the group ordering on
+separator/case variants and the extra tiers). `frontend/tests/unit/final-decisions.spec.js`
+mounts the real view against a mocked `/api` and covers the plan columns and the
+plans written in line, the plan cards, the type-order popup (reorder and reset),
+the group order kept for equal scores and the empty/error states.
 
 ## Performance score
 

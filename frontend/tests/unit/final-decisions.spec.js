@@ -3,11 +3,17 @@
 // The whole /api surface is mocked, so the tests need no backend, no database
 // and no browser: they drive the real FinalDecisions.vue (and the shared
 // OrderEditor popup) against the sample payload below.
+//
+// Plans are shown the way scores are: one column per plan type in the header,
+// in the order the API sends (and the user can reorder), with the plan of each
+// city in line in its column.
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import FinalDecisions from '../../src/views/FinalDecisions.vue'
 
-// incentive_type: 1 = DAILY, 2 = default, 3 = ON-TOP-FOOD, 4 = WEEKLY
+// incentive_type: 1 = DAILY, 2 = default, 3 = ON-TOP-FOOD, 4 = WEEKLY.
+// "default" is not a plan type of the database: it is only in the sample rows,
+// so it must show up as an unlisted type at the end of the order.
 function plan(overrides = {}) {
   return {
     id: 1,
@@ -40,33 +46,16 @@ function entity(name, scores = {}) {
   }
 }
 
+// Cities arrive already grouped by the API: Top 4 (tehran) before Tier 2 (kerman).
 const response = {
   incentive_date: '2026-09-16',
   score_types: ['performance', 'order_level_increase', 'weather'],
-  plan_type_order: ['default', 'DAILY', 'ON-TOP-FOOD'],
+  group_order: ['Tehran Group', 'Top 4', 'Tier 1', 'Tier 2', 'Tier 3'],
+  plan_type_order: ['DAILY', 'ON-TOP-FOOD'],
   plans_error: null,
   total_plans: 5,
   generated_at: '2026-09-15T13:17:22Z',
   cities: [
-    {
-      id: 8,
-      active_id: 8,
-      city_id: 8,
-      city_id_raw: '8',
-      city: 'kerman',
-      box_city_name: 'Kerman',
-      city_group: 'Tier 2',
-      business_entities: [entity('foodZooket'), entity('food', { performance: 0.9 })],
-      primary_entity: entity('foodZooket'),
-      entity_count: 2,
-      plan_count: 3,
-      plans: [
-        plan({ id: 1, plan_mapping_id: 122, incentive_type_id: 4, incentive_type: 'WEEKLY', incentive_type_label: 'WEEKLY', business_entity: 'foodZooket', pr_change: 1.1, control_bucket: null, type_rank: 103 }),
-        plan({ id: 2, plan_mapping_id: 8, incentive_type_id: 2, incentive_type: 'default', business_entity: 'food' }),
-        plan({ id: 4, plan_mapping_id: 132, incentive_type_id: 1, incentive_type: 'DAILY', incentive_type_label: 'DAILY', business_entity: 'food', pr_change: 1.2, control_bucket: null, type_rank: 1 }),
-      ],
-      top_plan: plan({ id: 2 }),
-    },
     {
       id: 10,
       active_id: 10,
@@ -92,7 +81,6 @@ const response = {
           control_bucket: null,
           mapping_active: false,
           mapping_deactivated_at: '2026-09-14T09:00:00',
-          type_rank: 2,
         }),
         plan({
           id: 5,
@@ -104,10 +92,28 @@ const response = {
           business_entity: 'foodZooket',
           pr_change: 1.2,
           control_bucket: null,
-          type_rank: 1,
         }),
       ],
       top_plan: plan({ id: 5, city_id: 10 }),
+    },
+    {
+      id: 8,
+      active_id: 8,
+      city_id: 8,
+      city_id_raw: '8',
+      city: 'kerman',
+      box_city_name: 'Kerman',
+      city_group: 'Tier 2',
+      business_entities: [entity('foodZooket'), entity('food', { performance: 0.9 })],
+      primary_entity: entity('foodZooket'),
+      entity_count: 2,
+      plan_count: 3,
+      plans: [
+        plan({ id: 1, plan_mapping_id: 122, incentive_type_id: 4, incentive_type: 'WEEKLY', incentive_type_label: 'WEEKLY', business_entity: 'foodZooket', pr_change: 1.1, control_bucket: null }),
+        plan({ id: 2, plan_mapping_id: 8, incentive_type_id: 2, incentive_type: 'default', business_entity: 'food' }),
+        plan({ id: 4, plan_mapping_id: 132, incentive_type_id: 1, incentive_type: 'DAILY', incentive_type_label: 'DAILY', business_entity: 'food', pr_change: 1.2, control_bucket: null }),
+      ],
+      top_plan: plan({ id: 4 }),
     },
   ],
 }
@@ -143,10 +149,25 @@ async function setup(payload) {
 
 const cityRow = (wrapper, city) =>
   wrapper.findAll('tr.city-row').find((row) => row.find('.city-name').text() === city)
+const cityOrder = (wrapper) => wrapper.findAll('tr.city-row .city-name').map((c) => c.text())
 const planCards = (wrapper) => wrapper.findAll('.plan-card')
 const cardTexts = (wrapper) => planCards(wrapper).map((card) => card.text())
 const buttonWith = (scope, label) =>
   scope.findAll('button').find((b) => b.text().trim() === label)
+// The score columns sort with a button that carries the arrow (Performance ↕).
+const sortButton = (wrapper, label) =>
+  wrapper.findAll('thead button').find((b) => b.text().trim().startsWith(label))
+
+// One column per plan type; the cell of a city in the column of a plan type.
+const planHeaders = (wrapper) => wrapper.findAll('thead .plan-th').map((th) => th.text())
+const planCell = (wrapper, city, label) => {
+  const index = planHeaders(wrapper).indexOf(label)
+  if (index === -1) return null
+  const row = cityRow(wrapper, city)
+  const cells = row.findAll('td.plan-cell')
+  return cells.length > index ? cells[index] : null
+}
+const cellText = (wrapper, city, label) => planCell(wrapper, city, label)?.text() ?? ''
 
 async function openOrderEditor(wrapper, label) {
   await buttonWith(wrapper, label).trigger('click')
@@ -168,25 +189,43 @@ beforeEach(() => {
 })
 
 describe('Final Decisions plans', () => {
-  it('counts the plans of the date in the header and per city', async () => {
+  it('lists one column per plan type, like the scores, and counts the plans', async () => {
     const { wrapper } = await setup()
     expect(wrapper.find('.head-sub').text()).toContain('5 plans')
-    expect(cityRow(wrapper, 'kerman').find('.preview-more').text()).toBe('+2 more')
-    expect(cityRow(wrapper, 'kerman').find('.type-chip').text()).toBe('default')
+    // the configured order first, then the unlisted types of the sample data
+    expect(planHeaders(wrapper)).toEqual(['DAILY', 'ON-TOP-FOOD', 'default', 'WEEKLY'])
+    const groups = wrapper.findAll('thead .group-head-row th').map((th) => th.text()).filter(Boolean)
+    expect(groups).toEqual(['Scores', 'Plans'])
+    // the city row is one table row with a cell per plan type (no stacked block)
+    expect(cityRow(wrapper, 'kerman').findAll('td.plan-cell').length).toBe(4)
+    expect(cellText(wrapper, 'kerman', 'ON-TOP-FOOD')).toBe('—')
   })
 
-  it('shows the top plan of a city in the collapsed row: type, entity, changes, bucket and update', async () => {
+  it('shows each plan in line in its own type column, top plan marked', async () => {
     const { wrapper } = await setup()
     const row = cityRow(wrapper, 'tehran')
     // teheran has DAILY + ON-TOP-FOOD: DAILY is the top one, not the first row of the API
-    expect(row.find('.type-chip').text()).toBe('DAILY')
-    expect(row.find('.preview-entity').text()).toBe('foodZooket')
-    const metrics = row.findAll('.preview-metric')
-    expect(metrics[0].text()).toContain('Target')
-    expect(metrics[0].text()).toContain('1.000')
-    expect(metrics[1].text()).toContain('1.200')
-    expect(metrics[2].text()).toContain('—')
-    expect(row.find('.preview-updated').text()).toContain('System')
+    const daily = row.findAll('td.plan-cell')[planHeaders(wrapper).indexOf('DAILY')]
+    expect(daily.find('.plan-inline-entity').text()).toBe('foodZooket')
+    expect(daily.find('.plan-inline').classes()).toContain('is-top')
+    expect(daily.find('.pill.tiny').text()).toBe('top')
+    const values = daily.findAll('.plan-value').map((v) => v.text())
+    expect(values[0]).toContain('1.000')
+    expect(values[1]).toContain('1.200')
+    expect(values[2]).toContain('—')
+    expect(daily.find('.plan-updated').text()).toContain('System')
+    expect(daily.find('a.plan-link').attributes('href')).toBe('/plans/23')
+
+    // the other type of the same city sits in its own column, without the badge
+    const onTop = planCell(wrapper, 'tehran', 'ON-TOP-FOOD')
+    expect(onTop.find('.plan-inline').classes()).toContain('is-mapping-off')
+    expect(onTop.find('.pill.tiny').text()).toBe('mapping off')
+    expect(onTop.text()).toContain('1.350')
+
+    // kerman keeps all three of its plans in their columns, one line each
+    expect(cellText(wrapper, 'kerman', 'DAILY')).toContain('food')
+    expect(cellText(wrapper, 'kerman', 'default')).toContain('0.2')
+    expect(cellText(wrapper, 'kerman', 'WEEKLY')).toContain('foodZooket')
   })
 
   it('renders one card per plan when the city is expanded, ordered by plan type', async () => {
@@ -195,13 +234,13 @@ describe('Final Decisions plans', () => {
     await flushPromises()
 
     expect(cardTexts(wrapper).length).toBe(3)
-    expect(planCards(wrapper)[0].find('.plan-card-title').text()).toBe('default')
+    expect(planCards(wrapper)[0].find('.plan-card-title').text()).toBe('DAILY')
     expect(planCards(wrapper)[0].find('.plan-card-entity').text()).toBe('food')
     expect(planCards(wrapper)[0].find('.plan-card-head .pill').text()).toBe('top')
-    // default → DAILY → WEEKLY (not listed in the order: last)
+    // DAILY → the unlisted default and WEEKLY last, alphabetically
     expect(planCards(wrapper).map((card) => card.find('.plan-card-title').text())).toEqual([
-      'default',
       'DAILY',
+      'default',
       'WEEKLY',
     ])
   })
@@ -211,18 +250,19 @@ describe('Final Decisions plans', () => {
     await cityRow(wrapper, 'kerman').trigger('click')
     await flushPromises()
 
-    const labels = planCards(wrapper)[0].findAll('.plan-metrics dt').map((dt) => dt.text())
+    const card = planCards(wrapper).find((c) => c.find('.plan-card-title').text() === 'default')
+    const labels = card.findAll('.plan-metrics dt').map((dt) => dt.text())
     expect(labels).toEqual(['Target change', 'PR change', 'Control bucket'])
-    expect(planCards(wrapper)[0].findAll('.plan-metrics dd').map((dd) => dd.text())).toEqual([
+    expect(card.findAll('.plan-metrics dd').map((dd) => dd.text())).toEqual([
       '1.000',
       '1.300',
       '0.2',
     ].map((value, index) => (index === 2 ? expect.stringContaining('0.2') : value)))
-    const chips = planCards(wrapper)[0].findAll('.bucket-chip .bucket-value').map((c) => c.text())
+    const chips = card.findAll('.bucket-chip .bucket-value').map((c) => c.text())
     expect(chips).toEqual(['0.2', '0.2', '0.1'])
-    expect(planCards(wrapper)[0].find('.plan-updated').text()).toContain('System')
+    expect(card.find('.plan-updated').text()).toContain('System')
     // the Details button opens the plan page of the mapping row
-    expect(planCards(wrapper)[0].find('a.btn').attributes('href')).toBe('/plans/8')
+    expect(card.find('a.btn').attributes('href')).toBe('/plans/8')
   })
 
   it('flags a plan whose mapping is deactivated', async () => {
@@ -234,24 +274,49 @@ describe('Final Decisions plans', () => {
     expect(card.classes()).toContain('is-mapping-off')
   })
 
-  it('reorders the plans through the plan type order popup', async () => {
+  it('reorders the plan columns through the plan type order popup', async () => {
     const { wrapper } = await setup()
-    await cityRow(wrapper, 'kerman').trigger('click')
-    await flushPromises()
-
     await openOrderEditor(wrapper, 'Plan type order')
-    expect(orderNames(wrapper)).toEqual(['default', 'DAILY', 'ON-TOP-FOOD', 'WEEKLY'])
+    expect(orderNames(wrapper)).toEqual(['DAILY', 'ON-TOP-FOOD', 'default', 'WEEKLY'])
     await moveInOrderEditor(wrapper, 'WEEKLY', 'up')
     await moveInOrderEditor(wrapper, 'WEEKLY', 'up')
-    expect(orderNames(wrapper)).toEqual(['default', 'WEEKLY', 'DAILY', 'ON-TOP-FOOD'])
+    expect(orderNames(wrapper)).toEqual(['DAILY', 'WEEKLY', 'ON-TOP-FOOD', 'default'])
     await buttonWith(wrapper.find('.order-modal'), 'Done').trigger('click')
     await flushPromises()
 
+    // the table columns follow the chosen order
+    expect(planHeaders(wrapper)).toEqual(['DAILY', 'WEEKLY', 'ON-TOP-FOOD', 'default'])
+    expect(cellText(wrapper, 'kerman', 'WEEKLY')).toContain('foodZooket')
+
+    await cityRow(wrapper, 'kerman').trigger('click')
+    await flushPromises()
     expect(planCards(wrapper).map((card) => card.find('.plan-card-title').text())).toEqual([
-      'default',
-      'WEEKLY',
       'DAILY',
+      'WEEKLY',
+      'default',
     ])
+  })
+
+  it('keeps the city order of the API (city groups) for equal scores', async () => {
+    const tied = structuredClone(response)
+    // kerman has the same performance score as tehran: the group order wins
+    tied.cities[1].business_entities[0].scores.performance = 0.42
+    const { wrapper } = await setup(tied)
+
+    expect(cityOrder(wrapper)).toEqual(['tehran', 'kerman'])
+    await sortButton(wrapper, 'Performance').trigger('click')
+    await flushPromises()
+    expect(cityOrder(wrapper)).toEqual(['tehran', 'kerman'])
+    await sortButton(wrapper, 'Performance').trigger('click')
+    await flushPromises()
+    expect(cityOrder(wrapper)).toEqual(['tehran', 'kerman'])
+    // the group filter follows the same order
+    expect(wrapper.findAll('#group-filter option').map((o) => o.text())).toEqual([
+      'All groups',
+      'Top 4',
+      'Tier 2',
+    ])
+    expect(wrapper.find('.sort-clear').attributes('title')).toContain('Tehran Group → Top 4')
   })
 
   it('says when plans fall on cities without scores for the date', async () => {
@@ -279,10 +344,11 @@ describe('Final Decisions plans', () => {
     const { wrapper } = await setup()
     await openOrderEditor(wrapper, 'Plan type order')
     await moveInOrderEditor(wrapper, 'DAILY', 'down')
-    expect(orderNames(wrapper)).toEqual(['default', 'ON-TOP-FOOD', 'DAILY', 'WEEKLY'])
+    expect(orderNames(wrapper)).toEqual(['ON-TOP-FOOD', 'DAILY', 'default', 'WEEKLY'])
     await buttonWith(wrapper.find('.order-modal'), '↺ Reset to default').trigger('click')
     await flushPromises()
-    expect(orderNames(wrapper)).toEqual(['default', 'DAILY', 'ON-TOP-FOOD', 'WEEKLY'])
+    expect(orderNames(wrapper)).toEqual(['DAILY', 'ON-TOP-FOOD', 'default', 'WEEKLY'])
+    expect(planHeaders(wrapper)).toEqual(['DAILY', 'ON-TOP-FOOD', 'default', 'WEEKLY'])
   })
 
   it('keeps the entity order popup working (top entity in the collapsed row)', async () => {
@@ -308,12 +374,14 @@ describe('Final Decisions plans', () => {
     expect(wrapper.find('.plan-warning').exists()).toBe(false)
 
     const empty = structuredClone(response)
-    empty.cities = [empty.cities[0]]
+    empty.cities = [empty.cities[1]]
     empty.cities[0].plans = []
     empty.cities[0].plan_count = 0
     empty.cities[0].top_plan = null
     empty.total_plans = 0
     const { wrapper: second } = await setup(empty)
+    // no plan type has a plan: the table keeps a single Plans column
+    expect(planHeaders(second)).toEqual(['Plans'])
     expect(cityRow(second, 'kerman').find('.decisions-pill').text()).toBe('No plans')
     await cityRow(second, 'kerman').trigger('click')
     await flushPromises()
@@ -344,20 +412,20 @@ describe('Final Decisions plans', () => {
     await buttonWith(wrapper.find('.order-modal'), 'Done').trigger('click')
     await flushPromises()
     expect(JSON.parse(window.localStorage.getItem('finalDecisions.planTypeOrder'))).toEqual([
-      'default',
       'DAILY',
-      'WEEKLY',
       'ON-TOP-FOOD',
+      'WEEKLY',
+      'default',
     ])
     wrapper.unmount()
 
     // a reload (fresh mount) keeps the user's order for both popups
     const { wrapper: reloaded } = await setup()
     await openOrderEditor(reloaded, 'Plan type order')
-    expect(orderNames(reloaded)).toEqual(['default', 'DAILY', 'WEEKLY', 'ON-TOP-FOOD'])
+    expect(orderNames(reloaded)).toEqual(['DAILY', 'ON-TOP-FOOD', 'WEEKLY', 'default'])
     await buttonWith(reloaded.find('.order-modal'), '↺ Reset to default').trigger('click')
     await flushPromises()
-    expect(orderNames(reloaded)).toEqual(['default', 'DAILY', 'ON-TOP-FOOD', 'WEEKLY'])
+    expect(orderNames(reloaded)).toEqual(['DAILY', 'ON-TOP-FOOD', 'default', 'WEEKLY'])
     expect(window.localStorage.getItem('finalDecisions.planTypeOrder')).toBeNull()
   })
 })

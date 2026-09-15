@@ -22,8 +22,16 @@ DATE = "2026-09-16"
 # incentive.incentive_active_city: the active city list the scores are named after
 CITIES = [
     # id, city_id, city, box_city_name, city_group
+    # Inserted out of order on purpose: the endpoint groups the cities itself.
     (1, 10, "tehran", "Tehran", "Top 4"),
     (2, 20, "kerman", "Kerman", "Tier 2"),
+    (3, 30, "qom", "Qom", "Tier 3"),
+    (4, 40, "mashhad", "Mashhad", "Zone X"),
+    (5, 50, "karaj", "Karaj", "tehran-group"),
+    (6, 60, "tabriz", "Tabriz", "TOP_4"),
+    (7, 70, "isfahan", "Isfahan", "Tier-1"),
+    (8, 80, "ahvaz", "Ahvaz", "Tier 4"),
+    (9, 90, "rasht", "Rasht", None),
 ]
 
 # incentive.incentive_scores: one row per city / business entity / score type
@@ -33,6 +41,14 @@ SCORES = [
     (2, DATE, 10, "foodZooket", "weather", 0.18),
     (3, DATE, 20, "food", "performance", 0.61),
     (4, DATE, 20, "food", "order_level_increase", 0.30),
+    # one score per extra city so each of them is listed
+    (5, DATE, 30, "food", "performance", 0.11),
+    (6, DATE, 40, "food", "performance", 0.22),
+    (7, DATE, 50, "food", "performance", 0.33),
+    (8, DATE, 60, "food", "performance", 0.44),
+    (9, DATE, 70, "food", "performance", 0.55),
+    (10, DATE, 80, "food", "performance", 0.66),
+    (11, DATE, 90, "food", "performance", 0.77),
 ]
 
 # mafsho.incentive_type: the same lookup the Cities tab shows
@@ -116,7 +132,8 @@ class FinalDecisionsAPITests(unittest.TestCase):
             "PLANS_SQL": "`incentive`.`final_incentive_plans`",
             "PLAN_MAPPINGS_SQL": "`incentive`.`incentive_city_plan_mapping`",
             "INCENTIVE_TYPES_SQL": "`mafsho`.`incentive_type`",
-            "FINAL_DECISION_PLAN_TYPE_ORDER": "default,DAILY,ON-TOP-FOOD",
+            "FINAL_DECISION_PLAN_TYPE_ORDER": "DAILY,ON-TOP-FOOD",
+            "FINAL_DECISION_GROUP_ORDER": "Tehran Group,Top 4,Tier 1,Tier 2,Tier 3",
         }.items():
             patcher = patch.object(final, name, value)
             patcher.start()
@@ -137,17 +154,19 @@ class FinalDecisionsAPITests(unittest.TestCase):
     def test_plans_are_grouped_by_city_and_ordered_by_type(self):
         data = self.read(incentive_date=DATE)
 
-        self.assertEqual(data["plan_type_order"], ["default", "DAILY", "ON-TOP-FOOD"])
+        self.assertEqual(data["plan_type_order"], ["DAILY", "ON-TOP-FOOD"])
         # 6 sample rows, but only the 5 of DAY belong to this date
         self.assertEqual(data["total_plans"], 5)
         self.assertIsNone(data["plans_error"])
 
         kerman = self.city(data, 20)
         self.assertEqual(kerman["plan_count"], 3)
-        # default (1st) → DAILY (2nd) → WEEKLY (unlisted, last)
-        self.assertEqual([p["incentive_type"] for p in kerman["plans"]], ["default", "DAILY", "WEEKLY"])
+        # DAILY (1st) → the unlisted "default" and WEEKLY last, alphabetically
+        self.assertEqual([p["incentive_type"] for p in kerman["plans"]], ["DAILY", "default", "WEEKLY"])
         self.assertEqual([p["business_entity"] for p in kerman["plans"]], ["food", "food", "foodZooket"])
-        self.assertEqual(kerman["top_plan"]["id"], 5)
+        # the top plan is the DAILY one, not the "default" row of the sample data
+        self.assertEqual(kerman["top_plan"]["id"], 4)
+        self.assertEqual(kerman["top_plan"]["incentive_type"], "DAILY")
 
         tehran = self.city(data, 10)
         self.assertEqual(tehran["plan_count"], 2)
@@ -203,11 +222,57 @@ class FinalDecisionsAPITests(unittest.TestCase):
         self.assertIsNotNone(self.city(data, 20)["primary_entity"]["scores"]["performance"])
 
     def test_plan_type_rank_follows_the_configured_order(self):
-        self.assertEqual(final._plan_type_rank("default"), 0)
-        self.assertEqual(final._plan_type_rank("daily"), 1)
-        self.assertEqual(final._plan_type_rank("ON-TOP-FOOD"), 2)
-        self.assertGreater(final._plan_type_rank("WEEKLY"), 2)
-        self.assertGreater(final._plan_type_rank(None), 2)
+        self.assertEqual(final._plan_type_rank("DAILY"), 0)
+        self.assertEqual(final._plan_type_rank("daily"), 0)
+        self.assertEqual(final._plan_type_rank("ON-TOP-FOOD"), 1)
+        # "default" is not a plan type of this database: it is just another
+        # unlisted type and comes after the configured ones.
+        self.assertGreater(final._plan_type_rank("default"), 1)
+        self.assertGreater(final._plan_type_rank("WEEKLY"), 1)
+        self.assertGreater(final._plan_type_rank(None), 1)
+
+    def test_default_plan_type_order_has_no_default_entry(self):
+        self.assertEqual(final.DEFAULT_PLAN_TYPE_ORDER, ("DAILY", "ON-TOP-FOOD"))
+        with patch.object(final, "FINAL_DECISION_PLAN_TYPE_ORDER", ""):
+            self.assertEqual(final._plan_type_order(), ["DAILY", "ON-TOP-FOOD"])
+            self.assertGreater(final._plan_type_rank("default"), 1)
+
+    def test_cities_are_listed_by_city_group(self):
+        data = self.read(incentive_date=DATE)
+
+        self.assertEqual(data["group_order"], ["Tehran Group", "Top 4", "Tier 1", "Tier 2", "Tier 3"])
+        # Tehran Group first (matched through "tehran-group"), then Top 4
+        # (matched through "TOP_4"), the listed tiers, Tier 4, and finally the
+        # remaining groups / unknown group alphabetically.
+        self.assertEqual(
+            [(c["city"], c["city_group"]) for c in data["cities"]],
+            [
+                ("karaj", "tehran-group"),
+                ("tehran", "Top 4"),
+                ("tabriz", "TOP_4"),
+                ("isfahan", "Tier-1"),
+                ("kerman", "Tier 2"),
+                ("qom", "Tier 3"),
+                ("ahvaz", "Tier 4"),
+                ("mashhad", "Zone X"),
+                ("rasht", None),
+            ],
+        )
+
+    def test_group_sort_key_ignores_case_and_separators(self):
+        key = final._group_sort_key
+        self.assertEqual(key("TEHRAN GROUP")[0], 0)
+        self.assertEqual(key("tehran-group"), key("Tehran Group"))
+        self.assertEqual(key("Tehran"), key("Tehran Group"))
+        self.assertEqual(key("TOP_4"), key("Top 4"))
+        self.assertEqual(key("top-4"), key("Top 4"))
+        self.assertEqual(key("tier1"), key("Tier 1"))
+        # an unlisted tier follows the configured ones, in numeric order
+        self.assertEqual(key("Tier 4")[0], 1)
+        self.assertLess(key("Tier 4"), key("Tier 10"))
+        # everything else (and a missing group) comes last
+        self.assertEqual(key("Zone X")[0], 2)
+        self.assertGreater(key(None), key("Zone X"))
 
     def test_control_bucket_decoding(self):
         self.assertEqual(final._control_bucket("[0.2, 0.2, 0.1]"), [0.2, 0.2, 0.1])

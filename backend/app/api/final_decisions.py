@@ -16,11 +16,17 @@ Data sources:
 Collapsed rows show the business entity with the best priority:
   foodZooket > food > Zooket > others (same level, alphabetical tie-break).
 
-Sorting is by the active city table's primary key ``id`` (not city_id), per spec.
+Cities are listed by their city group — ``FINAL_DECISION_GROUP_ORDER``, by
+default ``Tehran Group`` → ``Top 4`` → ``Tier 1`` → ``Tier 2`` → ``Tier 3`` →
+the rest alphabetically — and then by the active city table's primary key ``id``
+(not city_id), per spec. Groups are matched ignoring capitalization and
+separators, so ``TOP_4`` is ``Top 4``; a tier that is not configured (``Tier 4``)
+follows the configured tiers in numeric order.
+
 Expanded rows show all entities for that city, plus its plans ordered by
-incentive type — ``FINAL_DECISION_PLAN_TYPE_ORDER``, by default
-``default`` → ``DAILY`` → ``ON-TOP-FOOD`` → anything else alphabetically. The UI
-shows that order, marks the top plan and lets the user reorder it in a popup.
+incentive type — ``FINAL_DECISION_PLAN_TYPE_ORDER``, by default ``DAILY`` →
+``ON-TOP-FOOD`` → anything else alphabetically. The UI shows one column per plan
+type in that order, marks the top plan and lets the user reorder it in a popup.
 
 Plans are best-effort: if ``final_incentive_plans`` cannot be read the scores still
 load and the response carries ``plans_error`` so the tab can say so.
@@ -43,6 +49,7 @@ from app.core.config import (
     DB_INCENTIVE_PLANS_TABLE,
     DB_INCENTIVE_SCORES_TABLE,
     DB_INCENTIVE_TYPE_TABLE,
+    FINAL_DECISION_GROUP_ORDER,
     FINAL_DECISION_PLAN_TYPE_ORDER,
 )
 from app.core.utils.database import engine, quote_table
@@ -56,8 +63,12 @@ PLAN_MAPPINGS_SQL = quote_table(DB_CITY_PLAN_MAPPING_TABLE)
 INCENTIVE_TYPES_SQL = quote_table(DB_INCENTIVE_TYPE_TABLE)
 
 # The order the plans of a city are shown in, top first, unless the environment
-# (or the user, in the UI popup) says otherwise.
-DEFAULT_PLAN_TYPE_ORDER = ("default", "DAILY", "ON-TOP-FOOD")
+# (or the user, in the UI popup) says otherwise. "default" is not a plan type of
+# this database, so it is not part of the order.
+DEFAULT_PLAN_TYPE_ORDER = ("DAILY", "ON-TOP-FOOD")
+# The order the city groups are listed in, top first, unless the environment says
+# otherwise.
+DEFAULT_GROUP_ORDER = ("Tehran Group", "Top 4", "Tier 1", "Tier 2", "Tier 3")
 
 SCORE_TYPES = ["performance", "order_level_increase", "weather"]
 SCORE_TYPE_LABELS = {
@@ -145,15 +156,59 @@ def _parse_date(value):
     return s
 
 
-def _plan_type_order():
-    """The configured plan-type order, top first (deduplicated, case-insensitive)."""
+def _split_order(configured, fallback):
+    """A comma-separated configured order, top first (deduplicated, case-insensitive)."""
     order, seen = [], set()
-    for part in str(FINAL_DECISION_PLAN_TYPE_ORDER or "").split(","):
+    for part in str(configured or "").split(","):
         name = part.strip()
         if name and name.lower() not in seen:
             seen.add(name.lower())
             order.append(name)
-    return order or list(DEFAULT_PLAN_TYPE_ORDER)
+    return order or list(fallback)
+
+
+def _plan_type_order():
+    """The configured plan-type order, top first."""
+    return _split_order(FINAL_DECISION_PLAN_TYPE_ORDER, DEFAULT_PLAN_TYPE_ORDER)
+
+
+def _group_order():
+    """The configured city-group order, top first."""
+    return _split_order(FINAL_DECISION_GROUP_ORDER, DEFAULT_GROUP_ORDER)
+
+
+def _group_key(name):
+    """``Top 4``, ``top-4`` and ``TOP_4`` name the same city group."""
+    if name is None:
+        return ""
+    return re.sub(r"[\s_\-–—/·]+", "", str(name).strip().lower())
+
+
+def _group_rank_map():
+    """Normalized group name -> position in the configured order."""
+    ranks = {}
+    for index, name in enumerate(_group_order()):
+        key = _group_key(name)
+        ranks.setdefault(key, index)
+        # A group called plain "Tehran" belongs with the configured "Tehran Group".
+        if key.startswith("tehran") and key != "tehran":
+            ranks.setdefault("tehran", index)
+    return ranks
+
+
+def _group_sort_key(group):
+    """Where a city group belongs: configured order, then extra tiers, then the rest."""
+    key = _group_key(group)
+    if not key:
+        return (3, 0, 0, "")
+    configured = _group_rank_map()
+    if key in configured:
+        return (0, configured[key], 0, "")
+    tier = re.fullmatch(r"tier(\d*)", key)
+    if tier:
+        # Tier 4+ (or a bare "Tier") follows the configured tiers, in order.
+        return (1, 0, int(tier.group(1) or 0), "")
+    return (2, 0, 0, key)
 
 
 def _plan_type_rank(name):
@@ -525,14 +580,14 @@ def list_final_decisions(
                     }
                 )
 
-            # Sort by active table PK `id` ascending per spec
+            # Cities are grouped first (Tehran Group, Top 4, Tier 1…, then the
+            # rest) and then sorted by active table PK `id` ascending per spec.
             def _sort_key(c):
-                # primary sort by active_id numeric ascending; tie-breaker by city name for stability
                 try:
                     aid = int(c.get("active_id") or c.get("id") or 999999)
                 except Exception:
                     aid = 999999
-                return (aid, str(c.get("city") or "").lower())
+                return (*_group_sort_key(c.get("city_group")), aid, str(c.get("city") or "").lower())
 
             cities.sort(key=_sort_key)
 
@@ -558,6 +613,7 @@ def list_final_decisions(
                 "total_plans": total_plans,
                 "plans_without_scores": sum(len(plans_by_city[cid]) for cid in hidden_plans),
                 "plans_without_scores_cities": hidden_cities,
+                "group_order": _group_order(),
                 "plan_type_order": _plan_type_order(),
                 "plan_type_names": sorted(plan_type_names.values()),
                 "plans_error": plans_error,

@@ -49,7 +49,14 @@ DB_INCENTIVE_PLANS_TABLE = os.getenv(
 # Comma separated type names; whatever is not listed follows alphabetically.
 # The UI loads this order and lets the user reorder it in a popup.
 FINAL_DECISION_PLAN_TYPE_ORDER = os.getenv(
-    "FINAL_DECISION_PLAN_TYPE_ORDER", "default,DAILY,ON-TOP-FOOD"
+    "FINAL_DECISION_PLAN_TYPE_ORDER", "DAILY,ON-TOP-FOOD"
+)
+# Order ("top first") the cities of the Final Decisions tab are listed in, by
+# their city group. Comma separated group names, matched ignoring capitalization
+# and separators; tiers that are not listed follow the listed ones, and every
+# other group comes last, alphabetically.
+FINAL_DECISION_GROUP_ORDER = os.getenv(
+    "FINAL_DECISION_GROUP_ORDER", "Tehran Group,Top 4,Tier 1,Tier 2,Tier 3"
 )
 
 # Allocator / rule / listing lookups behind the base-config forms.
