@@ -755,7 +755,8 @@ onBeforeUnmount(() => {
 }
 .final-table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate; /* separate + 0 spacing, so the expanded box can have rounded corners */
+  border-spacing: 0;
   min-width: 900px;
   table-layout: fixed;
 }
@@ -784,12 +785,13 @@ onBeforeUnmount(() => {
   text-transform: uppercase;
   letter-spacing: 0.03em;
   white-space: nowrap;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 0;
 }
 .final-table thead .group-head-row th {
   padding: 0.75rem 0.9rem;
   font-size: 0.86rem;
   letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border);
 }
 .group-header {
   font-weight: 800;
@@ -812,7 +814,7 @@ onBeforeUnmount(() => {
   color: #fff;
 }
 .decisions-header-divider {
-  border-left: 2px solid #cfe0d7;
+  border-left: 0; /* drawn by the neighbouring border-right */
 }
 .score-th-divider {
   border-right: 2px solid #cfe0d7;
@@ -821,7 +823,7 @@ onBeforeUnmount(() => {
   border-right: 2px solid #e3ece7;
 }
 .decisions-cell-divider {
-  border-left: 2px solid #e3ece7;
+  border-left: 0; /* drawn by .score-cell-divider border-right */
 }
 .final-table thead tr:not(.group-head-row) th {
   padding-top: 0.65rem;
@@ -914,28 +916,40 @@ onBeforeUnmount(() => {
 .final-table tbody tr.city-row:hover {
   background: #f6faf8;
 }
-.final-table tbody tr.city-row.expanded {
-  background: var(--accent-soft);
-}
+.final-table tbody tr.city-row.expanded,
 .final-table tbody tr.city-row.expanded:hover {
-  background: #dceee4;
+  background: transparent; /* cells paint it, so the corners can curve */
 }
-/* Expanded group: one border box running from the top of the city row
+/* Expanded group: one rounded border box running from the top of the city row
    down to below the expanded panel, to separate it from the rest of the table */
 .final-table tbody tr.city-row.expanded > td {
+  background: var(--accent-soft);
   border-top: 2px solid var(--accent);
   border-bottom: 0;
+  transition: background 0.15s ease;
+}
+.final-table tbody tr.city-row.expanded:hover > td {
+  background: #dceee4;
 }
 .final-table tbody tr.city-row.expanded > td:first-child {
-  box-shadow: inset 2px 0 0 var(--accent);
+  border-left: 2px solid var(--accent);
+  border-top-left-radius: 0.9rem;
 }
 .final-table tbody tr.city-row.expanded > td:last-child {
-  box-shadow: inset -2px 0 0 var(--accent);
+  border-right: 2px solid var(--accent);
+  border-top-right-radius: 0.9rem;
 }
 .final-table tbody tr.detail-row > td {
   border-top: 0;
+  border-right: 2px solid var(--accent);
   border-bottom: 2px solid var(--accent);
-  box-shadow: inset 2px 0 0 var(--accent), inset -2px 0 0 var(--accent);
+  border-left: 2px solid var(--accent);
+  border-bottom-right-radius: 0.9rem;
+  border-bottom-left-radius: 0.9rem;
+}
+/* the box bottom edge replaces the grey separator under it */
+.final-table tbody tr.detail-row + tr > td {
+  border-top: 0;
 }
 
 .expand-col {
