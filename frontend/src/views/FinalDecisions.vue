@@ -85,13 +85,18 @@ function scoreStyle(v, key, ranges) {
 }
 
 const stampFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+// The "Updated" column of the main table is narrow: a compact stamp, no year.
+const shortStampFormat = new Intl.DateTimeFormat(undefined, {
+  month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+})
 
-function formatStamp(value) {
+function formatStamp(value, short = false) {
   if (!value) return '—'
   const raw = String(value)
   // MySQL hands out "2026-09-15 13:17:22"; make it parseable in every browser.
   const date = new Date(raw.includes('T') ? raw : raw.replace(' ', 'T'))
-  return Number.isNaN(date.getTime()) ? raw : stampFormat.format(date)
+  if (Number.isNaN(date.getTime())) return raw
+  return (short ? shortStampFormat : stampFormat).format(date)
 }
 
 // target_change / pr_change are ratios stored with three decimals (1.000, 1.100).
@@ -346,37 +351,19 @@ function resetPlanTypeOrder() {
 function cityPlans(city) {
   return Array.isArray(city?.plans) ? city.plans : []
 }
-// One table column per plan type, in the plan-type order the user chose. Only
-// types that actually have plans get a column, so the table stays as narrow as
-// the data. Types missing from the order are appended (order covers them anyway).
-const planColumns = computed(() => {
-  const present = new Map()
-  for (const city of cities.value) {
-    for (const plan of cityPlans(city)) {
-      const label = planTypeLabel(plan)
-      const key = label.trim().toLowerCase()
-      if (!present.has(key)) present.set(key, label)
-    }
-  }
-  const columns = []
-  const used = new Set()
-  for (const name of planTypeOrder.value) {
-    const key = String(name).trim().toLowerCase()
-    if (present.has(key) && !used.has(key)) {
-      used.add(key)
-      columns.push({ key, label: present.get(key) })
-    }
-  }
-  for (const [key, label] of present) {
-    if (!used.has(key)) columns.push({ key, label })
-  }
-  return columns
-})
-// Without plans at all the table keeps a single "Plans" column for the status pill.
-const planColumnsOrPill = computed(() =>
-  planColumns.value.length ? planColumns.value : [{ key: '__plans__', label: 'Plans' }]
-)
-const planColumnCount = computed(() => planColumnsOrPill.value.length)
+// The plans are columns, the way the scores are: type (+entity), target change,
+// PR change, control bucket, update stamp and the link to the plan page.
+const PLAN_COLUMNS = [
+  { key: 'type', label: 'Incentive Type' },
+  { key: 'target', label: 'Target change' },
+  { key: 'pr', label: 'PR change' },
+  { key: 'bucket', label: 'Control bucket' },
+  { key: 'updated', label: 'Updated' },
+  { key: 'details', label: '' },
+]
+const PLAN_COLUMN_COUNT = PLAN_COLUMNS.length
+// expand + city + business entity + the three score columns
+const FIXED_COLUMN_COUNT = 6
 // Plans of a city: plan type first (the configured order), then the entity order
 // — two plans of the same type belong to different entities, and the first one
 // is the top plan of that column.
@@ -401,8 +388,18 @@ function sortedPlans(city) {
 function topPlan(city) {
   return sortedPlans(city)[0] || null
 }
-function plansOfType(city, key) {
-  return sortedPlans(city).filter((plan) => planTypeLabel(plan).trim().toLowerCase() === key)
+// The plan shown in the collapsed row: the first one in the order — plan type
+// order, then the entity order inside a type.
+const topPlansByCity = computed(() => {
+  const map = new Map()
+  for (const city of cities.value) map.set(cityKey(city), topPlan(city))
+  return map
+})
+function topPlanOf(city) {
+  return topPlansByCity.value.get(cityKey(city)) || null
+}
+function hiddenPlanCount(city) {
+  return Math.max(0, cityPlans(city).length - 1)
 }
 function isTopPlan(city, plan) {
   const top = topPlan(city)
@@ -644,7 +641,7 @@ onBeforeUnmount(() => {
       :items="planTypeOrder"
       :extra="unlistedPlanTypes"
       noun="plan type"
-      top-note="Plans of a city are listed in this order: the first plan of each city is shown in the collapsed row and carries the top badge."
+      top-note="The first plan of a city in this order is the one shown in the collapsed row; the others follow it when the city is expanded."
       @update:items="setPlanTypeOrder"
       @reset="resetPlanTypeOrder"
       @close="showTypeOrderEditor = false"
@@ -707,7 +704,12 @@ onBeforeUnmount(() => {
               <col class="col-score" />
               <col class="col-score" />
               <col class="col-score" />
-              <col v-for="column in planColumnsOrPill" :key="column.key" class="col-plan" />
+              <col class="col-plan-type" />
+              <col class="col-plan-num" />
+              <col class="col-plan-num" />
+              <col class="col-plan-bucket" />
+              <col class="col-plan-updated" />
+              <col class="col-plan-details" />
             </colgroup>
             <thead>
               <tr class="group-head-row">
@@ -715,7 +717,7 @@ onBeforeUnmount(() => {
                 <th colspan="5" class="group-header scores-header scores-header-divider">
                   <span class="group-label">Scores</span>
                 </th>
-                <th :colspan="planColumnCount" class="group-header decisions-header decisions-header-divider">
+                <th :colspan="PLAN_COLUMN_COUNT" class="group-header decisions-header decisions-header-divider">
                   <span class="group-label">Plans</span>
                 </th>
               </tr>
@@ -739,8 +741,11 @@ onBeforeUnmount(() => {
                   </button>
                 </th>
                 <th
-                  v-for="(column, index) in planColumnsOrPill" :key="column.key"
-                  class="plan-th" :class="{ 'decisions-header-divider': index === 0 }"
+                  v-for="(column, index) in PLAN_COLUMNS" :key="column.key"
+                  class="plan-th" :class="{
+                    'decisions-header-divider': index === 0,
+                    'plan-th-num': ['target', 'pr', 'details'].includes(column.key),
+                  }"
                 >{{ column.label }}</th>
               </tr>
             </thead>
@@ -782,71 +787,68 @@ onBeforeUnmount(() => {
                     </span>
                     <span v-else class="muted">—</span>
                   </td>
-                  <template v-if="!planColumns.length">
-                    <td class="plan-cell plans-none decisions-cell-divider">
-                      <span class="decisions-placeholder">
-                        <span class="pill plain decisions-pill" :class="{ 'is-expanded': isExpanded(city) }">
-                          <span class="dot" aria-hidden="true" />
-                          {{ plansError ? 'Plans unavailable' : 'No plans' }}
+                  <template v-if="topPlanOf(city)">
+                    <td class="plan-cell plan-cell-type decisions-cell-divider">
+                      <div class="plan-type-name">{{ planTypeLabel(topPlanOf(city)) }}</div>
+                      <div class="plan-type-sub">
+                        <span class="plan-entity">{{ topPlanOf(city).business_entity || '—' }}</span>
+                        <span
+                          v-if="hiddenPlanCount(city)" class="plan-flag more-flag"
+                          :title="`${hiddenPlanCount(city)} more ${hiddenPlanCount(city) === 1 ? 'plan' : 'plans'} of this city — expand the row to see them in order`"
+                        >+{{ hiddenPlanCount(city) }}</span>
+                      </div>
+                    </td>
+                    <td class="plan-cell plan-cell-num">
+                      <span
+                        class="plan-number" title="Target change"
+                        :style="planNumberStyle(topPlanOf(city), 'target')"
+                      >{{ formatChange(topPlanOf(city).target_change) }}</span>
+                    </td>
+                    <td class="plan-cell plan-cell-num">
+                      <span
+                        class="plan-number" title="PR change"
+                        :style="planNumberStyle(topPlanOf(city), 'pr')"
+                      >{{ formatChange(topPlanOf(city).pr_change) }}</span>
+                    </td>
+                    <td class="plan-cell plan-cell-bucket">
+                      <span v-if="planBuckets(topPlanOf(city)).length" class="bucket-values">
+                        <span v-for="(value, bi) in planBuckets(topPlanOf(city))" :key="bi" class="bucket-chip">
+                          <span class="bucket-value">{{ formatBucketValue(value) }}</span>
                         </span>
                       </span>
+                      <span v-else class="muted">{{ planBucketText(topPlanOf(city)) }}</span>
                     </td>
-                  </template>
-                  <template v-else-if="!cityPlans(city).length">
-                    <td :colspan="planColumns.length" class="plan-cell plans-none decisions-cell-divider">
-                      <span class="decisions-placeholder">
-                        <span class="pill plain decisions-pill" :class="{ 'is-expanded': isExpanded(city) }">
-                          <span class="dot" aria-hidden="true" />
-                          {{ plansError ? 'Plans unavailable' : 'No plans' }}
-                        </span>
-                      </span>
+                    <td class="plan-cell plan-cell-updated">
+                      <span class="plan-stamp">{{ formatStamp(topPlanOf(city).updated_at, true) }}</span>
+                      <span v-if="topPlanOf(city).updated_by" class="plan-stamp-by">{{ topPlanOf(city).updated_by }}</span>
                     </td>
-                  </template>
-                  <template v-else>
-                    <td
-                      v-for="(column, index) in planColumns" :key="column.key"
-                      class="plan-cell" :class="{ 'decisions-cell-divider': index === 0 }"
-                    >
-                      <template v-if="plansOfType(city, column.key).length">
-                        <div
-                          v-for="plan in plansOfType(city, column.key)" :key="plan.id"
-                          class="plan-row" :class="{ 'is-top': isTopPlan(city, plan) }"
-                          :title="`${planTypeLabel(plan)} · ${plan.business_entity || '—'} · updated ${formatStamp(plan.updated_at)}${plan.updated_by ? ` · ${plan.updated_by}` : ''}`"
-                        >
-                          <span class="plan-entity">{{ plan.business_entity || '—' }}</span>
-                          <span v-if="isTopPlan(city, plan)" class="plan-flag top-flag" title="Top plan of this city">top</span>
-                          <span
-                            v-if="!plan.mapping_active" class="plan-flag off-flag"
-                            title="The plan mapping of this plan is deactivated"
-                          >off</span>
-                          <span
-                            class="plan-number" title="Target change"
-                            :style="planNumberStyle(plan, 'target')"
-                          >{{ formatChange(plan.target_change) }}</span>
-                          <span
-                            class="plan-number" title="PR change"
-                            :style="planNumberStyle(plan, 'pr')"
-                          >{{ formatChange(plan.pr_change) }}</span>
-                          <span class="plan-bucket" :title="`Control bucket: ${planBucketText(plan)}`">
-                            {{ planBucketText(plan) }}
-                          </span>
-                          <a
-                            v-if="plan.plan_mapping_id !== null && plan.plan_mapping_id !== undefined"
-                            :href="`/plans/${plan.plan_mapping_id}`"
-                            target="_blank"
-                            rel="noopener"
-                            class="plan-link"
-                            @click.stop
-                          >Details</a>
-                        </div>
-                      </template>
+                    <td class="plan-cell plan-cell-details">
+                      <a
+                        v-if="topPlanOf(city).plan_mapping_id !== null && topPlanOf(city).plan_mapping_id !== undefined"
+                        :href="`/plans/${topPlanOf(city).plan_mapping_id}`"
+                        target="_blank"
+                        rel="noopener"
+                        class="plan-link"
+                        @click.stop
+                      >Details</a>
                       <span v-else class="muted">—</span>
                     </td>
                   </template>
+                  <td
+                    v-else :colspan="PLAN_COLUMN_COUNT"
+                    class="plan-cell plans-none decisions-cell-divider"
+                  >
+                    <span class="decisions-placeholder">
+                      <span class="pill plain decisions-pill" :class="{ 'is-expanded': isExpanded(city) }">
+                        <span class="dot" aria-hidden="true" />
+                        {{ plansError ? 'Plans unavailable' : 'No plans' }}
+                      </span>
+                    </span>
+                  </td>
                 </tr>
 
                 <tr v-if="isExpanded(city)" class="detail-row">
-                  <td :colspan="6 + planColumnCount" class="detail-cell" @click.stop>
+                  <td :colspan="FIXED_COLUMN_COUNT + PLAN_COLUMN_COUNT" class="detail-cell" @click.stop>
                     <div class="integrated-panel">
                       <div class="panel-block scores-block">
                         <div class="mini-table-wrap">
@@ -902,7 +904,7 @@ onBeforeUnmount(() => {
                             </span>
                           </h4>
                           <p class="hint">
-                            Ordered by plan type (top first) for {{ incentiveDate }}
+                            Top first — plan type order, then entity order — for {{ incentiveDate }}
                             <template v-if="cityPlans(city).length > 1">
                               · <button class="link-btn" @click="showTypeOrderEditor = true">change order</button>
                             </template>
@@ -923,64 +925,79 @@ onBeforeUnmount(() => {
                           </p>
                         </div>
 
-                        <div v-else class="plan-cards">
-                          <article
-                            v-for="(plan, pi) in sortedPlans(city)"
-                            :key="plan.id"
-                            class="plan-card"
-                            :class="{ 'is-top': pi === 0, 'is-mapping-off': !plan.mapping_active }"
-                          >
-                            <header class="plan-card-head">
-                              <span class="plan-rank" aria-hidden="true">{{ pi + 1 }}</span>
-                              <span class="plan-card-title">{{ planTypeLabel(plan) }}</span>
-                              <span v-if="plan.incentive_type_id !== null && plan.incentive_type_id !== undefined" class="type-id">
-                                #{{ plan.incentive_type_id }}
-                              </span>
-                              <span v-if="pi === 0" class="pill tiny accent">top</span>
-                            </header>
-
-                            <div class="plan-card-entity">{{ plan.business_entity || '—' }}</div>
-
-                            <dl class="plan-metrics">
-                              <div>
-                                <dt>Target change</dt>
-                                <dd>{{ formatChange(plan.target_change) }}</dd>
-                              </div>
-                              <div>
-                                <dt>PR change</dt>
-                                <dd>{{ formatChange(plan.pr_change) }}</dd>
-                              </div>
-                              <div class="plan-metric-wide">
-                                <dt>Control bucket</dt>
-                                <dd>
+                        <div v-else class="mini-table-wrap plans-wrap">
+                          <table class="mini-table plans-mini">
+                            <colgroup>
+                              <col style="width: 4%" />
+                              <col style="width: 23%" />
+                              <col style="width: 17%" />
+                              <col style="width: 12%" />
+                              <col style="width: 12%" />
+                              <col style="width: 16%" />
+                              <col style="width: 11%" />
+                              <col style="width: 5%" />
+                            </colgroup>
+                            <thead>
+                              <tr>
+                                <th class="num">#</th>
+                                <th>Incentive Type</th>
+                                <th>Business Entity</th>
+                                <th class="num">Target</th>
+                                <th class="num">PR</th>
+                                <th class="num">Bucket</th>
+                                <th>Updated</th>
+                                <th></th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr v-for="(plan, pi) in sortedPlans(city)" :key="plan.id">
+                                <td class="num plan-rank-cell">
+                                  <span class="plan-rank">{{ pi + 1 }}</span>
+                                </td>
+                                <td class="plan-type-cell">
+                                  <span class="plan-type-name">{{ planTypeLabel(plan) }}</span>
+                                  <span
+                                    v-if="plan.incentive_type_id !== null && plan.incentive_type_id !== undefined"
+                                    class="type-id"
+                                  > #{{ plan.incentive_type_id }}</span>
+                                  <span v-if="pi === 0" class="plan-flag top-flag" title="Top plan of this city">top</span>
+                                  <span
+                                    v-if="!plan.mapping_active" class="plan-flag off-flag"
+                                    title="The plan mapping of this plan is deactivated"
+                                  >off</span>
+                                </td>
+                                <td class="plan-entity-cell">{{ plan.business_entity || '—' }}</td>
+                                <td class="num">
+                                  <span class="plan-number" :style="planNumberStyle(plan, 'target')">{{ formatChange(plan.target_change) }}</span>
+                                </td>
+                                <td class="num">
+                                  <span class="plan-number" :style="planNumberStyle(plan, 'pr')">{{ formatChange(plan.pr_change) }}</span>
+                                </td>
+                                <td class="num">
                                   <span v-if="planBuckets(plan).length" class="bucket-values">
                                     <span v-for="(value, bi) in planBuckets(plan)" :key="bi" class="bucket-chip">
                                       <span class="bucket-value">{{ formatBucketValue(value) }}</span>
                                     </span>
                                   </span>
                                   <span v-else class="muted">{{ planBucketText(plan) }}</span>
-                                </dd>
-                              </div>
-                            </dl>
-
-                            <footer class="plan-card-foot">
-                              <span class="plan-updated">
-                                Updated {{ formatStamp(plan.updated_at) }}
-                                <template v-if="plan.updated_by"> · {{ plan.updated_by }}</template>
-                              </span>
-                              <span v-if="!plan.mapping_active" class="pill tiny plain" title="The plan mapping of this plan is deactivated">
-                                mapping off
-                              </span>
-                              <a
-                                v-if="plan.plan_mapping_id !== null && plan.plan_mapping_id !== undefined"
-                                :href="`/plans/${plan.plan_mapping_id}`"
-                                target="_blank"
-                                rel="noopener"
-                                class="btn btn-ghost btn-sm"
-                                @click.stop
-                              >Details</a>
-                            </footer>
-                          </article>
+                                </td>
+                                <td class="plan-stamp-cell">
+                                  <span class="plan-stamp">{{ formatStamp(plan.updated_at) }}</span>
+                                  <span v-if="plan.updated_by" class="plan-stamp-by">{{ plan.updated_by }}</span>
+                                </td>
+                                <td class="num">
+                                  <a
+                                    v-if="plan.plan_mapping_id !== null && plan.plan_mapping_id !== undefined"
+                                    :href="`/plans/${plan.plan_mapping_id}`"
+                                    target="_blank"
+                                    rel="noopener"
+                                    class="plan-link"
+                                    @click.stop
+                                  >Details</a>
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
                         </div>
                       </div>
                     </div>
@@ -1106,7 +1123,7 @@ onBeforeUnmount(() => {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  min-width: 900px;
+  min-width: 1180px;
   table-layout: fixed;
 }
 .col-expand {
@@ -1121,8 +1138,20 @@ onBeforeUnmount(() => {
 .col-score {
   width: 82px;
 }
-.col-plan {
-  width: 210px;
+.col-plan-type {
+  width: 165px;
+}
+.col-plan-num {
+  width: 92px;
+}
+.col-plan-bucket {
+  width: 145px;
+}
+.col-plan-updated {
+  width: 118px;
+}
+.col-plan-details {
+  width: 74px;
 }
 .final-table thead th {
   text-align: left;
@@ -1247,10 +1276,13 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 .plan-th {
-  text-align: center;
+  text-align: left;
   color: var(--accent-strong);
   background: var(--accent-soft) !important;
   border-bottom: 1px solid var(--border);
+}
+.plan-th-num {
+  text-align: center;
 }
 
 .final-table tbody td {
@@ -1338,14 +1370,7 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   vertical-align: middle;
 }
-.plan-cell {
-  text-align: center;
-  padding: 0.6rem 0.7rem !important;
-  vertical-align: top;
-}
-.plan-cell.plans-none {
-  padding: 0.9rem 0.9rem !important;
-}
+
 .banner.notice {
   background: #fdf7ec;
   border: 1px solid #f0d9b5;
@@ -1356,31 +1381,41 @@ onBeforeUnmount(() => {
   margin: 0.25rem 0 0;
 }
 
-/* --- plans: one column per plan type, one plain row per plan -------------- */
-.plan-row {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 0.28rem 0.4rem;
-  padding: 0.12rem 0;
-  min-width: 0;
+/* --- plans: columns like the scores, top plan in the collapsed row ------- */
+.plan-cell {
+  padding: 0.7rem 0.6rem !important;
+  text-align: center;
+  vertical-align: middle;
 }
-.plan-row + .plan-row {
-  margin-top: 0.18rem;
-  padding-top: 0.32rem;
-  border-top: 1px dashed #e3ece7;
+.plan-cell-type,
+.plan-cell-bucket,
+.plan-cell-updated {
+  text-align: left;
+}
+.plan-cell.plan-cell-type {
+  padding-left: 0.9rem !important;
+}
+.plan-cell.plans-none {
+  padding: 0.9rem !important;
+}
+.plan-type-name {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.plan-type-sub {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  margin-top: 0.15rem;
 }
 .plan-entity {
-  font-size: 0.79rem;
+  font-size: 0.74rem;
   font-weight: 600;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 9rem;
-}
-.plan-row.is-top .plan-entity {
-  font-weight: 800;
+  color: #4a6155;
+  overflow-wrap: anywhere;
 }
 .plan-flag {
   font-size: 0.56rem;
@@ -1391,37 +1426,39 @@ onBeforeUnmount(() => {
   border-radius: 0.3rem;
 }
 .plan-flag.top-flag {
+  margin-left: 0.3rem;
   background: var(--accent);
   color: #fff;
 }
 .plan-flag.off-flag {
+  margin-left: 0.3rem;
   background: var(--surface-2);
   color: var(--inactive-text);
+}
+.plan-flag.more-flag {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  cursor: help;
 }
 .plan-number {
   display: inline-grid;
   place-items: center;
-  min-width: 2.7rem;
-  padding: 0.1rem 0.35rem;
+  min-width: 2.9rem;
+  padding: 0.14rem 0.4rem;
   border: 1px solid var(--border);
-  border-radius: 0.35rem;
+  border-radius: 0.4rem;
   background: #fbfdfc;
-  font-size: 0.75rem;
+  font-size: 0.78rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: var(--text);
 }
-.plan-bucket {
-  font-size: 0.72rem;
-  font-variant-numeric: tabular-nums;
-  color: var(--muted);
-}
 .plan-link {
-  margin-left: auto;
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   font-weight: 700;
   color: var(--accent-strong);
   text-decoration: underline;
+  white-space: nowrap;
 }
 .link-btn {
   border: 0;
@@ -1662,93 +1699,61 @@ onBeforeUnmount(() => {
 .decisions-empty {
   flex: 1;
 }
-.plan-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
-  gap: 0.6rem;
-  align-content: start;
+.plans-wrap {
+  flex: 1;
 }
-.plan-card {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  padding: 0.7rem 0.8rem 0.55rem;
-  border: 1px solid var(--border);
-  border-radius: 0.7rem;
-  background: #fff;
+.plans-mini tbody td {
+  vertical-align: middle;
 }
-.plan-card.is-top {
-  border-color: #bcdccb;
-  background: linear-gradient(180deg, #f4fbf7 0%, #ffffff 65%);
-}
-.plan-card.is-mapping-off {
-  opacity: 0.74;
-}
-.plan-card-head {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  flex-wrap: wrap;
+.plan-rank-cell {
+  padding-left: 0.4rem;
 }
 .plan-rank {
-  display: grid;
+  display: inline-grid;
   place-items: center;
-  width: 1.15rem;
-  height: 1.15rem;
+  width: 1.2rem;
+  height: 1.2rem;
   border-radius: 50%;
   background: var(--surface-2);
   color: var(--muted);
-  font-size: 0.65rem;
+  font-size: 0.66rem;
   font-weight: 700;
-  flex-shrink: 0;
 }
-.plan-card.is-top .plan-rank {
+.plans-mini tbody tr:first-child .plan-rank {
   background: var(--accent);
   color: #fff;
 }
-.plan-card-title {
-  font-size: 0.85rem;
-  font-weight: 700;
-  color: var(--text);
+.plans-mini .plan-type-cell,
+.plans-mini .plan-entity-cell {
+  text-align: left;
+  padding-left: 0.7rem;
 }
 .type-id {
   font-size: 0.66rem;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
-.plan-card-entity {
+.plan-entity-cell {
   font-size: 0.8rem;
   font-weight: 600;
   color: #4a6155;
   overflow-wrap: anywhere;
 }
-.plan-metrics {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.35rem 0.5rem;
-  margin: 0;
+.plan-stamp-cell {
+  text-align: left;
+  padding-left: 0.7rem;
 }
-.plan-metrics > div {
-  display: flex;
-  flex-direction: column;
-  gap: 0.05rem;
-  min-width: 0;
-}
-.plan-metrics dt {
-  font-size: 0.6rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.plan-metrics dd {
-  margin: 0;
-  font-size: 0.82rem;
-  font-weight: 700;
+.plan-stamp {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--text);
   font-variant-numeric: tabular-nums;
 }
-.plan-metric-wide {
-  grid-column: 1 / -1;
+.plan-stamp-by {
+  display: block;
+  font-size: 0.64rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }
 .bucket-values {
   display: inline-flex;

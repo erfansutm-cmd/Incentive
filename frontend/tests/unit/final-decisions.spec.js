@@ -152,24 +152,28 @@ async function setup(payload) {
 const cityRow = (wrapper, city) =>
   wrapper.findAll('tr.city-row').find((row) => row.find('.city-name').text() === city)
 const cityOrder = (wrapper) => wrapper.findAll('tr.city-row .city-name').map((c) => c.text())
-const planCards = (wrapper) => wrapper.findAll('.plan-card')
-const cardTexts = (wrapper) => planCards(wrapper).map((card) => card.text())
 const buttonWith = (scope, label) =>
   scope.findAll('button').find((b) => b.text().trim() === label)
 // The score columns sort with a button that carries the arrow (Performance ↕).
 const sortButton = (wrapper, label) =>
   wrapper.findAll('thead button').find((b) => b.text().trim().startsWith(label))
 
-// One column per plan type; the cell of a city in the column of a plan type.
+// The plan fields are columns, like the scores: type, target, PR, bucket, updated.
 const planHeaders = (wrapper) => wrapper.findAll('thead .plan-th').map((th) => th.text())
-const planCell = (wrapper, city, label) => {
-  const index = planHeaders(wrapper).indexOf(label)
-  if (index === -1) return null
-  const row = cityRow(wrapper, city)
-  const cells = row.findAll('td.plan-cell')
-  return cells.length > index ? cells[index] : null
+const planCells = (wrapper, city) => cityRow(wrapper, city).findAll('td.plan-cell')
+// the score cells come first, so target/PR are addressed by their position
+const planCell = (wrapper, city, key) => {
+  const cells = planCells(wrapper, city)
+  if (key === 'target') return cells.length > 1 ? cells[1] : null
+  if (key === 'pr') return cells.length > 2 ? cells[2] : null
+  return cells.find((cell) => cell.classes().some((name) => name.endsWith(`plan-cell-${key}`))) || null
 }
-const cellText = (wrapper, city, label) => planCell(wrapper, city, label)?.text() ?? ''
+const cellText = (wrapper, city, key) => planCell(wrapper, city, key)?.text() ?? ''
+// the plans listed in the expanded panel, one row each
+const expandedPlans = (wrapper) => wrapper.findAll('.plans-mini tbody tr')
+const expandedPlan = (wrapper, label) =>
+  expandedPlans(wrapper).find((row) => row.find('.plan-type-name').text() === label)
+const planNumbers = (wrapper) => wrapper.findAll('.plans-mini .plan-number').map((n) => n.text())
 
 async function openOrderEditor(wrapper, label) {
   await buttonWith(wrapper, label).trigger('click')
@@ -191,156 +195,151 @@ beforeEach(() => {
 })
 
 describe('Final Decisions plans', () => {
-  it('lists one column per plan type, like the scores, and counts the plans', async () => {
+  it('shows the plan fields in columns, like the scores', async () => {
     const { wrapper } = await setup()
     expect(wrapper.find('.head-sub').text()).toContain('6 plans')
-    // the configured order first, then the unlisted types of the sample data
-    expect(planHeaders(wrapper)).toEqual(['DAILY', 'ON-TOP-FOOD', 'default', 'WEEKLY'])
+    expect(planHeaders(wrapper)).toEqual([
+      'Incentive Type', 'Target change', 'PR change', 'Control bucket', 'Updated', '',
+    ])
     const groups = wrapper.findAll('thead .group-head-row th').map((th) => th.text()).filter(Boolean)
     expect(groups).toEqual(['Scores', 'Plans'])
-    // the city row is one table row with a cell per plan type (no stacked block)
-    expect(cityRow(wrapper, 'kerman').findAll('td.plan-cell').length).toBe(4)
-    expect(cellText(wrapper, 'kerman', 'ON-TOP-FOOD')).toBe('—')
+    expect(planCells(wrapper, 'kerman').length).toBe(6)
   })
 
-  it('shows each plan in line in its own type column, top plan marked', async () => {
+  it('shows only the first plan of a city in the collapsed row, one value per column', async () => {
     const { wrapper } = await setup()
     const row = cityRow(wrapper, 'tehran')
     // teheran has DAILY + ON-TOP-FOOD: DAILY is the top one, not the first row of the API
-    const daily = row.findAll('td.plan-cell')[planHeaders(wrapper).indexOf('DAILY')]
-    expect(daily.find('.plan-entity').text()).toBe('foodZooket')
-    expect(daily.find('.plan-row').classes()).toContain('is-top')
-    expect(daily.find('.plan-flag').text()).toBe('top')
-    // one plain row per plan: entity, then the colored numbers, then the bucket
-    const numbers = daily.findAll('.plan-number').map((v) => v.text())
-    expect(numbers).toEqual(['1.000', '1.200'])
-    expect(daily.find('.plan-bucket').text()).toBe('—')
-    expect(daily.find('a.plan-link').attributes('href')).toBe('/plans/23')
-    // the plan type is the column, and the row carries the update info as its tooltip
-    expect(daily.text()).not.toContain('DAILY')
-    expect(daily.find('.plan-row').attributes('title')).toContain('updated')
+    expect(planCell(wrapper, 'tehran', 'type').find('.plan-type-name').text()).toBe('DAILY')
+    expect(planCell(wrapper, 'tehran', 'type').find('.plan-entity').text()).toBe('foodZooket')
+    expect(planCell(wrapper, 'tehran', 'target').find('.plan-number').text()).toBe('1.000')
+    expect(planCell(wrapper, 'tehran', 'pr').find('.plan-number').text()).toBe('1.200')
+    expect(cellText(wrapper, 'tehran', 'bucket')).toBe('—')
+    expect(planCell(wrapper, 'tehran', 'updated').text()).toContain('System')
+    expect(planCell(wrapper, 'tehran', 'details').find('a.plan-link').attributes('href')).toBe('/plans/23')
+    // only the first plan is written in the row: the others sit behind the +N flag
+    expect(row.findAll('.plan-number').map((n) => n.text())).toEqual(['1.000', '1.200'])
+    expect(row.find('.plan-flag.more-flag').text()).toBe('+1')
+    expect(row.find('.plan-flag.more-flag').attributes('title')).toContain('1 more plan')
 
-    // the other type of the same city sits in its own column, without the top flag
-    const onTop = planCell(wrapper, 'tehran', 'ON-TOP-FOOD')
-    expect(onTop.find('.plan-row').classes()).not.toContain('is-top')
-    expect(onTop.find('.plan-flag.off-flag').text()).toBe('off')
-    expect(onTop.text()).toContain('1.350')
-
-    // kerman keeps all three of its plans in their columns, one line each
-    expect(cellText(wrapper, 'kerman', 'default')).toContain('0.2')
-    expect(cellText(wrapper, 'kerman', 'WEEKLY')).toContain('foodZooket')
+    // kerman keeps its own top plan (the DAILY one of the first entity)
+    const kerman = cityRow(wrapper, 'kerman')
+    expect(planCell(wrapper, 'kerman', 'type').find('.plan-type-name').text()).toBe('DAILY')
+    expect(planCell(wrapper, 'kerman', 'type').find('.plan-entity').text()).toBe('foodZooket')
+    expect(planCell(wrapper, 'kerman', 'pr').find('.plan-number').text()).toBe('1.900')
+    expect(kerman.find('.plan-flag.more-flag').text()).toBe('+3')
+    expect(kerman.find('.plan-flag.top-flag').exists()).toBe(false)
   })
 
-  it('stacks the plans of one type as plain rows, ordered by the entity order', async () => {
+  it('colors the target and PR columns like the scores: more number, more red', async () => {
     const { wrapper } = await setup()
-    const cell = planCell(wrapper, 'kerman', 'DAILY')
-    // DAILY has two plans — one per entity: rows, not cards, top plan first
-    const rows = cell.findAll('.plan-row')
-    expect(rows.length).toBe(2)
-    expect(rows.map((row) => row.find('.plan-entity').text())).toEqual(['foodZooket', 'food'])
-    // foodZooket is the top plan of the city even though "food" sorts first
-    expect(rows[0].classes()).toContain('is-top')
-    expect(rows[0].find('.plan-flag').text()).toBe('top')
-    expect(rows[1].classes()).not.toContain('is-top')
-    expect(rows[1].find('.plan-flag').exists()).toBe(false)
-    // the plan type comes from the column, so it is not repeated in the row
-    expect(cell.text()).not.toContain('DAILY')
-  })
-
-  it('colors the target and PR numbers like the scores: more number, more red', async () => {
-    const { wrapper } = await setup()
-    const rows = planCell(wrapper, 'kerman', 'DAILY').findAll('.plan-row')
-    const highest = rows[0].findAll('.plan-number')
-    const lowest = rows[1].findAll('.plan-number')
-    const color = (el) => {
-      const match = /rgb\((\d+), (\d+), (\d+)\)/.exec(el.attributes('style'))
+    const color = (cell) => {
+      const match = /rgb\((\d+), (\d+), (\d+)\)/.exec(cell.find('.plan-number').attributes('style'))
       return { red: Number(match[1]), green: Number(match[2]) }
     }
-    // 1.400 / 1.900 are the highest of the date: red on green-dominant tints
-    for (const badge of highest) {
-      const { red, green } = color(badge)
+    // the top plan of kerman (target 1.400 / PR 1.900) is the highest of the date
+    for (const key of ['target', 'pr']) {
+      const { red, green } = color(planCell(wrapper, 'kerman', key))
       expect(red).toBeGreaterThan(green)
     }
-    // 1.000 / 1.200 are the lowest: the tint turns green
-    for (const badge of lowest) {
-      const { red, green } = color(badge)
+    // tehran's 1.000 / 1.200 are the lowest: the tint turns green
+    for (const key of ['target', 'pr']) {
+      const { red, green } = color(planCell(wrapper, 'tehran', key))
       expect(green).toBeGreaterThan(red)
     }
-    // the numbers keep their three decimals and a title per metric
-    expect(highest[0].text()).toBe('1.400')
-    expect(highest[1].text()).toBe('1.900')
-    expect(highest.map((badge) => badge.attributes('title'))).toEqual(['Target change', 'PR change'])
+    expect(planCell(wrapper, 'kerman', 'target').find('.plan-number').text()).toBe('1.400')
+    expect(planCell(wrapper, 'kerman', 'pr').find('.plan-number').text()).toBe('1.900')
+    expect(planCell(wrapper, 'kerman', 'target').find('.plan-number').attributes('title')).toBe('Target change')
   })
 
-  it('renders one card per plan when the city is expanded, ordered by plan type', async () => {
+  it('lists every plan of a city when it is expanded, in order', async () => {
     const { wrapper } = await setup()
     await cityRow(wrapper, 'kerman').trigger('click')
     await flushPromises()
 
-    expect(cardTexts(wrapper).length).toBe(4)
-    expect(planCards(wrapper)[0].find('.plan-card-title').text()).toBe('DAILY')
-    expect(planCards(wrapper)[0].find('.plan-card-entity').text()).toBe('foodZooket')
-    expect(planCards(wrapper)[0].find('.plan-card-head .pill').text()).toBe('top')
-    // DAILY (both entities, in the entity order) → default, then WEEKLY
-    expect(planCards(wrapper).map((card) => card.find('.plan-card-title').text())).toEqual([
-      'DAILY',
-      'DAILY',
-      'default',
-      'WEEKLY',
+    // DAILY (both entities, entity order first) → default → WEEKLY
+    expect(expandedPlans(wrapper).length).toBe(4)
+    expect(expandedPlans(wrapper).map((row) => row.find('.plan-type-name').text())).toEqual([
+      'DAILY', 'DAILY', 'default', 'WEEKLY',
     ])
+    expect(expandedPlans(wrapper).map((row) => row.find('.plan-entity-cell').text())).toEqual([
+      'foodZooket', 'food', 'food', 'foodZooket',
+    ])
+    // only the first one is the top plan
+    expect(expandedPlans(wrapper)[0].find('.plan-flag.top-flag').text()).toBe('top')
+    expect(expandedPlans(wrapper)[0].find('.plan-rank').text()).toBe('1')
+    expect(expandedPlans(wrapper).filter((row) => row.find('.plan-flag.top-flag').exists()).length).toBe(1)
+    // the collapsed row and the panel agree on the same first plan
+    expect(planCell(wrapper, 'kerman', 'type').find('.plan-type-name').text()).toBe('DAILY')
+    expect(planCell(wrapper, 'kerman', 'type').find('.plan-entity').text()).toBe('foodZooket')
   })
 
-  it('shows target change, pr change, control bucket and updated at on a card', async () => {
+  it('shows every plan field in the expanded table, including the plan page link', async () => {
     const { wrapper } = await setup()
     await cityRow(wrapper, 'kerman').trigger('click')
     await flushPromises()
 
-    const card = planCards(wrapper).find((c) => c.find('.plan-card-title').text() === 'default')
-    const labels = card.findAll('.plan-metrics dt').map((dt) => dt.text())
-    expect(labels).toEqual(['Target change', 'PR change', 'Control bucket'])
-    expect(card.findAll('.plan-metrics dd').map((dd) => dd.text())).toEqual([
-      '1.000',
-      '1.300',
-      '0.2',
-    ].map((value, index) => (index === 2 ? expect.stringContaining('0.2') : value)))
-    const chips = card.findAll('.bucket-chip .bucket-value').map((c) => c.text())
-    expect(chips).toEqual(['0.2', '0.2', '0.1'])
-    expect(card.find('.plan-updated').text()).toContain('System')
-    // the Details button opens the plan page of the mapping row
-    expect(card.find('a.btn').attributes('href')).toBe('/plans/8')
+    const headers = wrapper.findAll('.plans-mini thead th').map((th) => th.text()).filter(Boolean)
+    expect(headers).toEqual(['#', 'Incentive Type', 'Business Entity', 'Target', 'PR', 'Bucket', 'Updated'])
+    // the "default" plan is the one with a bucket
+    const row = expandedPlan(wrapper, 'default')
+    expect(row.find('.plan-entity-cell').text()).toBe('food')
+    expect(row.findAll('.plan-number').map((n) => n.text())).toEqual(['1.000', '1.300'])
+    expect(row.findAll('.bucket-chip .bucket-value').map((c) => c.text())).toEqual(['0.2', '0.2', '0.1'])
+    expect(row.find('.plan-stamp').text()).toContain('2026')
+    expect(row.find('.plan-stamp-by').text()).toBe('System')
+    expect(row.find('a.plan-link').attributes('href')).toBe('/plans/8')
+    // the numbers are colored here too, exactly like in the columns
+    expect(row.find('.plan-number').attributes('style')).toContain('rgb(')
+    // the rows carry the same colored numbers as the columns, in the same order
+    expect(planNumbers(wrapper)).toEqual(['1.400', '1.900', '1.000', '1.200', '1.000', '1.300', '1.000', '1.100'])
   })
 
   it('flags a plan whose mapping is deactivated', async () => {
     const { wrapper } = await setup()
     await cityRow(wrapper, 'tehran').trigger('click')
     await flushPromises()
-    const card = planCards(wrapper).find((c) => c.text().includes('ON-TOP-FOOD'))
-    expect(card.find('.pill.plain').text()).toBe('mapping off')
-    expect(card.classes()).toContain('is-mapping-off')
+    const row = expandedPlan(wrapper, 'ON-TOP-FOOD')
+    expect(row.find('.plan-flag.off-flag').text()).toBe('off')
+    expect(row.find('.plan-flag.top-flag').exists()).toBe(false)
+    // it is not the top plan, so the collapsed row shows the DAILY plan instead
+    expect(planCell(wrapper, 'tehran', 'type').find('.plan-type-name').text()).toBe('DAILY')
   })
 
-  it('reorders the plan columns through the plan type order popup', async () => {
+  it('the plan type order decides which plan the collapsed row shows', async () => {
     const { wrapper } = await setup()
+    // before: the DAILY plan of the first entity
+    expect(planCell(wrapper, 'kerman', 'type').find('.plan-type-name').text()).toBe('DAILY')
+    expect(planCell(wrapper, 'kerman', 'type').find('.plan-entity').text()).toBe('foodZooket')
+
     await openOrderEditor(wrapper, 'Plan type order')
     expect(orderNames(wrapper)).toEqual(['DAILY', 'ON-TOP-FOOD', 'default', 'WEEKLY'])
     await moveInOrderEditor(wrapper, 'WEEKLY', 'up')
     await moveInOrderEditor(wrapper, 'WEEKLY', 'up')
     expect(orderNames(wrapper)).toEqual(['DAILY', 'WEEKLY', 'ON-TOP-FOOD', 'default'])
+    // DAILY is still first, so the collapsed row still shows the DAILY plan
+    expect(planCell(wrapper, 'kerman', 'type').find('.plan-type-name').text()).toBe('DAILY')
+    await moveInOrderEditor(wrapper, 'WEEKLY', 'up')
+    expect(orderNames(wrapper)).toEqual(['WEEKLY', 'DAILY', 'ON-TOP-FOOD', 'default'])
     await buttonWith(wrapper.find('.order-modal'), 'Done').trigger('click')
     await flushPromises()
 
-    // the table columns follow the chosen order
-    expect(planHeaders(wrapper)).toEqual(['DAILY', 'WEEKLY', 'ON-TOP-FOOD', 'default'])
-    expect(cellText(wrapper, 'kerman', 'WEEKLY')).toContain('foodZooket')
+    // the columns are unchanged (they are the fields), but the first plan is the
+    // WEEKLY one now — and the expanded list follows the same order
+    expect(planHeaders(wrapper)).toEqual([
+      'Incentive Type', 'Target change', 'PR change', 'Control bucket', 'Updated', '',
+    ])
+    expect(planCell(wrapper, 'kerman', 'type').find('.plan-type-name').text()).toBe('WEEKLY')
+    expect(planCell(wrapper, 'kerman', 'type').find('.plan-entity').text()).toBe('foodZooket')
+    expect(planCell(wrapper, 'kerman', 'pr').find('.plan-number').text()).toBe('1.100')
 
     await cityRow(wrapper, 'kerman').trigger('click')
     await flushPromises()
-    expect(planCards(wrapper).map((card) => card.find('.plan-card-title').text())).toEqual([
-      'DAILY',
-      'DAILY',
-      'WEEKLY',
-      'default',
+    // kerman has no ON-TOP-FOOD plan, so the unlisted "default" comes next
+    expect(expandedPlans(wrapper).map((row) => row.find('.plan-type-name').text())).toEqual([
+      'WEEKLY', 'DAILY', 'DAILY', 'default',
     ])
+    expect(expandedPlans(wrapper)[0].find('.plan-flag.top-flag').text()).toBe('top')
   })
 
   it('keeps the city order of the API (city groups) for equal scores', async () => {
@@ -391,10 +390,14 @@ describe('Final Decisions plans', () => {
     await openOrderEditor(wrapper, 'Plan type order')
     await moveInOrderEditor(wrapper, 'DAILY', 'down')
     expect(orderNames(wrapper)).toEqual(['ON-TOP-FOOD', 'DAILY', 'default', 'WEEKLY'])
+    // tehran has an ON-TOP-FOOD plan, so its collapsed row starts with it now;
+    // kerman has none, so its own top plan is still the DAILY one
+    expect(planCell(wrapper, 'tehran', 'type').find('.plan-type-name').text()).toBe('ON-TOP-FOOD')
+    expect(planCell(wrapper, 'kerman', 'type').find('.plan-type-name').text()).toBe('DAILY')
     await buttonWith(wrapper.find('.order-modal'), '↺ Reset to default').trigger('click')
     await flushPromises()
     expect(orderNames(wrapper)).toEqual(['DAILY', 'ON-TOP-FOOD', 'default', 'WEEKLY'])
-    expect(planHeaders(wrapper)).toEqual(['DAILY', 'ON-TOP-FOOD', 'default', 'WEEKLY'])
+    expect(planCell(wrapper, 'tehran', 'type').find('.plan-type-name').text()).toBe('DAILY')
   })
 
   it('keeps the entity order popup working (top entity in the collapsed row)', async () => {
@@ -426,9 +429,10 @@ describe('Final Decisions plans', () => {
     empty.cities[0].top_plan = null
     empty.total_plans = 0
     const { wrapper: second } = await setup(empty)
-    // no plan type has a plan: the table keeps a single Plans column
-    expect(planHeaders(second)).toEqual(['Plans'])
+    // no plans: the columns stay, the row shows the status pill across them
     expect(cityRow(second, 'kerman').find('.decisions-pill').text()).toBe('No plans')
+    expect(planCells(second, 'kerman').length).toBe(1)
+    expect(planCells(second, 'kerman')[0].attributes('colspan')).toBe('6')
     await cityRow(second, 'kerman').trigger('click')
     await flushPromises()
     expect(second.find('.decisions-hint').text()).toContain('No plans for kerman')
