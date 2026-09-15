@@ -1,12 +1,21 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { requestJson } from '../lib/api'
+import OrderEditor from '../components/OrderEditor.vue'
+import { clearStoredOrder, readStoredOrder, storeOrder } from '../lib/storedOrder'
 
 const SCORE_TYPES = [
   { value: 'performance', label: 'Performance' },
   { value: 'order_level_increase', label: 'Order Level' },
   { value: 'weather', label: 'Weather' },
 ]
+
+// Order the plans of a city are shown in, top first. Kept identical to the
+// backend default so the table is right even if the API omits the order.
+const DEFAULT_PLAN_TYPE_ORDER = ['default', 'DAILY', 'ON-TOP-FOOD']
+// Both orders are remembered in the browser (see lib/storedOrder.js).
+const ENTITY_ORDER_KEY = 'finalDecisions.entityOrder'
+const PLAN_TYPE_ORDER_KEY = 'finalDecisions.planTypeOrder'
 
 function tomorrowISO() {
   const d = new Date()
@@ -67,6 +76,31 @@ function scoreStyle(v, key, ranges) {
   }
 }
 
+const stampFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+
+function formatStamp(value) {
+  if (!value) return '—'
+  const raw = String(value)
+  // MySQL hands out "2026-09-15 13:17:22"; make it parseable in every browser.
+  const date = new Date(raw.includes('T') ? raw : raw.replace(' ', 'T'))
+  return Number.isNaN(date.getTime()) ? raw : stampFormat.format(date)
+}
+
+// target_change / pr_change are ratios stored with three decimals (1.000, 1.100).
+function formatChange(value) {
+  if (value === null || value === undefined || value === '') return '—'
+  const number = Number(value)
+  if (!Number.isFinite(number)) return String(value)
+  return number.toFixed(3)
+}
+
+function formatBucketValue(value) {
+  if (value === null || value === undefined) return '—'
+  const number = Number(value)
+  if (!Number.isFinite(number)) return String(value)
+  return Number.isInteger(number) ? String(number) : String(Number(number.toFixed(4)))
+}
+
 const selectedDate = ref(tomorrowISO())
 const searchQuery = ref('')
 const groupFilter = ref('')
@@ -76,13 +110,31 @@ const cities = ref([])
 const scoreTypes = ref(SCORE_TYPES.map((s) => s.value))
 const generatedAt = ref('')
 const incentiveDate = ref('')
+const plansError = ref('')
 
 const expanded = ref(new Set())
 const sortKey = ref(null)
 const sortDir = ref('asc')
 const showPriorityEditor = ref(false)
 const DEFAULT_PRIORITY = ['foodZooket', 'food', 'Zooket']
-const priorityOrder = ref([...DEFAULT_PRIORITY])
+const storedPriorityOrder = readStoredOrder(ENTITY_ORDER_KEY, [])
+const priorityOrder = ref(storedPriorityOrder.length ? storedPriorityOrder : [...DEFAULT_PRIORITY])
+// A stored order is the user's, so loading data must not overwrite the keys.
+const priorityOrderTouched = ref(storedPriorityOrder.length > 0)
+
+// Plan (incentive) type order, top first, and the name lookup used as a
+// fallback when a plan arrives without its resolved type name.
+const showTypeOrderEditor = ref(false)
+const storedPlanTypeOrder = readStoredOrder(PLAN_TYPE_ORDER_KEY, [])
+const defaultPlanTypeOrder = ref([...DEFAULT_PLAN_TYPE_ORDER])
+const planTypeOrder = ref(
+  storedPlanTypeOrder.length ? storedPlanTypeOrder : [...DEFAULT_PLAN_TYPE_ORDER],
+)
+// A stored order is the user's, so the API order must not overwrite it.
+const planTypeOrderTouched = ref(storedPlanTypeOrder.length > 0)
+const typeNamesById = ref({})
+const typeNamesLoaded = ref(false)
+
 const message = ref(null)
 let messageTimer = null
 let controller = null
@@ -133,6 +185,7 @@ const sortedCities = computed(() => {
 
 const totalCities = computed(() => cities.value.length)
 const totalEntities = computed(() => cities.value.reduce((sum, c) => sum + (c.entity_count || 0), 0))
+const totalPlans = computed(() => cities.value.reduce((sum, c) => sum + cityPlans(c).length, 0))
 const visibleCount = computed(() => filteredCities.value.length)
 const scoreRanges = computed(() => computeScoreRanges(cities.value))
 
@@ -178,55 +231,16 @@ function displayPrimary(city) {
 function sortedEntities(city) {
   return prioritySortedEntities(city)
 }
-const draggedIdx = ref(null)
-const dragOverIdx = ref(null)
-function movePriority(index, dir) {
-  const next = [...priorityOrder.value]
-  const target = index + dir
-  if (target < 0 || target >= next.length) return
-  const tmp = next[index]
-  next[index] = next[target]
-  next[target] = tmp
-  priorityOrder.value = next
-}
-function onDragStart(idx, evt) {
-  draggedIdx.value = idx
-  if (evt?.dataTransfer) {
-    evt.dataTransfer.effectAllowed = 'move'
-    try {
-      evt.dataTransfer.setData('text/plain', String(idx))
-    } catch (e) {
-      // some browsers require this call to enable drag; ignore failures
-    }
-  }
-}
-function onDragOver(idx) {
-  if (dragOverIdx.value !== idx) dragOverIdx.value = idx
-}
-function onDragLeave() {
-  dragOverIdx.value = null
-}
-function onDrop(targetIdx) {
-  const from = draggedIdx.value
-  if (from === null || from === targetIdx) {
-    draggedIdx.value = null
-    dragOverIdx.value = null
-    return
-  }
-  const next = [...priorityOrder.value]
-  const [moved] = next.splice(from, 1)
-  next.splice(targetIdx, 0, moved)
-  priorityOrder.value = next
-  draggedIdx.value = null
-  dragOverIdx.value = null
-}
-function onDragEnd() {
-  draggedIdx.value = null
-  dragOverIdx.value = null
+function setPriorityOrder(next) {
+  priorityOrderTouched.value = true
+  priorityOrder.value = [...next]
+  ensurePriorityCoversAll()
+  storeOrder(ENTITY_ORDER_KEY, priorityOrder.value)
 }
 function resetPriority() {
+  priorityOrderTouched.value = false
   priorityOrder.value = [...DEFAULT_PRIORITY]
-  // re-add any other entities that were added?
+  clearStoredOrder(ENTITY_ORDER_KEY)
   ensurePriorityCoversAll()
 }
 function ensurePriorityCoversAll() {
@@ -235,18 +249,113 @@ function ensurePriorityCoversAll() {
   for (const c of cities.value) {
     for (const be of c.business_entities || []) all.add(be.business_entity)
   }
+  let added = false
   for (const name of [...all].sort((a, b) => a.localeCompare(b))) {
     if (!seen.has(name)) {
       priorityOrder.value = [...priorityOrder.value, name]
       seen.add(name)
+      added = true
     }
   }
+  if (added && priorityOrderTouched.value) storeOrder(ENTITY_ORDER_KEY, priorityOrder.value)
 }
 const allKnownEntities = computed(() => {
   const set = new Set(priorityOrder.value)
   for (const c of cities.value) for (const be of c.business_entities || []) set.add(be.business_entity)
   return [...set]
 })
+// Known entities that are not part of the order yet (shown in the popup footer).
+const unlistedEntities = computed(() =>
+  allKnownEntities.value
+    .filter((name) => !priorityOrder.value.includes(name))
+    .sort((a, b) => a.localeCompare(b))
+)
+
+// --- plans of a city ---------------------------------------------------------
+// Every plan carries the city, incentive type and business entity of its
+// mapping row. The type name is resolved by the API through
+// `mafsho.incentive_type` (same lookup the Cities tab uses); /api/incentive-types
+// is only a fallback for plans that arrive without a name.
+function planTypeName(plan) {
+  if (!plan) return ''
+  const direct = plan.incentive_type
+  if (direct !== null && direct !== undefined && String(direct).trim() !== '') return String(direct).trim()
+  const id = plan.incentive_type_id
+  if (id === null || id === undefined || id === '') return ''
+  return typeNamesById.value[String(id)] || ''
+}
+function planTypeLabel(plan) {
+  if (!plan) return '—'
+  const name = planTypeName(plan)
+  if (name) return name
+  const id = plan?.incentive_type_id
+  return id === null || id === undefined || id === '' ? 'Unknown type' : `Type #${id}`
+}
+const knownPlanTypes = computed(() => {
+  const set = new Set()
+  for (const c of cities.value) {
+    for (const plan of cityPlans(c)) {
+      const name = planTypeName(plan)
+      if (name) set.add(name)
+    }
+  }
+  return [...set]
+})
+const unlistedPlanTypes = computed(() => {
+  const listed = new Set(planTypeOrder.value.map((name) => name.toLowerCase()))
+  return knownPlanTypes.value
+    .filter((name) => !listed.has(name.toLowerCase()))
+    .sort((a, b) => a.localeCompare(b))
+})
+function planTypeRank(plan) {
+  const name = (planTypeName(plan) || planTypeLabel(plan)).trim().toLowerCase()
+  const index = planTypeOrder.value.findIndex((known) => known.trim().toLowerCase() === name)
+  return index === -1 ? planTypeOrder.value.length + 100 : index
+}
+function ensurePlanTypesCovered() {
+  const missing = unlistedPlanTypes.value
+  if (!missing.length) return
+  planTypeOrder.value = [...planTypeOrder.value, ...missing]
+  if (planTypeOrderTouched.value) storeOrder(PLAN_TYPE_ORDER_KEY, planTypeOrder.value)
+}
+function setPlanTypeOrder(next) {
+  planTypeOrderTouched.value = true
+  planTypeOrder.value = [...next]
+  ensurePlanTypesCovered()
+  storeOrder(PLAN_TYPE_ORDER_KEY, planTypeOrder.value)
+}
+function resetPlanTypeOrder() {
+  planTypeOrderTouched.value = false
+  planTypeOrder.value = [...defaultPlanTypeOrder.value]
+  clearStoredOrder(PLAN_TYPE_ORDER_KEY)
+  ensurePlanTypesCovered()
+}
+function cityPlans(city) {
+  return Array.isArray(city?.plans) ? city.plans : []
+}
+function sortedPlans(city) {
+  return [...cityPlans(city)].sort((a, b) => {
+    const rankA = planTypeRank(a)
+    const rankB = planTypeRank(b)
+    if (rankA !== rankB) return rankA - rankB
+    const entityA = String(a.business_entity ?? '').toLowerCase()
+    const entityB = String(b.business_entity ?? '').toLowerCase()
+    if (entityA !== entityB) return entityA < entityB ? -1 : 1
+    return Number(a.id ?? 0) - Number(b.id ?? 0)
+  })
+}
+function topPlan(city) {
+  return sortedPlans(city)[0] || null
+}
+function planBuckets(plan) {
+  return Array.isArray(plan?.control_bucket) ? plan.control_bucket : []
+}
+function planBucketText(plan) {
+  const buckets = planBuckets(plan)
+  if (buckets.length) return buckets.map((value) => formatBucketValue(value)).join(' · ')
+  if (plan?.control_bucket === null || plan?.control_bucket === undefined) return '—'
+  return String(plan.control_bucket)
+}
 
 function cityKey(c) {
   return String(c.city_id_raw ?? c.city_id)
@@ -292,17 +401,45 @@ async function load() {
     scoreTypes.value = data.score_types || SCORE_TYPES.map((s) => s.value)
     incentiveDate.value = data.incentive_date || date
     generatedAt.value = data.generated_at || ''
+    plansError.value = data.plans_error || ''
+    const apiOrder = (data.plan_type_order || [])
+      .map((name) => String(name).trim())
+      .filter(Boolean)
+    if (apiOrder.length) {
+      defaultPlanTypeOrder.value = apiOrder
+      // A user-made order survives a refresh; otherwise follow the API order.
+      if (!planTypeOrderTouched.value) planTypeOrder.value = [...apiOrder]
+    }
     const valid = new Set(cities.value.map((c) => String(c.city_id_raw ?? c.city_id)))
     const pruned = new Set([...expanded.value].filter((k) => valid.has(k)))
     expanded.value = pruned
     ensurePriorityCoversAll()
+    ensurePlanTypesCovered()
   } catch (e) {
     if (!ctrl.signal.aborted) {
       error.value = e.message
       cities.value = []
+      plansError.value = ''
     }
   } finally {
     if (!ctrl.signal.aborted) loading.value = false
+  }
+}
+
+// Fallback name lookup for the incentive types (the plans endpoint resolves
+// them itself, so a failure here only leaves "Type #<id>" captions).
+async function loadTypeNames() {
+  if (typeNamesLoaded.value) return
+  try {
+    const data = await requestJson('/api/incentive-types')
+    const map = {}
+    for (const row of data.rows || []) {
+      if (row.id !== null && row.id !== undefined && row.name) map[String(row.id)] = String(row.name)
+    }
+    typeNamesById.value = map
+    typeNamesLoaded.value = true
+  } catch {
+    // not fatal: the scores and plans still render with what they carry
   }
 }
 
@@ -311,7 +448,10 @@ function onDateChange() {
   load()
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadTypeNames()
+})
 onBeforeUnmount(() => {
   disposed = true
   controller?.abort()
@@ -328,7 +468,10 @@ onBeforeUnmount(() => {
         <p class="head-sub">
           <template v-if="incentiveDate">Showing <strong>{{ incentiveDate }}</strong></template>
           <template v-else>Select an incentive date</template>
-          <template v-if="cities.length"> · {{ totalCities }} cities · {{ totalEntities }} business entities</template>
+          <template v-if="cities.length">
+            · {{ totalCities }} cities · {{ totalEntities }} business entities ·
+            {{ totalPlans }} {{ totalPlans === 1 ? 'plan' : 'plans' }}
+          </template>
           <span v-if="generatedAt" class="head-sub-extra"> · updated {{ new Date(generatedAt).toLocaleString() }}</span>
         </p>
       </div>
@@ -367,8 +510,12 @@ onBeforeUnmount(() => {
 
       <button v-if="searchQuery || groupFilter" class="btn btn-ghost btn-sm" @click="clearFilters">Clear</button>
 
-      <button class="btn btn-ghost btn-sm" @click="showPriorityEditor = !showPriorityEditor">
-        {{ showPriorityEditor ? 'Hide entity order' : 'Entity order' }}
+      <button class="btn btn-ghost btn-sm" @click="showPriorityEditor = true">
+        Entity order
+      </button>
+
+      <button class="btn btn-ghost btn-sm" @click="showTypeOrderEditor = true">
+        Plan type order
       </button>
 
       <span class="pill spacer">
@@ -385,60 +532,32 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
-    <div v-if="showPriorityEditor" class="priority-modal-overlay" @click.self="showPriorityEditor = false">
-      <div class="priority-modal" role="dialog" aria-modal="true" aria-label="Entity priority order">
-        <div class="priority-modal-head">
-          <div>
-            <h4 style="margin:0; font-size:1rem">Entity order</h4>
-            <p class="hint" style="margin:0.2rem 0 0">
-              Default: foodZooket &gt; food &gt; Zooket &gt; others
-            </p>
-          </div>
-          <button class="btn btn-ghost btn-sm" @click="showPriorityEditor = false">✕</button>
-        </div>
-        <transition-group
-          tag="div"
-          name="pri-move"
-          class="priority-list"
-          @dragover.prevent="onDragOver(priorityOrder.length)"
-          @drop.prevent="onDrop(priorityOrder.length)"
-        >
-          <div
-            v-for="(name, i) in priorityOrder"
-            :key="name"
-            class="priority-row"
-            :class="{ dragging: draggedIdx === i, 'drag-over-top': dragOverIdx === i && draggedIdx !== null && draggedIdx !== i }"
-            draggable="true"
-            @dragstart="onDragStart(i, $event)"
-            @dragover.prevent.stop="onDragOver(i)"
-            @dragleave="onDragLeave()"
-            @drop.prevent.stop="onDrop(i)"
-            @dragend="onDragEnd()"
-          >
-            <span class="drag-handle" aria-hidden="true">⋮⋮</span>
-            <span class="pri-rank">{{ i + 1 }}</span>
-            <span class="entity-name flex-1">{{ name }}</span>
-            <div class="pri-actions">
-              <button class="btn btn-ghost tiny" :disabled="i === 0" @click.stop="movePriority(i, -1)" title="Move up">↑</button>
-              <button class="btn btn-ghost tiny" :disabled="i === priorityOrder.length - 1" @click.stop="movePriority(i, 1)" title="Move down">↓</button>
-            </div>
-          </div>
-          <div
-            key="__end_zone"
-            class="drop-end-zone"
-            :class="{ 'drag-over-top': dragOverIdx === priorityOrder.length && draggedIdx !== null }"
-          ></div>
-        </transition-group>
-        <div v-if="allKnownEntities.filter(n => !priorityOrder.includes(n)).length" class="priority-add-row">
-          <span class="hint" style="font-size:0.78rem">Others (after): {{ allKnownEntities.filter(n => !priorityOrder.includes(n)).join(', ') }}</span>
-          <button class="btn btn-ghost btn-sm" @click="ensurePriorityCoversAll" style="white-space:nowrap">Add all</button>
-        </div>
-        <div class="priority-foot">
-          <button class="btn btn-ghost btn-sm" @click="resetPriority">↺ Reset to default</button>
-          <button class="btn btn-primary btn-sm" @click="showPriorityEditor = false">Done</button>
-        </div>
-      </div>
-    </div>
+    <OrderEditor
+      v-if="showPriorityEditor"
+      title="Entity order"
+      hint="Default: foodZooket > food > Zooket > others"
+      :items="priorityOrder"
+      :extra="unlistedEntities"
+      noun="business entity"
+      noun-plural="business entities"
+      top-note="The first entity of a city is the one shown in the collapsed row and used when sorting cities by score."
+      @update:items="setPriorityOrder"
+      @reset="resetPriority"
+      @close="showPriorityEditor = false"
+    />
+
+    <OrderEditor
+      v-if="showTypeOrderEditor"
+      title="Plan type order"
+      hint="Default: default > DAILY > ON-TOP-FOOD > others"
+      :items="planTypeOrder"
+      :extra="unlistedPlanTypes"
+      noun="plan type"
+      top-note="Plans of a city are listed in this order: the first plan of each city is shown in the collapsed row and carries the top badge."
+      @update:items="setPlanTypeOrder"
+      @reset="resetPlanTypeOrder"
+      @close="showTypeOrderEditor = false"
+    />
 
     <div v-if="error" class="banner error" role="alert">
       <strong>Could not load final decisions</strong>
@@ -558,10 +677,44 @@ onBeforeUnmount(() => {
                     <span v-else class="muted">—</span>
                   </td>
                   <td class="decisions-cell decisions-cell-divider">
-                    <span class="decisions-placeholder">
+                    <template v-if="topPlan(city)">
+                      <div class="plan-preview">
+                        <div class="preview-row">
+                          <span class="type-chip" :title="`Incentive type #${topPlan(city).incentive_type_id ?? '—'}`">
+                            {{ planTypeLabel(topPlan(city)) }}
+                          </span>
+                          <span class="preview-entity">{{ topPlan(city).business_entity || '—' }}</span>
+                          <span class="pill tiny accent preview-top">top</span>
+                          <span v-if="cityPlans(city).length > 1" class="pill tiny plain preview-more">
+                            +{{ cityPlans(city).length - 1 }} more
+                          </span>
+                        </div>
+                        <div class="preview-row preview-metrics">
+                          <span class="preview-metric">
+                            <span class="preview-metric-label">Target</span>
+                            <span class="preview-metric-value">{{ formatChange(topPlan(city).target_change) }}</span>
+                          </span>
+                          <span class="preview-metric">
+                            <span class="preview-metric-label">PR</span>
+                            <span class="preview-metric-value">{{ formatChange(topPlan(city).pr_change) }}</span>
+                          </span>
+                          <span class="preview-metric" :title="`Control bucket: ${planBucketText(topPlan(city))}`">
+                            <span class="preview-metric-label">Bucket</span>
+                            <span class="preview-metric-value" :class="{ muted: !planBuckets(topPlan(city)).length }">
+                              {{ planBucketText(topPlan(city)) }}
+                            </span>
+                          </span>
+                        </div>
+                        <div class="preview-updated">
+                          Updated {{ formatStamp(topPlan(city).updated_at) }}
+                          <template v-if="topPlan(city).updated_by"> · {{ topPlan(city).updated_by }}</template>
+                        </div>
+                      </div>
+                    </template>
+                    <span v-else class="decisions-placeholder">
                       <span class="pill plain decisions-pill" :class="{ 'is-expanded': isExpanded(city) }">
                         <span class="dot" aria-hidden="true" />
-                        {{ isExpanded(city) ? 'Expanded below' : 'No plans yet' }}
+                        {{ plansError ? 'Plans unavailable' : 'No plans' }}
                       </span>
                     </span>
                   </td>
@@ -617,21 +770,92 @@ onBeforeUnmount(() => {
                                 <path d="M4.4 16.6L12 20.4l7.6-3.8" />
                               </svg>
                             </span>
-                            Decisions
-                            <span class="pill plain">coming soon</span>
+                            Plans
+                            <span class="pill plain">
+                              {{ cityPlans(city).length }}
+                              {{ cityPlans(city).length === 1 ? 'plan' : 'plans' }}
+                            </span>
                           </h4>
-                          <p class="hint">4–5 plans per city will render here — integrated with the scores above</p>
+                          <p class="hint">
+                            Ordered by plan type (top first) for {{ incentiveDate }}
+                            <template v-if="cityPlans(city).length > 1">
+                              · <button class="link-btn" @click="showTypeOrderEditor = true">change order</button>
+                            </template>
+                          </p>
                         </div>
 
-                        <div class="decisions-empty">
-                          <div class="decisions-grid-placeholder">
-                            <div v-for="i in 4" :key="i" class="plan-card muted">
-                              <span class="plan-card-title">Plan {{ i }}</span>
-                              <span class="plan-card-sub">for {{ city.city }}</span>
-                              <span class="pill tiny plain">placeholder</span>
-                            </div>
-                          </div>
-                          <p class="hint decisions-hint">This area is prepared for plan integration. Each city will list its plans and stay synchronized with the expanded scores.</p>
+                        <div v-if="plansError" class="plan-warning" role="status">
+                          <span>
+                            Plans could not be loaded — {{ plansError }}
+                          </span>
+                          <button class="btn btn-ghost btn-sm" :disabled="loading" @click="load">Retry</button>
+                        </div>
+
+                        <div v-else-if="!cityPlans(city).length" class="decisions-empty">
+                          <p class="hint decisions-hint">
+                            No plans for {{ city.city }} on {{ incentiveDate }}. Plans are added per city in the
+                            Cities tab (<em>Add plan</em>) and land here on their incentive date.
+                          </p>
+                        </div>
+
+                        <div v-else class="plan-cards">
+                          <article
+                            v-for="(plan, pi) in sortedPlans(city)"
+                            :key="plan.id"
+                            class="plan-card"
+                            :class="{ 'is-top': pi === 0, 'is-mapping-off': !plan.mapping_active }"
+                          >
+                            <header class="plan-card-head">
+                              <span class="plan-rank" aria-hidden="true">{{ pi + 1 }}</span>
+                              <span class="plan-card-title">{{ planTypeLabel(plan) }}</span>
+                              <span v-if="plan.incentive_type_id !== null && plan.incentive_type_id !== undefined" class="type-id">
+                                #{{ plan.incentive_type_id }}
+                              </span>
+                              <span v-if="pi === 0" class="pill tiny accent">top</span>
+                            </header>
+
+                            <div class="plan-card-entity">{{ plan.business_entity || '—' }}</div>
+
+                            <dl class="plan-metrics">
+                              <div>
+                                <dt>Target change</dt>
+                                <dd>{{ formatChange(plan.target_change) }}</dd>
+                              </div>
+                              <div>
+                                <dt>PR change</dt>
+                                <dd>{{ formatChange(plan.pr_change) }}</dd>
+                              </div>
+                              <div class="plan-metric-wide">
+                                <dt>Control bucket</dt>
+                                <dd>
+                                  <span v-if="planBuckets(plan).length" class="bucket-values">
+                                    <span v-for="(value, bi) in planBuckets(plan)" :key="bi" class="bucket-chip">
+                                      <span class="bucket-value">{{ formatBucketValue(value) }}</span>
+                                    </span>
+                                  </span>
+                                  <span v-else class="muted">{{ planBucketText(plan) }}</span>
+                                </dd>
+                              </div>
+                            </dl>
+
+                            <footer class="plan-card-foot">
+                              <span class="plan-updated">
+                                Updated {{ formatStamp(plan.updated_at) }}
+                                <template v-if="plan.updated_by"> · {{ plan.updated_by }}</template>
+                              </span>
+                              <span v-if="!plan.mapping_active" class="pill tiny plain" title="The plan mapping of this plan is deactivated">
+                                mapping off
+                              </span>
+                              <a
+                                v-if="plan.plan_mapping_id !== null && plan.plan_mapping_id !== undefined"
+                                :href="`/plans/${plan.plan_mapping_id}`"
+                                target="_blank"
+                                rel="noopener"
+                                class="btn btn-ghost btn-sm"
+                                @click.stop
+                              >Details</a>
+                            </footer>
+                          </article>
                         </div>
                       </div>
                     </div>
@@ -991,6 +1215,83 @@ onBeforeUnmount(() => {
   text-align: center;
   padding: 0.6rem 0.9rem !important;
 }
+/* --- plans: the collapsed row preview ----------------------------------- */
+.plan-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+  text-align: left;
+  width: 100%;
+  min-width: 0;
+}
+.preview-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem 0.45rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.type-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.12rem 0.4rem;
+  border-radius: 0.4rem;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  border: 1px solid #cfe0d7;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.preview-entity {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.preview-top,
+.preview-more {
+  margin-left: 0;
+}
+.preview-metrics {
+  gap: 0.3rem 0.6rem;
+}
+.preview-metric {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.28rem;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+.preview-metric-label {
+  color: var(--muted);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.preview-metric-value {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.preview-updated {
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+.link-btn {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--accent-strong);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .decisions-placeholder {
   display: flex;
   align-items: center;
@@ -1220,33 +1521,137 @@ onBeforeUnmount(() => {
 .decisions-empty {
   flex: 1;
 }
-.decisions-grid-placeholder {
+.plan-cards {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.55rem;
-  margin-bottom: 0.85rem;
+  grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
+  gap: 0.6rem;
+  align-content: start;
 }
 .plan-card {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
-  padding: 0.75rem 0.85rem;
-  border-radius: 0.6rem;
-  border: 1px dashed var(--border);
-  background: #fafbfa;
-  min-height: 72px;
+  gap: 0.4rem;
+  padding: 0.7rem 0.8rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 0.7rem;
+  background: #fff;
 }
-.plan-card.muted {
+.plan-card.is-top {
+  border-color: #bcdccb;
+  background: linear-gradient(180deg, #f4fbf7 0%, #ffffff 65%);
+}
+.plan-card.is-mapping-off {
+  opacity: 0.74;
+}
+.plan-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+.plan-rank {
+  display: grid;
+  place-items: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 50%;
+  background: var(--surface-2);
   color: var(--muted);
+  font-size: 0.65rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.plan-card.is-top .plan-rank {
+  background: var(--accent);
+  color: #fff;
 }
 .plan-card-title {
+  font-size: 0.85rem;
   font-weight: 700;
-  font-size: 0.88rem;
   color: var(--text);
 }
-.plan-card-sub {
-  font-size: 0.78rem;
+.type-id {
+  font-size: 0.66rem;
   color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.plan-card-entity {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #4a6155;
+  overflow-wrap: anywhere;
+}
+.plan-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem 0.5rem;
+  margin: 0;
+}
+.plan-metrics > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  min-width: 0;
+}
+.plan-metrics dt {
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.plan-metrics dd {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.plan-metric-wide {
+  grid-column: 1 / -1;
+}
+.bucket-values {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  flex-wrap: wrap;
+}
+.bucket-chip {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  background: #fbfdfc;
+}
+.bucket-chip .bucket-value {
+  padding: 0.1rem 0.45rem;
+  font-size: 0.76rem;
+}
+.plan-card-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin-top: auto;
+  padding-top: 0.4rem;
+  border-top: 1px dashed var(--border);
+}
+.plan-updated {
+  font-size: 0.68rem;
+  color: var(--muted);
+  margin-right: auto;
+}
+.plan-warning {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid #f0d9b5;
+  border-radius: 0.6rem;
+  background: #fdf7ec;
+  color: #8a5a1a;
+  font-size: 0.8rem;
+  line-height: 1.45;
 }
 .decisions-hint {
   font-size: 0.82rem;
@@ -1254,164 +1659,6 @@ onBeforeUnmount(() => {
   color: var(--muted);
   margin: 0;
 }
-.priority-editor {
-  padding: 0.9rem 1rem 1rem;
-}
-.priority-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 1rem;
-  margin-bottom: 0.75rem;
-}
-.priority-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
-.priority-row {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  padding: 0.5rem 0.65rem;
-  border: 1px solid var(--border);
-  border-radius: 0.6rem;
-  background: #fbfdfc;
-  cursor: grab;
-  transition: transform 0.22s cubic-bezier(0.2, 0, 0, 1), box-shadow 0.18s ease, opacity 0.18s ease,
-    background 0.18s ease, border-color 0.18s ease, box-shadow 0.15s ease;
-  will-change: transform;
-}
-.pri-move-move {
-  transition: transform 0.28s cubic-bezier(0.2, 0, 0, 1);
-}
-.priority-row:active {
-  cursor: grabbing;
-}
-.priority-row:hover:not(.dragging) {
-  border-color: #cfe0d7;
-  box-shadow: 0 2px 6px rgba(20, 40, 30, 0.06);
-}
-.pri-rank {
-  width: 1.6rem;
-  height: 1.6rem;
-  display: grid;
-  place-items: center;
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-  border-radius: 50%;
-  font-weight: 700;
-  font-size: 0.78rem;
-  flex-shrink: 0;
-  transition: background 0.18s ease, color 0.18s ease;
-}
-.priority-row .entity-name {
-  font-weight: 600;
-  font-size: 0.86rem;
-}
-.pri-actions {
-  display: flex;
-  gap: 0.25rem;
-  margin-left: auto;
-}
-.btn.tiny {
-  padding: 0.18rem 0.4rem;
-  font-size: 0.78rem;
-  line-height: 1;
-}
-.priority-add-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.6rem;
-  padding: 0.5rem 0.6rem;
-  border: 1px dashed var(--border);
-  border-radius: 0.55rem;
-  background: #fff;
-  margin-top: 0.3rem;
-}
-.priority-foot {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem 0.75rem;
-  margin-top: 0.75rem;
-  flex-wrap: wrap;
-}
-.priority-foot-hint {
-  flex-basis: 100%;
-  order: 3;
-  font-size: 0.78rem;
-  line-height: 1.45;
-}
-.flex-1 {
-  flex: 1;
-}
-.priority-modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(16, 32, 24, 0.38);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  padding: 1rem;
-  backdrop-filter: blur(2px);
-}
-.priority-modal {
-  background: #fff;
-  border-radius: 0.9rem;
-  width: min(460px, 100%);
-  max-height: 85vh;
-  overflow: auto;
-  box-shadow: 0 12px 40px rgba(16, 32, 24, 0.24), 0 2px 8px rgba(16, 32, 24, 0.08);
-  padding: 1rem 1.15rem 1rem;
-  border: 1px solid #e6ece9;
-}
-.priority-modal-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 1rem;
-  margin-bottom: 0.85rem;
-}
-.drag-handle {
-  cursor: grab;
-  color: #9ab0a8;
-  font-size: 0.9rem;
-  letter-spacing: 0.08em;
-  user-select: none;
-  padding: 0 0.15rem;
-  line-height: 1;
-  transition: color 0.15s ease;
-}
-.priority-row:hover .drag-handle {
-  color: var(--accent-strong);
-}
-.drag-handle:active {
-  cursor: grabbing;
-}
-.priority-row.dragging {
-  opacity: 0.45;
-  transform: scale(0.97);
-  box-shadow: 0 8px 20px rgba(20, 40, 30, 0.14);
-  border-color: var(--accent);
-  background: #f3faf6;
-}
-.priority-row.drag-over-top {
-  box-shadow: inset 0 3px 0 0 var(--accent);
-  background: #f0faf6;
-}
-.drop-end-zone {
-  height: 0.65rem;
-  border-radius: 0.5rem;
-  transition: height 0.18s cubic-bezier(0.2, 0, 0, 1), box-shadow 0.15s ease, background 0.15s ease;
-}
-.drop-end-zone.drag-over-top {
-  height: 2.4rem;
-  box-shadow: inset 0 0 0 1.5px var(--accent);
-  background: #eefaf5;
-}
-
 @media (max-width: 980px) {
   .integrated-panel {
     grid-template-columns: 1fr;

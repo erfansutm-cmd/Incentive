@@ -46,6 +46,7 @@ configured through a root `.env` file:
 | `DB_ACTIVE_CITY_TABLE` | `incentive/incentive_active_city` |
 | `DB_INCENTIVE_BASE_CONFIG_TABLE` | `incentive/incentive_base_configs` |
 | `DB_INCENTIVE_BASE_CONFIG_LOG_TABLE` | `incentive/incentive_base_configs_logs` |
+| `DB_INCENTIVE_PLANS_TABLE` | `incentive/incentive_plans` |
 
 ```bash
 cp .env.example .env   # then fill in DB_PASSWORD
@@ -521,7 +522,10 @@ re-activating a deactivated row, the impact share turning red and saying how far
 off it is whenever a change leaves a plan away from 100%, the clustering-method
 combo accepting both a listed and a typed method, the three sensitivity groups
 being all-or-none, add-allocator inheritance, lookup outages, write failures,
-change history and its retry, and the empty/error states.
+change history and its retry, and the empty/error states. The Final Decisions
+tab has its own file (`frontend/tests/unit/final-decisions.spec.js`): the plan
+summary of a collapsed city, the plan cards, the plan-type-order popup and the
+plans-unavailable state.
 
 Browser tests use Playwright with intercepted API responses (no real database
 writes). They cover inline city-group accordions, the custom score-type picker,
@@ -565,6 +569,82 @@ tag-style input (`frontend/src/components/TagInput.vue`): pick a value from
 the suggestion chips (known delivery categories, plus values already used in
 the table) or type your own and press Enter / comma to add it — duplicates
 are removed automatically.
+
+## Final Decisions
+
+Open **Final Decisions** in the navigation or go to `/final-decisions`. The tab
+answers `GET /api/final-decisions?incentive_date=YYYY-MM-DD` (default: tomorrow)
+from `backend/app/api/final_decisions.py` and puts the two halves of the daily
+decision on one screen.
+
+**Scores.** Every city of `incentive.incentive_active_city` that has rows in
+`incentive.incentive_scores` on that date gets a line, one per business entity.
+The collapsed row shows the entity that comes first in the **Entity order**
+popup (`foodZooket > food > Zooket > others`, alphabetical inside a level);
+expanding a city reveals all of its entities. Score badges are colored from
+green (lowest) to red (highest) per score type, and the columns sort by
+performance, order-level increase and weather.
+
+**Plans.** The rows of `incentive.final_incentive_plans` of the same date, joined
+to `incentive.incentive_city_plan_mapping` on
+`plan_mapping_id = incentive_city_plan_mapping.id` — that join supplies the
+`city_id`, the `incentive_type_id` and the `business_entity` of every plan, and
+`mafsho.incentive_type` supplies the type **name**, exactly the way the Cities
+tab shows it. Per plan the tab shows:
+
+| Field | Where it comes from | How it is shown |
+|---|---|---|
+| Incentive type | `mafsho.incentive_type.name` (via `incentive_type_id`) | Type name, with `#id` next to it |
+| Business entity | `incentive_city_plan_mapping.business_entity` | Under the type name |
+| Target change | `final_incentive_plans.target_change` | `1.000` (three decimals) |
+| PR change | `final_incentive_plans.pr_change` | `1.100` (three decimals) |
+| Control bucket | `final_incentive_plans.control_bucket` | `[0.2, 0.2, 0.1]` decoded into chips, like the Decision Matrix |
+| Updated at | `updated_at` / `updated_by` | `15 Sep 2026, 13:17 · System` |
+| Plan page | `plan_mapping_id` | *Details* opens `/plans/{plan_mapping_id}` in a new tab |
+
+A city with several plans shows the first one in the collapsed row (type, entity,
+target/PR/bucket, updated at) plus a `+N more` pill; expanding the city lists
+every plan as a card, and even the collapsed row keeps the scores next to it.
+
+### Plan order (top first)
+
+Plans of a city are listed by incentive type, top first: `default` → `DAILY` →
+`ON-TOP-FOOD` → the rest alphabetically, so the plan that matters most is the one
+summarized in the collapsed row and the one wearing the **top** badge in the
+expanded panel. The order comes from `FINAL_DECISION_PLAN_TYPE_ORDER` (comma
+separated type names, anything unlisted follows alphabetically) and is returned
+as `plan_type_order`.
+
+The **Plan type order** button opens a popup that reorders it — drag a row, use
+its ↑ / ↓ buttons, *Add all* for types that are not in the list yet, or
+*Reset to default* to go back to the configured order. The table follows the
+popup immediately, and the choice is remembered in the browser
+(`localStorage`, `frontend/src/lib/storedOrder.js`) so a reload keeps it;
+*Reset to default* clears it again. The same popup component
+(`frontend/src/components/OrderEditor.vue`) drives the **Entity order** button,
+so both orders behave identically.
+
+A plan whose mapping row is deactivated is still shown, flagged **mapping off**,
+instead of disappearing silently. Plans belonging to another incentive date are
+not mixed in.
+
+### When the plans table cannot be read
+
+Plans are best effort, so a missing or unreachable `incentive_plans` table never
+hides the scores: the cities and their scores still render, the *Plans* panel
+says what went wrong and offers a **Retry**, the collapsed rows read
+*Plans unavailable*, and the response carries the message in `plans_error`
+alongside `total_plans` and `plan_type_order`.
+
+### Final Decisions tests
+
+`backend/tests/test_final_decisions.py` runs the endpoint SQL against an isolated
+SQLite store with attached `incentive` / `mafsho` schemas, so the plan join, the
+type-name lookup, the date filter, the bucket decoding and the ordering are all
+exercised for real. It also covers the graceful *plans table missing* path.
+`frontend/tests/unit/final-decisions.spec.js` mounts the real view against a
+mocked `/api` and covers the collapsed-row summary, the plan cards, the
+type-order popup (reorder and reset) and the empty/error states.
 
 ## Performance score
 

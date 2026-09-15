@@ -39,6 +39,19 @@ DB_INCENTIVE_SCORES_TABLE = os.getenv(
     "DB_INCENTIVE_SCORES_TABLE", "incentive/incentive_scores"
 )
 
+# Final decisions — the plans of every city for an incentive date, joined to
+# incentive_city_plan_mapping on plan_mapping_id to reach the city, the
+# incentive type and the business entity.
+DB_INCENTIVE_PLANS_TABLE = os.getenv(
+    "DB_INCENTIVE_PLANS_TABLE", "incentive/incentive_plans"
+)
+# Display order ("top first") of the plan types in the Final Decisions tab.
+# Comma separated type names; whatever is not listed follows alphabetically.
+# The UI loads this order and lets the user reorder it in a popup.
+FINAL_DECISION_PLAN_TYPE_ORDER = os.getenv(
+    "FINAL_DECISION_PLAN_TYPE_ORDER", "default,DAILY,ON-TOP-FOOD"
+)
+
 # Allocator / rule / listing lookups behind the base-config forms.
 # The browser never calls these directly; /api/incentive-lookups proxies them.
 ALLOCATOR_NAMES_URL = os.getenv("ALLOCATOR_NAMES_URL", "http://172.21.88.174:5000/allocator/names")
