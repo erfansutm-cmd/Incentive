@@ -27,10 +27,44 @@ function scoreBadgeClass(v) {
   if (v === null || v === undefined || v === '') return 'muted'
   const n = Number(v)
   if (!Number.isFinite(n)) return 'muted'
-  if (n <= 1) return 'high'
-  if (n <= 2) return 'med'
-  if (n <= 3) return 'low'
-  return 'very-low'
+  return ''
+}
+
+// Min/max per score type across all loaded entities, used to build a
+// green (lowest) -> red (highest) color scale for each score badge.
+function computeScoreRanges(cityList) {
+  const ranges = {}
+  for (const key of ['performance', 'order_level_increase', 'weather']) {
+    let min = Infinity
+    let max = -Infinity
+    for (const c of cityList) {
+      for (const be of c.business_entities || []) {
+        const n = Number(be.scores?.[key])
+        if (Number.isFinite(n)) {
+          if (n < min) min = n
+          if (n > max) max = n
+        }
+      }
+    }
+    ranges[key] = Number.isFinite(min) ? { min, max } : { min: 0, max: 0 }
+  }
+  return ranges
+}
+
+function scoreStyle(v, key, ranges) {
+  const n = Number(v)
+  if (v === null || v === undefined || v === '' || !Number.isFinite(n)) return {}
+  const range = ranges?.[key] || { min: 0, max: 0 }
+  const { min, max } = range
+  let t = max > min ? (n - min) / (max - min) : 0
+  t = Math.max(0, Math.min(1, t))
+  // 0 -> green (lowest score), 1 -> red (highest score)
+  const hue = 142 - t * 142
+  return {
+    backgroundColor: `hsl(${hue}, 62%, 93%)`,
+    borderColor: `hsl(${hue}, 42%, 76%)`,
+    color: `hsl(${hue}, 55%, 30%)`,
+  }
 }
 
 const selectedDate = ref(tomorrowISO())
@@ -100,6 +134,7 @@ const sortedCities = computed(() => {
 const totalCities = computed(() => cities.value.length)
 const totalEntities = computed(() => cities.value.reduce((sum, c) => sum + (c.entity_count || 0), 0))
 const visibleCount = computed(() => filteredCities.value.length)
+const scoreRanges = computed(() => computeScoreRanges(cities.value))
 
 const allExpanded = computed(
   () => sortedCities.value.length > 0 && sortedCities.value.every((c) => expanded.value.has(String(c.city_id_raw ?? c.city_id)))
@@ -507,19 +542,19 @@ onBeforeUnmount(() => {
                     <span v-else class="muted">—</span>
                   </td>
                   <td class="score-cell">
-                    <span v-if="displayPrimary(city)" class="score-badge" :class="scoreBadgeClass(displayPrimary(city).scores.performance)">
+                    <span v-if="displayPrimary(city)" class="score-badge" :class="scoreBadgeClass(displayPrimary(city).scores.performance)" :style="scoreStyle(displayPrimary(city).scores.performance, 'performance', scoreRanges)">
                       {{ formatScore(displayPrimary(city).scores.performance) }}
                     </span>
                     <span v-else class="muted">—</span>
                   </td>
                   <td class="score-cell">
-                    <span v-if="displayPrimary(city)" class="score-badge" :class="scoreBadgeClass(displayPrimary(city).scores.order_level_increase)">
+                    <span v-if="displayPrimary(city)" class="score-badge" :class="scoreBadgeClass(displayPrimary(city).scores.order_level_increase)" :style="scoreStyle(displayPrimary(city).scores.order_level_increase, 'order_level_increase', scoreRanges)">
                       {{ formatScore(displayPrimary(city).scores.order_level_increase) }}
                     </span>
                     <span v-else class="muted">—</span>
                   </td>
                   <td class="score-cell score-cell-divider">
-                    <span v-if="displayPrimary(city)" class="score-badge" :class="scoreBadgeClass(displayPrimary(city).scores.weather)">
+                    <span v-if="displayPrimary(city)" class="score-badge" :class="scoreBadgeClass(displayPrimary(city).scores.weather)" :style="scoreStyle(displayPrimary(city).scores.weather, 'weather', scoreRanges)">
                       {{ formatScore(displayPrimary(city).scores.weather) }}
                     </span>
                     <span v-else class="muted">—</span>
@@ -560,13 +595,13 @@ onBeforeUnmount(() => {
                                   <span class="entity-name">{{ be.business_entity }}</span>
                                 </td>
                                 <td class="num">
-                                  <span class="score-badge small" :class="scoreBadgeClass(be.scores.performance)">{{ formatScore(be.scores.performance) }}</span>
+                                  <span class="score-badge small" :class="scoreBadgeClass(be.scores.performance)" :style="scoreStyle(be.scores.performance, 'performance', scoreRanges)">{{ formatScore(be.scores.performance) }}</span>
                                 </td>
                                 <td class="num">
-                                  <span class="score-badge small" :class="scoreBadgeClass(be.scores.order_level_increase)">{{ formatScore(be.scores.order_level_increase) }}</span>
+                                  <span class="score-badge small" :class="scoreBadgeClass(be.scores.order_level_increase)" :style="scoreStyle(be.scores.order_level_increase, 'order_level_increase', scoreRanges)">{{ formatScore(be.scores.order_level_increase) }}</span>
                                 </td>
                                 <td class="num">
-                                  <span class="score-badge small" :class="scoreBadgeClass(be.scores.weather)">{{ formatScore(be.scores.weather) }}</span>
+                                  <span class="score-badge small" :class="scoreBadgeClass(be.scores.weather)" :style="scoreStyle(be.scores.weather, 'weather', scoreRanges)">{{ formatScore(be.scores.weather) }}</span>
                                 </td>
                               </tr>
                             </tbody>
