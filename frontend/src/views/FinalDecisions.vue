@@ -755,7 +755,8 @@ onBeforeUnmount(() => {
 }
 .final-table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   min-width: 900px;
   table-layout: fixed;
 }
@@ -920,11 +921,22 @@ onBeforeUnmount(() => {
 .final-table tbody tr.city-row.expanded:hover {
   background: #dceee4;
 }
-.final-table tbody tr.city-row.expanded td:first-child {
-  box-shadow: inset 3px 0 0 var(--accent);
-}
 .final-table tbody tr.city-row.expanded td {
-  border-bottom: 2px solid var(--accent);
+  border-top: 2px solid var(--accent);
+  border-bottom: 0;
+}
+.final-table tbody tr.city-row.expanded td:first-child {
+  border-left: 2px solid var(--accent);
+  border-top-left-radius: 0.85rem;
+  box-shadow: none;
+}
+.final-table tbody tr.city-row.expanded td:last-child {
+  border-right: 2px solid var(--accent);
+  border-top-right-radius: 0.85rem;
+}
+/* Remove top border of the next city after an expanded group so the accent border is the separator */
+.detail-row + .city-row:not(.expanded) td {
+  border-top: 0;
 }
 
 .expand-col {
@@ -1057,24 +1069,31 @@ onBeforeUnmount(() => {
   color: var(--muted);
 }
 
-/* Expanded integrated panel */
+/* Expanded integrated panel — outer border from top of city row to bottom of detail */
 .detail-row:hover {
   background: transparent;
 }
 .detail-cell {
   padding: 0 !important;
-  background: #fff;
+  background: #f2f7f4;
+  border-top: 0;
+  border-left: 2px solid var(--accent);
+  border-right: 2px solid var(--accent);
+  border-bottom: 2px solid var(--accent);
+  border-bottom-left-radius: 0.85rem;
+  border-bottom-right-radius: 0.85rem;
+  box-shadow: 0 4px 14px rgba(20, 40, 30, 0.06);
 }
 .integrated-panel {
   display: grid;
   grid-template-columns: 40fr 60fr;
   gap: 1.15rem;
-  margin: 0.9rem 1rem 1.1rem;
-  padding: 1.1rem 1.1rem 1.2rem;
-  border: 1px solid #cfe0d7;
-  border-radius: 0.9rem;
-  background: #f2f7f4;
-  box-shadow: 0 2px 6px rgba(20, 40, 30, 0.05);
+  margin: 0;
+  padding: 1rem 1.1rem 1.15rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   animation: slideDown 0.22s ease;
 }
 @media (prefers-reduced-motion: reduce) {
