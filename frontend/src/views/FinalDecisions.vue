@@ -64,20 +64,24 @@ function computeScoreRanges(cityList) {
   return ranges
 }
 
-function scoreStyle(v, key, ranges) {
-  const n = Number(v)
-  if (v === null || v === undefined || v === '' || !Number.isFinite(n)) return {}
-  const range = ranges?.[key] || { min: 0, max: 0 }
-  const { min, max } = range
+// Green (lowest) -> red (highest) for one value inside a min/max range. Used by
+// both the score badges and the plan numbers (target / PR change).
+function heatStyle(value, range) {
+  const n = Number(value)
+  if (value === null || value === undefined || value === '' || !Number.isFinite(n)) return {}
+  const { min, max } = range || { min: 0, max: 0 }
   let t = max > min ? (n - min) / (max - min) : 0
   t = Math.max(0, Math.min(1, t))
-  // 0 -> green (lowest score), 1 -> red (highest score)
   const hue = 142 - t * 142
   return {
     backgroundColor: `hsl(${hue}, 62%, 93%)`,
     borderColor: `hsl(${hue}, 42%, 76%)`,
     color: `hsl(${hue}, 55%, 30%)`,
   }
+}
+
+function scoreStyle(v, key, ranges) {
+  return heatStyle(v, ranges?.[key])
 }
 
 const stampFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
@@ -373,14 +377,24 @@ const planColumnsOrPill = computed(() =>
   planColumns.value.length ? planColumns.value : [{ key: '__plans__', label: 'Plans' }]
 )
 const planColumnCount = computed(() => planColumnsOrPill.value.length)
+// Plans of a city: plan type first (the configured order), then the entity order
+// — two plans of the same type belong to different entities, and the first one
+// is the top plan of that column.
 function sortedPlans(city) {
   return [...cityPlans(city)].sort((a, b) => {
     const rankA = planTypeRank(a)
     const rankB = planTypeRank(b)
     if (rankA !== rankB) return rankA - rankB
-    const entityA = String(a.business_entity ?? '').toLowerCase()
-    const entityB = String(b.business_entity ?? '').toLowerCase()
-    if (entityA !== entityB) return entityA < entityB ? -1 : 1
+    // unlisted plan types come last alphabetically among themselves
+    const typeA = planTypeLabel(a).trim().toLowerCase()
+    const typeB = planTypeLabel(b).trim().toLowerCase()
+    if (typeA !== typeB) return typeA < typeB ? -1 : 1
+    const entityA = priorityRank(a.business_entity ?? '')
+    const entityB = priorityRank(b.business_entity ?? '')
+    if (entityA !== entityB) return entityA - entityB
+    const nameA = String(a.business_entity ?? '').toLowerCase()
+    const nameB = String(b.business_entity ?? '').toLowerCase()
+    if (nameA !== nameB) return nameA < nameB ? -1 : 1
     return Number(a.id ?? 0) - Number(b.id ?? 0)
   })
 }
@@ -393,6 +407,30 @@ function plansOfType(city, key) {
 function isTopPlan(city, plan) {
   const top = topPlan(city)
   return Boolean(top) && String(top.id) === String(plan.id)
+}
+// Min/max of target and PR change across every plan of the date, so the numbers
+// can carry the same green -> red scale as the scores (more number, more red).
+const planHeatRanges = computed(() => {
+  const range = { target: null, pr: null }
+  for (const metric of ['target', 'pr']) {
+    let min = Infinity
+    let max = -Infinity
+    for (const city of cities.value) {
+      for (const plan of cityPlans(city)) {
+        const n = Number(metric === 'target' ? plan.target_change : plan.pr_change)
+        if (Number.isFinite(n)) {
+          if (n < min) min = n
+          if (n > max) max = n
+        }
+      }
+    }
+    range[metric] = Number.isFinite(min) ? { min, max } : null
+  }
+  return range
+})
+function planNumberStyle(plan, metric) {
+  const value = metric === 'target' ? plan?.target_change : plan?.pr_change
+  return heatStyle(value, planHeatRanges.value[metric])
 }
 function planBuckets(plan) {
   return Array.isArray(plan?.control_bucket) ? plan.control_bucket : []
@@ -772,40 +810,34 @@ onBeforeUnmount(() => {
                       <template v-if="plansOfType(city, column.key).length">
                         <div
                           v-for="plan in plansOfType(city, column.key)" :key="plan.id"
-                          class="plan-inline" :class="{ 'is-top': isTopPlan(city, plan), 'is-mapping-off': !plan.mapping_active }"
+                          class="plan-row" :class="{ 'is-top': isTopPlan(city, plan) }"
+                          :title="`${planTypeLabel(plan)} · ${plan.business_entity || '—'} · updated ${formatStamp(plan.updated_at)}${plan.updated_by ? ` · ${plan.updated_by}` : ''}`"
                         >
-                          <div class="plan-inline-head">
-                            <span class="plan-inline-entity">{{ plan.business_entity || '—' }}</span>
-                            <span v-if="isTopPlan(city, plan)" class="pill tiny accent">top</span>
-                            <span
-                              v-if="!plan.mapping_active" class="pill tiny plain"
-                              title="The plan mapping of this plan is deactivated"
-                            >mapping off</span>
-                          </div>
-                          <div class="plan-inline-values">
-                            <span class="plan-value" title="Target change">
-                              <span class="plan-value-label">T</span>{{ formatChange(plan.target_change) }}
-                            </span>
-                            <span class="plan-value" title="PR change">
-                              <span class="plan-value-label">PR</span>{{ formatChange(plan.pr_change) }}
-                            </span>
-                            <span class="plan-value" :title="`Control bucket: ${planBucketText(plan)}`">
-                              <span class="plan-value-label">B</span>{{ planBucketText(plan) }}
-                            </span>
-                          </div>
-                          <div class="plan-inline-foot">
-                            <span class="plan-updated">
-                              {{ formatStamp(plan.updated_at) }}<template v-if="plan.updated_by"> · {{ plan.updated_by }}</template>
-                            </span>
-                            <a
-                              v-if="plan.plan_mapping_id !== null && plan.plan_mapping_id !== undefined"
-                              :href="`/plans/${plan.plan_mapping_id}`"
-                              target="_blank"
-                              rel="noopener"
-                              class="plan-link"
-                              @click.stop
-                            >Details</a>
-                          </div>
+                          <span class="plan-entity">{{ plan.business_entity || '—' }}</span>
+                          <span v-if="isTopPlan(city, plan)" class="plan-flag top-flag" title="Top plan of this city">top</span>
+                          <span
+                            v-if="!plan.mapping_active" class="plan-flag off-flag"
+                            title="The plan mapping of this plan is deactivated"
+                          >off</span>
+                          <span
+                            class="plan-number" title="Target change"
+                            :style="planNumberStyle(plan, 'target')"
+                          >{{ formatChange(plan.target_change) }}</span>
+                          <span
+                            class="plan-number" title="PR change"
+                            :style="planNumberStyle(plan, 'pr')"
+                          >{{ formatChange(plan.pr_change) }}</span>
+                          <span class="plan-bucket" :title="`Control bucket: ${planBucketText(plan)}`">
+                            {{ planBucketText(plan) }}
+                          </span>
+                          <a
+                            v-if="plan.plan_mapping_id !== null && plan.plan_mapping_id !== undefined"
+                            :href="`/plans/${plan.plan_mapping_id}`"
+                            target="_blank"
+                            rel="noopener"
+                            class="plan-link"
+                            @click.stop
+                          >Details</a>
                         </div>
                       </template>
                       <span v-else class="muted">—</span>
@@ -1324,80 +1356,68 @@ onBeforeUnmount(() => {
   margin: 0.25rem 0 0;
 }
 
-/* --- plans: one column per plan type, in line in the city row ----------- */
-.plan-inline {
+/* --- plans: one column per plan type, one plain row per plan -------------- */
+.plan-row {
   display: flex;
-  flex-direction: column;
-  gap: 0.16rem;
-  text-align: left;
-  padding: 0.35rem 0.45rem;
-  border: 1px solid transparent;
-  border-radius: 0.45rem;
-  min-width: 0;
-}
-.plan-inline + .plan-inline {
-  margin-top: 0.3rem;
-}
-.plan-inline.is-top {
-  background: var(--accent-soft);
-  border-color: #cfe0d7;
-}
-.plan-inline.is-mapping-off {
-  opacity: 0.72;
-}
-.plan-inline-head {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
+  align-items: baseline;
   flex-wrap: wrap;
+  gap: 0.28rem 0.4rem;
+  padding: 0.12rem 0;
   min-width: 0;
 }
-.plan-inline-entity {
-  font-size: 0.8rem;
-  font-weight: 700;
+.plan-row + .plan-row {
+  margin-top: 0.18rem;
+  padding-top: 0.32rem;
+  border-top: 1px dashed #e3ece7;
+}
+.plan-entity {
+  font-size: 0.79rem;
+  font-weight: 600;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 9rem;
 }
-.plan-inline-head .pill.tiny {
-  margin-left: 0;
+.plan-row.is-top .plan-entity {
+  font-weight: 800;
 }
-.plan-inline-values {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 0.15rem 0.55rem;
+.plan-flag {
+  font-size: 0.56rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.06rem 0.3rem;
+  border-radius: 0.3rem;
 }
-.plan-value {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 0.22rem;
-  font-size: 0.78rem;
+.plan-flag.top-flag {
+  background: var(--accent);
+  color: #fff;
+}
+.plan-flag.off-flag {
+  background: var(--surface-2);
+  color: var(--inactive-text);
+}
+.plan-number {
+  display: inline-grid;
+  place-items: center;
+  min-width: 2.7rem;
+  padding: 0.1rem 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  background: #fbfdfc;
+  font-size: 0.75rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: var(--text);
-  white-space: nowrap;
 }
-.plan-value-label {
-  font-size: 0.58rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.plan-inline-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-}
-.plan-updated {
-  font-size: 0.66rem;
+.plan-bucket {
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
   color: var(--muted);
 }
 .plan-link {
+  margin-left: auto;
   font-size: 0.68rem;
   font-weight: 700;
   color: var(--accent-strong);

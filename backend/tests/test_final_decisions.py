@@ -61,6 +61,7 @@ MAPPINGS = [
     (118, 10, 3, "foodZooket", "2026-09-14T09:00:00"),
     (132, 20, 1, "food", None),
     (122, 20, 4, "foodZooket", None),
+    (133, 20, 1, "foodZooket", None),  # a second DAILY plan, for another entity
     (170, 99, 1, "food", None),  # city 99 has no scores, so no city row either
 ]
 
@@ -72,6 +73,7 @@ PLANS = [
     (3, DATE, 118, 1.000, 1.350, None),
     (4, DATE, 132, 1.000, 1.200, None),
     (5, DATE, 8, 1.000, 1.300, "[0.2, 0.2, 0.1]"),
+    (8, DATE, 133, 1.050, 1.400, None),         # the second DAILY plan of kerman
     (6, "2026-09-17", 23, 1.000, 9.999, None),  # another date, must not leak in
     (7, DATE, 170, 1.000, 1.400, None),         # a city without scores: never listed
 ]
@@ -155,18 +157,24 @@ class FinalDecisionsAPITests(unittest.TestCase):
         data = self.read(incentive_date=DATE)
 
         self.assertEqual(data["plan_type_order"], ["DAILY", "ON-TOP-FOOD"])
-        # 6 sample rows, but only the 5 of DAY belong to this date
-        self.assertEqual(data["total_plans"], 5)
+        # 8 sample rows, but only the 6 of DAY belong to this date
+        self.assertEqual(data["total_plans"], 6)
         self.assertIsNone(data["plans_error"])
 
         kerman = self.city(data, 20)
-        self.assertEqual(kerman["plan_count"], 3)
-        # DAILY (1st) → the unlisted "default" and WEEKLY last, alphabetically
-        self.assertEqual([p["incentive_type"] for p in kerman["plans"]], ["DAILY", "default", "WEEKLY"])
-        self.assertEqual([p["business_entity"] for p in kerman["plans"]], ["food", "food", "foodZooket"])
-        # the top plan is the DAILY one, not the "default" row of the sample data
-        self.assertEqual(kerman["top_plan"]["id"], 4)
+        self.assertEqual(kerman["plan_count"], 4)
+        # DAILY (1st, two plans) → the unlisted "default" and WEEKLY last
+        self.assertEqual(
+            [p["incentive_type"] for p in kerman["plans"]], ["DAILY", "DAILY", "default", "WEEKLY"]
+        )
+        # inside one type the entity priority decides: foodZooket before food
+        self.assertEqual(
+            [p["business_entity"] for p in kerman["plans"]], ["foodZooket", "food", "food", "foodZooket"]
+        )
+        # the top plan is the DAILY one of the first entity, not the "default" row
+        self.assertEqual(kerman["top_plan"]["id"], 8)
         self.assertEqual(kerman["top_plan"]["incentive_type"], "DAILY")
+        self.assertEqual(kerman["top_plan"]["business_entity"], "foodZooket")
 
         tehran = self.city(data, 10)
         self.assertEqual(tehran["plan_count"], 2)
@@ -195,7 +203,7 @@ class FinalDecisionsAPITests(unittest.TestCase):
     def test_plans_of_a_city_without_scores_are_counted_but_not_listed(self):
         data = self.read(incentive_date=DATE)
 
-        self.assertEqual(data["total_plans"], 5)
+        self.assertEqual(data["total_plans"], 6)
         self.assertEqual(data["plans_without_scores"], 1)
         self.assertEqual(data["plans_without_scores_cities"], ["City #99"])
         for city in data["cities"]:

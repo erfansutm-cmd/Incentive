@@ -25,8 +25,11 @@ follows the configured tiers in numeric order.
 
 Expanded rows show all entities for that city, plus its plans ordered by
 incentive type — ``FINAL_DECISION_PLAN_TYPE_ORDER``, by default ``DAILY`` →
-``ON-TOP-FOOD`` → anything else alphabetically. The UI shows one column per plan
-type in that order, marks the top plan and lets the user reorder it in a popup.
+``ON-TOP-FOOD`` → anything else alphabetically — and, inside one type, by the
+business-entity priority (``foodZooket`` > ``food`` > ``Zooket`` > others): a
+type can carry several plans, one per entity. The UI shows one column per plan
+type in that order, writes every plan of a city in line in its column with the
+first one marked as top and lets the user reorder the columns in a popup.
 
 Plans are best-effort: if ``final_incentive_plans`` cannot be read the scores still
 load and the response carries ``plans_error`` so the tab can say so.
@@ -353,9 +356,14 @@ def _load_plans(conn, target_date):
         plans_by_city.setdefault(str(city_id).strip(), []).append(plan)
 
     for plans in plans_by_city.values():
+        # A plan type can carry several plans (two DAILY plans for two entities):
+        # the entity priority decides, exactly as it does for the score columns.
         plans.sort(
             key=lambda p: (
+                # listed types by their configured order, the rest alphabetically
                 p["type_rank"],
+                str(p.get("incentive_type") or p.get("incentive_type_label") or "").lower(),
+                _entity_priority(p.get("business_entity")),
                 str(p.get("business_entity") or "").lower(),
                 p.get("id") if isinstance(p.get("id"), (int, float)) else 0,
             )

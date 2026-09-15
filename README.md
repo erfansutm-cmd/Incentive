@@ -654,19 +654,28 @@ tab shows it. Per plan the tab shows:
 
 **Plans are columns, like the scores.** The table header gets one column per
 incentive type that has plans on that date, in the plan-type order below, and
-every city shows its plan of that type **in line** in the matching cell: business
-entity, the changes (`T 1.000 · PR 1.200 · B 0.2 · 0.2 · 0.1`) and *Details* to
-`/plans/{plan_mapping_id}`. The city's top plan carries the **top** badge and a
-slightly tinted cell, a plan whose mapping is deactivated is flagged **mapping
-off**, and a city without a plan of that type shows `—`. Expanding a city still
-lists every plan as a card with the full detail (three decimals, bucket chips,
-`updated_at` / `updated_by`) next to the scores of all its entities.
+every city writes its plans of that type **in line** in the matching cell — one
+plain row per plan, no cards: business entity, the two changes and the bucket,
+plus *Details* to `/plans/{plan_mapping_id}`. A plan type can carry several plans
+(two DAILY plans, one per business entity); they are ordered by the **entity
+order** and stacked in that order, so the first one is the top plan of the
+column. Only that first plan of the city carries the small **top** flag, and a
+plan whose mapping is deactivated is flagged **off**; the update stamp
+(`updated_at · updated_by`) is the row's tooltip. A city without a plan of that
+type shows `—`.
+
+`target_change` and `pr_change` are colored on the same green → red scale as the
+score badges (lowest of the date green, highest red), so the aggressive plans
+stand out at a glance. Expanding a city still lists every plan as a card with the
+full detail (three decimals, bucket chips, `updated_at` / `updated_by`) next to
+the scores of all its entities.
 
 ### Plan order (top first)
 
 The plan-type columns are ordered `DAILY` → `ON-TOP-FOOD` → the rest
-alphabetically, so the plan that matters most is the first column and the one
-wearing the **top** badge. The order comes from
+alphabetically, so the plan that matters most is the first column; inside one
+column the plans are ordered by the entity order and the first one wears the
+**top** flag. The order comes from
 `FINAL_DECISION_PLAN_TYPE_ORDER` (comma separated type names, anything unlisted
 follows alphabetically) and is returned as `plan_type_order`. There is no
 `default` plan type in this database, so it is not part of the order — a plan
@@ -707,9 +716,11 @@ type-name lookup, the date filter, the bucket decoding and the ordering are all
 exercised for real. It also covers the graceful *plans table missing* path.
 The same file checks the city groups (`group_order`, the group ordering on
 separator/case variants and the extra tiers). `frontend/tests/unit/final-decisions.spec.js`
-mounts the real view against a mocked `/api` and covers the plan columns and the
-plans written in line, the plan cards, the type-order popup (reorder and reset),
-the group order kept for equal scores and the empty/error states.
+mounts the real view against a mocked `/api` and covers the plan columns, the
+plans written in line (two plans of one type stacked in the entity order, the top
+flag on the first), the target/PR heat colors, the plan cards, the type-order
+popup (reorder and reset), the group order kept for equal scores and the
+empty/error states.
 
 ## Performance score
 
