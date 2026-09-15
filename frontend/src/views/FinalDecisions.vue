@@ -48,6 +48,9 @@ const sortKey = ref(null)
 const sortDir = ref('asc')
 const entitySortKey = ref(null)
 const entitySortDir = ref('asc')
+const showPriorityEditor = ref(false)
+const DEFAULT_PRIORITY = ['foodZooket', 'food', 'Zooket']
+const priorityOrder = ref([...DEFAULT_PRIORITY])
 const message = ref(null)
 let messageTimer = null
 let controller = null
@@ -76,9 +79,11 @@ const sortedCities = computed(() => {
   if (!sortKey.value) return filteredCities.value
   const key = sortKey.value
   const dir = sortDir.value === 'asc' ? 1 : -1
+  // touch priorityOrder so sort re-evaluates when priority changes
+  const _po = priorityOrder.value.slice()
   return [...filteredCities.value].sort((a, b) => {
-    const av = a.primary_entity?.scores?.[key]
-    const bv = b.primary_entity?.scores?.[key]
+    const av = (prioritySortedEntities(a)[0] || a.primary_entity)?.scores?.[key]
+    const bv = (prioritySortedEntities(b)[0] || b.primary_entity)?.scores?.[key]
     const aNull = av === null || av === undefined || av === ''
     const bNull = bv === null || bv === undefined || bv === ''
     if (aNull && bNull) return 0
@@ -145,9 +150,27 @@ function onEntityOrderChange(e) {
     entitySortDir.value = 'asc'
   }
 }
-function sortedEntities(city) {
+function priorityRank(name) {
+  const idx = priorityOrder.value.indexOf(name)
+  if (idx !== -1) return idx
+  return priorityOrder.value.length + 100
+}
+function prioritySortedEntities(city) {
   const list = city.business_entities || []
-  if (!entitySortKey.value) return list
+  return [...list].sort((a, b) => {
+    const ra = priorityRank(a.business_entity)
+    const rb = priorityRank(b.business_entity)
+    if (ra !== rb) return ra - rb
+    return String(a.business_entity).localeCompare(String(b.business_entity))
+  })
+}
+function displayPrimary(city) {
+  const sorted = prioritySortedEntities(city)
+  return sorted[0] || city.primary_entity || null
+}
+function sortedEntities(city) {
+  if (!entitySortKey.value) return prioritySortedEntities(city)
+  const list = city.business_entities || []
   const key = entitySortKey.value
   const dir = entitySortDir.value === 'asc' ? 1 : -1
   return [...list].sort((a, b) => {
@@ -163,10 +186,47 @@ function sortedEntities(city) {
     if (!Number.isFinite(an) && !Number.isFinite(bn)) return 0
     if (!Number.isFinite(an)) return 1
     if (!Number.isFinite(bn)) return -1
-    if (an === bn) return String(a.business_entity).localeCompare(String(b.business_entity))
+    if (an === bn) {
+      const ra = priorityRank(a.business_entity)
+      const rb = priorityRank(b.business_entity)
+      if (ra !== rb) return ra - rb
+      return String(a.business_entity).localeCompare(String(b.business_entity))
+    }
     return (an - bn) * dir
   })
 }
+function movePriority(index, dir) {
+  const next = [...priorityOrder.value]
+  const target = index + dir
+  if (target < 0 || target >= next.length) return
+  const tmp = next[index]
+  next[index] = next[target]
+  next[target] = tmp
+  priorityOrder.value = next
+}
+function resetPriority() {
+  priorityOrder.value = [...DEFAULT_PRIORITY]
+  // re-add any other entities that were added?
+  ensurePriorityCoversAll()
+}
+function ensurePriorityCoversAll() {
+  const seen = new Set(priorityOrder.value)
+  const all = new Set()
+  for (const c of cities.value) {
+    for (const be of c.business_entities || []) all.add(be.business_entity)
+  }
+  for (const name of [...all].sort((a, b) => a.localeCompare(b))) {
+    if (!seen.has(name)) {
+      priorityOrder.value = [...priorityOrder.value, name]
+      seen.add(name)
+    }
+  }
+}
+const allKnownEntities = computed(() => {
+  const set = new Set(priorityOrder.value)
+  for (const c of cities.value) for (const be of c.business_entities || []) set.add(be.business_entity)
+  return [...set]
+})
 
 function cityKey(c) {
   return String(c.city_id_raw ?? c.city_id)
@@ -215,6 +275,7 @@ async function load() {
     const valid = new Set(cities.value.map((c) => String(c.city_id_raw ?? c.city_id)))
     const pruned = new Set([...expanded.value].filter((k) => valid.has(k)))
     expanded.value = pruned
+    ensurePriorityCoversAll()
   } catch (e) {
     if (!ctrl.signal.aborted) {
       error.value = e.message
@@ -301,6 +362,10 @@ onBeforeUnmount(() => {
       </select>
       <button v-if="entitySortKey" class="btn btn-ghost btn-sm" @click="clearEntitySort" title="Back to priority order">↺</button>
 
+      <button class="btn btn-ghost btn-sm" @click="showPriorityEditor = !showPriorityEditor">
+        {{ showPriorityEditor ? 'Hide priority' : 'Priority order' }}
+      </button>
+
       <span class="pill spacer">
         <template v-if="loading">Loading…</template>
         <template v-else>{{ visibleCount }} of {{ totalCities }} cities</template>
@@ -313,6 +378,34 @@ onBeforeUnmount(() => {
       >
         ↺ Default order
       </button>
+    </div>
+
+    <div v-if="showPriorityEditor" class="card priority-editor">
+      <div class="priority-head">
+        <div>
+          <h4 style="margin:0; font-size:0.92rem">Entity priority order</h4>
+          <p class="hint" style="margin:0.15rem 0 0">Top = shown in collapsed row · default foodZooket > food > Zooket > others</p>
+        </div>
+        <button class="btn btn-ghost btn-sm" @click="showPriorityEditor = false">Close</button>
+      </div>
+      <div class="priority-list">
+        <div v-for="(name, i) in priorityOrder" :key="name" class="priority-row">
+          <span class="pri-rank">{{ i + 1 }}</span>
+          <span class="entity-name flex-1">{{ name }}</span>
+          <div class="pri-actions">
+            <button class="btn btn-ghost tiny" :disabled="i === 0" @click="movePriority(i, -1)" title="Move up">↑</button>
+            <button class="btn btn-ghost tiny" :disabled="i === priorityOrder.length - 1" @click="movePriority(i, 1)" title="Move down">↓</button>
+          </div>
+        </div>
+        <div v-if="allKnownEntities.filter(n => !priorityOrder.includes(n)).length" class="priority-add-row">
+          <span class="hint" style="font-size:0.78rem">Others (after): {{ allKnownEntities.filter(n => !priorityOrder.includes(n)).join(', ') }}</span>
+          <button class="btn btn-ghost btn-sm" @click="ensurePriorityCoversAll" style="white-space:nowrap">Add all</button>
+        </div>
+      </div>
+      <div class="priority-foot">
+        <button class="btn btn-ghost btn-sm" @click="resetPriority">↺ Reset to default</button>
+        <span class="hint" style="font-size:0.78rem">Entities are shown in this order inside each city (when not sorted by scores)</span>
+      </div>
     </div>
 
     <div v-if="error" class="banner error" role="alert">
@@ -427,24 +520,24 @@ onBeforeUnmount(() => {
                     </div>
                   </td>
                   <td class="entity-cell">
-                    <span v-if="city.primary_entity" class="entity-name">{{ city.primary_entity.business_entity }}</span>
+                    <span v-if="displayPrimary(city)" class="entity-name">{{ displayPrimary(city).business_entity }}</span>
                     <span v-else class="muted">—</span>
                   </td>
                   <td class="score-cell">
-                    <span v-if="city.primary_entity" class="score-badge" :class="scoreBadgeClass(city.primary_entity.scores.performance)">
-                      {{ formatScore(city.primary_entity.scores.performance) }}
+                    <span v-if="displayPrimary(city)" class="score-badge" :class="scoreBadgeClass(displayPrimary(city).scores.performance)">
+                      {{ formatScore(displayPrimary(city).scores.performance) }}
                     </span>
                     <span v-else class="muted">—</span>
                   </td>
                   <td class="score-cell">
-                    <span v-if="city.primary_entity" class="score-badge" :class="scoreBadgeClass(city.primary_entity.scores.order_level_increase)">
-                      {{ formatScore(city.primary_entity.scores.order_level_increase) }}
+                    <span v-if="displayPrimary(city)" class="score-badge" :class="scoreBadgeClass(displayPrimary(city).scores.order_level_increase)">
+                      {{ formatScore(displayPrimary(city).scores.order_level_increase) }}
                     </span>
                     <span v-else class="muted">—</span>
                   </td>
                   <td class="score-cell">
-                    <span v-if="city.primary_entity" class="score-badge" :class="scoreBadgeClass(city.primary_entity.scores.weather)">
-                      {{ formatScore(city.primary_entity.scores.weather) }}
+                    <span v-if="displayPrimary(city)" class="score-badge" :class="scoreBadgeClass(displayPrimary(city).scores.weather)">
+                      {{ formatScore(displayPrimary(city).scores.weather) }}
                     </span>
                     <span v-else class="muted">—</span>
                   </td>
@@ -462,15 +555,6 @@ onBeforeUnmount(() => {
                   <td :colspan="7" class="detail-cell" @click.stop>
                     <div class="integrated-panel">
                       <div class="panel-block scores-block">
-                        <div class="scores-caption">
-                          <span class="caption-label">Entities</span>
-                          <span class="pill plain tiny">{{ city.business_entities.length }}</span>
-                          <template v-if="entitySortKey">
-                            <span class="caption-sort">· {{ entitySortKey === 'performance' ? 'Performance' : entitySortKey === 'order_level_increase' ? 'Order Level' : 'Weather' }} {{ entitySortDir === 'asc' ? '↑' : '↓' }}</span>
-                            <button class="btn btn-ghost tiny" style="padding:0.12rem 0.35rem; font-size:0.72rem" @click="clearEntitySort">reset</button>
-                          </template>
-                          <span v-else class="hint" style="font-size:0.73rem">· priority order</span>
-                        </div>
                         <div class="mini-table-wrap">
                           <table class="mini-table">
                             <colgroup>
@@ -668,23 +752,23 @@ onBeforeUnmount(() => {
 .final-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 860px;
+  min-width: 820px;
   table-layout: fixed;
 }
 .col-expand {
-  width: 48px;
+  width: 44px;
 }
 .col-city {
-  width: 184px;
+  width: 150px;
 }
 .col-entity {
-  width: 164px;
+  width: 132px;
 }
 .col-score {
-  width: 108px;
+  width: 84px;
 }
 .col-decisions {
-  width: 140px;
+  width: 236px;
 }
 .final-table thead th {
   text-align: left;
@@ -1102,6 +1186,76 @@ onBeforeUnmount(() => {
   line-height: 1.5;
   color: var(--muted);
   margin: 0;
+}
+.priority-editor {
+  padding: 0.9rem 1rem 1rem;
+}
+.priority-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+.priority-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.priority-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  background: #fbfdfc;
+}
+.pri-rank {
+  width: 1.6rem;
+  height: 1.6rem;
+  display: grid;
+  place-items: center;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  border-radius: 50%;
+  font-weight: 700;
+  font-size: 0.78rem;
+  flex-shrink: 0;
+}
+.priority-row .entity-name {
+  font-weight: 600;
+  font-size: 0.86rem;
+}
+.pri-actions {
+  display: flex;
+  gap: 0.25rem;
+  margin-left: auto;
+}
+.btn.tiny {
+  padding: 0.18rem 0.4rem;
+  font-size: 0.78rem;
+  line-height: 1;
+}
+.priority-add-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px dashed var(--border);
+  border-radius: 0.55rem;
+  background: #fff;
+}
+.priority-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  flex-wrap: wrap;
+}
+.flex-1 {
+  flex: 1;
 }
 
 @media (max-width: 980px) {
