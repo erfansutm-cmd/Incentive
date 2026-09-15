@@ -373,7 +373,7 @@ onBeforeUnmount(() => {
       <button v-if="searchQuery || groupFilter" class="btn btn-ghost btn-sm" @click="clearFilters">Clear</button>
 
       <button class="btn btn-ghost btn-sm" @click="showPriorityEditor = !showPriorityEditor">
-        {{ showPriorityEditor ? 'Hide priority' : 'Priority order' }}
+        {{ showPriorityEditor ? 'Hide entity order' : 'Entity order' }}
       </button>
 
       <span class="pill spacer">
@@ -391,13 +391,20 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="showPriorityEditor" class="priority-modal-overlay" @click.self="showPriorityEditor = false">
-      <div class="priority-modal" role="dialog" aria-modal="true" aria-label="Entity priority order">
+      <div class="priority-modal" role="dialog" aria-modal="true" aria-label="Entity order">
         <div class="priority-modal-head">
           <div>
-            <h4 style="margin:0; font-size:1rem">Priority order</h4>
-            <p class="hint" style="margin:0.2rem 0 0">Drag to reorder · top is shown in collapsed rows · default foodZooket > food > Zooket > others</p>
+            <h4 style="margin:0; font-size:1rem">Entity order</h4>
+            <p class="hint" style="margin:0.2rem 0 0">Top is shown in collapsed city rows and is the default order inside each city</p>
           </div>
           <button class="btn btn-ghost btn-sm" @click="showPriorityEditor = false">✕</button>
+        </div>
+        <div class="drag-info">
+          <span class="drag-info-icon" aria-hidden="true">↕</span>
+          <div>
+            <strong>Drag & drop to reorder</strong>
+            <p class="hint" style="margin:0.15rem 0 0; line-height:1.45">Grab the <span style="letter-spacing:0.08em">⋮⋮</span> handle and drop where you want it.<br/>Higher = higher priority. Use <code>↑</code>/<code>↓</code> as alternative. <em>Default:</em> foodZooket > food > Zooket > others</p>
+          </div>
         </div>
         <div class="priority-list">
           <div
@@ -778,23 +785,23 @@ onBeforeUnmount(() => {
 .final-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 780px;
+  min-width: 760px;
   table-layout: fixed;
 }
 .col-expand {
-  width: 40px;
+  width: 38px;
 }
 .col-city {
-  width: 138px;
+  width: 124px;
 }
 .col-entity {
-  width: 120px;
+  width: 104px;
 }
 .col-score {
-  width: 70px;
+  width: 62px;
 }
 .col-decisions {
-  width: 264px;
+  width: 320px;
 }
 .final-table thead th {
   text-align: left;
@@ -1053,8 +1060,8 @@ onBeforeUnmount(() => {
 }
 .integrated-panel {
   display: grid;
-  grid-template-columns: minmax(330px, 0.82fr) 1.45fr;
-  gap: 1.15rem;
+  grid-template-columns: minmax(300px, 0.68fr) 1.62fr;
+  gap: 1.2rem;
   padding: 1.1rem 1.25rem 1.25rem;
   animation: slideDown 0.22s ease;
 }
@@ -1310,7 +1317,43 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   align-items: flex-start;
   gap: 1rem;
+  margin-bottom: 0.65rem;
+}
+.drag-info {
+  display: flex;
+  gap: 0.7rem;
+  align-items: flex-start;
+  padding: 0.65rem 0.75rem;
+  background: #f6f9f8;
+  border: 1px solid #e3ece9;
+  border-radius: 0.6rem;
   margin-bottom: 0.85rem;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+.drag-info-icon {
+  width: 1.9rem;
+  height: 1.9rem;
+  display: grid;
+  place-items: center;
+  background: #fff;
+  border: 1px solid #e3ece9;
+  border-radius: 0.5rem;
+  color: var(--accent-strong);
+  font-weight: 700;
+  flex-shrink: 0;
+  font-size: 0.95rem;
+}
+.drag-info strong {
+  font-size: 0.84rem;
+  color: var(--text);
+}
+.drag-info code {
+  background: #fff;
+  border: 1px solid #e3ece9;
+  padding: 0.05rem 0.25rem;
+  border-radius: 0.3rem;
+  font-size: 0.76rem;
 }
 .drag-handle {
   cursor: grab;
