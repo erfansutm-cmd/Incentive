@@ -46,6 +46,8 @@ const incentiveDate = ref('')
 const expanded = ref(new Set())
 const sortKey = ref(null)
 const sortDir = ref('asc')
+const entitySortKey = ref(null)
+const entitySortDir = ref('asc')
 const message = ref(null)
 let messageTimer = null
 let controller = null
@@ -101,16 +103,69 @@ const allExpanded = computed(
 )
 
 function toggleSort(key) {
-  if (sortKey.value === key) {
-    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
-  } else {
+  if (sortKey.value !== key) {
     sortKey.value = key
     sortDir.value = 'asc'
+  } else if (sortDir.value === 'asc') {
+    sortDir.value = 'desc'
+  } else {
+    sortKey.value = null
   }
+}
+function clearSort() {
+  sortKey.value = null
 }
 function sortLabel(key) {
   if (sortKey.value !== key) return ''
   return sortDir.value === 'asc' ? '▲' : '▼'
+}
+function toggleEntitySort(key) {
+  if (entitySortKey.value !== key) {
+    entitySortKey.value = key
+    entitySortDir.value = 'asc'
+  } else if (entitySortDir.value === 'asc') {
+    entitySortDir.value = 'desc'
+  } else {
+    entitySortKey.value = null
+  }
+}
+function clearEntitySort() {
+  entitySortKey.value = null
+}
+function entitySortLabel(key) {
+  if (entitySortKey.value !== key) return ''
+  return entitySortDir.value === 'asc' ? '▲' : '▼'
+}
+function onEntityOrderChange(e) {
+  const v = e.target.value
+  if (!v) {
+    entitySortKey.value = null
+  } else {
+    entitySortKey.value = v
+    entitySortDir.value = 'asc'
+  }
+}
+function sortedEntities(city) {
+  const list = city.business_entities || []
+  if (!entitySortKey.value) return list
+  const key = entitySortKey.value
+  const dir = entitySortDir.value === 'asc' ? 1 : -1
+  return [...list].sort((a, b) => {
+    const av = a.scores?.[key]
+    const bv = b.scores?.[key]
+    const aNull = av === null || av === undefined || av === ''
+    const bNull = bv === null || bv === undefined || bv === ''
+    if (aNull && bNull) return 0
+    if (aNull) return 1
+    if (bNull) return -1
+    const an = Number(av)
+    const bn = Number(bv)
+    if (!Number.isFinite(an) && !Number.isFinite(bn)) return 0
+    if (!Number.isFinite(an)) return 1
+    if (!Number.isFinite(bn)) return -1
+    if (an === bn) return String(a.business_entity).localeCompare(String(b.business_entity))
+    return (an - bn) * dir
+  })
 }
 
 function cityKey(c) {
@@ -231,10 +286,33 @@ onBeforeUnmount(() => {
 
       <button v-if="searchQuery || groupFilter" class="btn btn-ghost btn-sm" @click="clearFilters">Clear</button>
 
+      <label class="sr-only" for="entity-order">Business entity order</label>
+      <select
+        id="entity-order"
+        class="select-field select-sm"
+        :value="entitySortKey || ''"
+        @change="onEntityOrderChange"
+        title="Order of business entities inside expanded rows — default is priority"
+      >
+        <option value="">Entities: Default</option>
+        <option value="performance">Entities: Performance</option>
+        <option value="order_level_increase">Entities: Order Level</option>
+        <option value="weather">Entities: Weather</option>
+      </select>
+      <button v-if="entitySortKey" class="btn btn-ghost btn-sm" @click="clearEntitySort" title="Back to priority order">↺</button>
+
       <span class="pill spacer">
         <template v-if="loading">Loading…</template>
         <template v-else>{{ visibleCount }} of {{ totalCities }} cities</template>
       </span>
+      <button
+        v-if="sortKey"
+        class="btn btn-ghost btn-sm sort-clear"
+        @click="clearSort"
+        title="Remove city sort — back to default (active city id)"
+      >
+        ↺ Default order
+      </button>
     </div>
 
     <div v-if="error" class="banner error" role="alert">
@@ -389,13 +467,25 @@ onBeforeUnmount(() => {
                             <thead>
                               <tr>
                                 <th>Business Entity</th>
-                                <th class="num">Performance</th>
-                                <th class="num">Order Level</th>
-                                <th class="num">Weather</th>
+                                <th class="num">
+                                  <button class="sort-btn mini" @click="toggleEntitySort('performance')">
+                                    Performance <span class="sort-arrow" :class="{ active: entitySortKey === 'performance' }">{{ entitySortLabel('performance') }}</span>
+                                  </button>
+                                </th>
+                                <th class="num">
+                                  <button class="sort-btn mini" @click="toggleEntitySort('order_level_increase')">
+                                    Order Level <span class="sort-arrow" :class="{ active: entitySortKey === 'order_level_increase' }">{{ entitySortLabel('order_level_increase') }}</span>
+                                  </button>
+                                </th>
+                                <th class="num">
+                                  <button class="sort-btn mini" @click="toggleEntitySort('weather')">
+                                    Weather <span class="sort-arrow" :class="{ active: entitySortKey === 'weather' }">{{ entitySortLabel('weather') }}</span>
+                                  </button>
+                                </th>
                               </tr>
                             </thead>
                             <tbody>
-                              <tr v-for="be in city.business_entities" :key="be.business_entity">
+                              <tr v-for="be in sortedEntities(city)" :key="be.business_entity">
                                 <td class="mini-entity">
                                   <span class="entity-name">{{ be.business_entity }}</span>
                                 </td>
@@ -655,6 +745,35 @@ onBeforeUnmount(() => {
 }
 .sort-arrow.active {
   opacity: 1;
+  color: var(--accent-strong);
+}
+.select-sm {
+  padding: 0.38rem 0.6rem;
+  font-size: 0.82rem;
+  min-width: 148px;
+}
+.sort-clear {
+  white-space: nowrap;
+}
+.toolbar-card {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.sort-btn.mini {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+.sort-btn.mini:hover {
   color: var(--accent-strong);
 }
 .decisions-th {
