@@ -195,6 +195,8 @@ function sortedEntities(city) {
     return (an - bn) * dir
   })
 }
+const draggedIdx = ref(null)
+const dragOverIdx = ref(null)
 function movePriority(index, dir) {
   const next = [...priorityOrder.value]
   const target = index + dir
@@ -203,6 +205,29 @@ function movePriority(index, dir) {
   next[index] = next[target]
   next[target] = tmp
   priorityOrder.value = next
+}
+function onDragStart(idx) {
+  draggedIdx.value = idx
+}
+function onDragOver(idx) {
+  dragOverIdx.value = idx
+}
+function onDragLeave() {
+  dragOverIdx.value = null
+}
+function onDrop(targetIdx) {
+  const from = draggedIdx.value
+  if (from === null || from === targetIdx) return
+  const next = [...priorityOrder.value]
+  const [moved] = next.splice(from, 1)
+  next.splice(targetIdx, 0, moved)
+  priorityOrder.value = next
+  draggedIdx.value = null
+  dragOverIdx.value = null
+}
+function onDragEnd() {
+  draggedIdx.value = null
+  dragOverIdx.value = null
 }
 function resetPriority() {
   priorityOrder.value = [...DEFAULT_PRIORITY]
@@ -347,21 +372,6 @@ onBeforeUnmount(() => {
 
       <button v-if="searchQuery || groupFilter" class="btn btn-ghost btn-sm" @click="clearFilters">Clear</button>
 
-      <label class="sr-only" for="entity-order">Business entity order</label>
-      <select
-        id="entity-order"
-        class="select-field select-sm"
-        :value="entitySortKey || ''"
-        @change="onEntityOrderChange"
-        title="Order of business entities inside expanded rows — default is priority"
-      >
-        <option value="">Entities: Default</option>
-        <option value="performance">Entities: Performance</option>
-        <option value="order_level_increase">Entities: Order Level</option>
-        <option value="weather">Entities: Weather</option>
-      </select>
-      <button v-if="entitySortKey" class="btn btn-ghost btn-sm" @click="clearEntitySort" title="Back to priority order">↺</button>
-
       <button class="btn btn-ghost btn-sm" @click="showPriorityEditor = !showPriorityEditor">
         {{ showPriorityEditor ? 'Hide priority' : 'Priority order' }}
       </button>
@@ -380,31 +390,47 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
-    <div v-if="showPriorityEditor" class="card priority-editor">
-      <div class="priority-head">
-        <div>
-          <h4 style="margin:0; font-size:0.92rem">Entity priority order</h4>
-          <p class="hint" style="margin:0.15rem 0 0">Top = shown in collapsed row · default foodZooket > food > Zooket > others</p>
+    <div v-if="showPriorityEditor" class="priority-modal-overlay" @click.self="showPriorityEditor = false">
+      <div class="priority-modal" role="dialog" aria-modal="true" aria-label="Entity priority order">
+        <div class="priority-modal-head">
+          <div>
+            <h4 style="margin:0; font-size:1rem">Priority order</h4>
+            <p class="hint" style="margin:0.2rem 0 0">Drag to reorder · top is shown in collapsed rows · default foodZooket > food > Zooket > others</p>
+          </div>
+          <button class="btn btn-ghost btn-sm" @click="showPriorityEditor = false">✕</button>
         </div>
-        <button class="btn btn-ghost btn-sm" @click="showPriorityEditor = false">Close</button>
-      </div>
-      <div class="priority-list">
-        <div v-for="(name, i) in priorityOrder" :key="name" class="priority-row">
-          <span class="pri-rank">{{ i + 1 }}</span>
-          <span class="entity-name flex-1">{{ name }}</span>
-          <div class="pri-actions">
-            <button class="btn btn-ghost tiny" :disabled="i === 0" @click="movePriority(i, -1)" title="Move up">↑</button>
-            <button class="btn btn-ghost tiny" :disabled="i === priorityOrder.length - 1" @click="movePriority(i, 1)" title="Move down">↓</button>
+        <div class="priority-list">
+          <div
+            v-for="(name, i) in priorityOrder"
+            :key="name"
+            class="priority-row"
+            :class="{ dragging: draggedIdx === i, 'drag-over': dragOverIdx === i && draggedIdx !== i }"
+            draggable="true"
+            @dragstart="onDragStart(i)"
+            @dragover.prevent="onDragOver(i)"
+            @dragleave="onDragLeave()"
+            @drop.prevent="onDrop(i)"
+            @dragend="onDragEnd()"
+          >
+            <span class="drag-handle" aria-hidden="true">⋮⋮</span>
+            <span class="pri-rank">{{ i + 1 }}</span>
+            <span class="entity-name flex-1">{{ name }}</span>
+            <div class="pri-actions">
+              <button class="btn btn-ghost tiny" :disabled="i === 0" @click.stop="movePriority(i, -1)" title="Move up">↑</button>
+              <button class="btn btn-ghost tiny" :disabled="i === priorityOrder.length - 1" @click.stop="movePriority(i, 1)" title="Move down">↓</button>
+            </div>
+          </div>
+          <div v-if="allKnownEntities.filter(n => !priorityOrder.includes(n)).length" class="priority-add-row">
+            <span class="hint" style="font-size:0.78rem">Others (after): {{ allKnownEntities.filter(n => !priorityOrder.includes(n)).join(', ') }}</span>
+            <button class="btn btn-ghost btn-sm" @click="ensurePriorityCoversAll" style="white-space:nowrap">Add all</button>
           </div>
         </div>
-        <div v-if="allKnownEntities.filter(n => !priorityOrder.includes(n)).length" class="priority-add-row">
-          <span class="hint" style="font-size:0.78rem">Others (after): {{ allKnownEntities.filter(n => !priorityOrder.includes(n)).join(', ') }}</span>
-          <button class="btn btn-ghost btn-sm" @click="ensurePriorityCoversAll" style="white-space:nowrap">Add all</button>
+        <div class="priority-foot">
+          <button class="btn btn-ghost btn-sm" @click="resetPriority">↺ Reset to default</button>
+          <span class="hint" style="font-size:0.78rem">Entities are shown in this order inside each city (when not sorted by scores)</span>
+          <span class="spacer"></span>
+          <button class="btn btn-primary btn-sm" @click="showPriorityEditor = false">Done</button>
         </div>
-      </div>
-      <div class="priority-foot">
-        <button class="btn btn-ghost btn-sm" @click="resetPriority">↺ Reset to default</button>
-        <span class="hint" style="font-size:0.78rem">Entities are shown in this order inside each city (when not sorted by scores)</span>
       </div>
     </div>
 
@@ -752,23 +778,23 @@ onBeforeUnmount(() => {
 .final-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 820px;
+  min-width: 780px;
   table-layout: fixed;
 }
 .col-expand {
-  width: 44px;
+  width: 40px;
 }
 .col-city {
-  width: 150px;
+  width: 138px;
 }
 .col-entity {
-  width: 132px;
+  width: 120px;
 }
 .col-score {
-  width: 84px;
+  width: 70px;
 }
 .col-decisions {
-  width: 236px;
+  width: 264px;
 }
 .final-table thead th {
   text-align: left;
@@ -961,22 +987,23 @@ onBeforeUnmount(() => {
 .score-badge {
   display: grid;
   place-items: center;
-  min-width: 2.2rem;
-  padding: 0.24rem 0.5rem;
-  border-radius: 0.5rem;
+  min-width: 1.65rem;
+  padding: 0.14rem 0.32rem;
+  border-radius: 0.45rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  font-size: 0.86rem;
+  font-size: 0.78rem;
   border: 1px solid var(--border);
   background: #fff;
   color: var(--text);
   margin: 0 auto;
   width: fit-content;
+  line-height: 1.1;
 }
 .score-badge.small {
-  min-width: 1.9rem;
-  padding: 0.18rem 0.42rem;
-  font-size: 0.82rem;
+  min-width: 1.55rem;
+  padding: 0.12rem 0.28rem;
+  font-size: 0.73rem;
 }
 .score-badge.muted {
   background: #fbfdfc;
@@ -1118,8 +1145,8 @@ onBeforeUnmount(() => {
   padding-left: 0.85rem;
 }
 .mini-table tbody td {
-  padding: 0.58rem 0.6rem;
-  border-top: 1px solid #f2f5f4;
+  padding: 0.56rem 0.6rem;
+  border: none;
 }
 .mini-table tbody td:first-child {
   padding-left: 0.85rem;
@@ -1127,8 +1154,8 @@ onBeforeUnmount(() => {
 .mini-table tbody td.num {
   text-align: center;
 }
-.mini-table tbody tr:nth-child(even) td {
-  background: #fcfdfc;
+.mini-table tbody tr + tr td {
+  border: none;
 }
 .mini-table tbody tr:hover td {
   background: #f6f9f8;
@@ -1256,6 +1283,58 @@ onBeforeUnmount(() => {
 }
 .flex-1 {
   flex: 1;
+}
+.priority-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(16, 32, 24, 0.38);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+  backdrop-filter: blur(2px);
+}
+.priority-modal {
+  background: #fff;
+  border-radius: 0.9rem;
+  width: min(460px, 100%);
+  max-height: 85vh;
+  overflow: auto;
+  box-shadow: 0 12px 40px rgba(16, 32, 24, 0.24), 0 2px 8px rgba(16, 32, 24, 0.08);
+  padding: 1rem 1.15rem 1rem;
+  border: 1px solid #e6ece9;
+}
+.priority-modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 0.85rem;
+}
+.drag-handle {
+  cursor: grab;
+  color: #9ab0a8;
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  user-select: none;
+  padding: 0 0.15rem;
+  line-height: 1;
+}
+.drag-handle:active {
+  cursor: grabbing;
+}
+.priority-row.dragging {
+  opacity: 0.42;
+}
+.priority-row.drag-over {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  background: #f0faf6 !important;
+  border-color: var(--accent) !important;
+}
+.priority-row {
+  transition: transform 0.12s ease, background 0.12s ease;
 }
 
 @media (max-width: 980px) {
