@@ -7,6 +7,7 @@ from .api import (
     business_entities,
     city_plan_mappings,
     decision_matrix,
+    final_decisions,
     incentive_base_configs,
     incentive_lookups,
     incentive_types,
@@ -25,6 +26,7 @@ app.include_router(cities.router)
 app.include_router(business_entities.router)
 app.include_router(city_plan_mappings.router)
 app.include_router(decision_matrix.router)
+app.include_router(final_decisions.router)
 app.include_router(incentive_base_configs.router)
 app.include_router(incentive_lookups.router)
 app.include_router(incentive_types.router)
