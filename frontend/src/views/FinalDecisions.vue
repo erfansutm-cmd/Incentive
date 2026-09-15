@@ -391,7 +391,6 @@ onBeforeUnmount(() => {
           <div>
             <h4 style="margin:0; font-size:1rem">Entity order</h4>
             <p class="hint" style="margin:0.2rem 0 0">
-              Drag to reorder · top is shown in collapsed rows<br />
               Default: foodZooket &gt; food &gt; Zooket &gt; others
             </p>
           </div>
@@ -437,7 +436,6 @@ onBeforeUnmount(() => {
         <div class="priority-foot">
           <button class="btn btn-ghost btn-sm" @click="resetPriority">↺ Reset to default</button>
           <button class="btn btn-primary btn-sm" @click="showPriorityEditor = false">Done</button>
-          <span class="hint priority-foot-hint">Entities are shown in this order inside each city<br />(when not sorted by scores)</span>
         </div>
       </div>
     </div>
