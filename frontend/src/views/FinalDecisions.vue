@@ -920,11 +920,22 @@ onBeforeUnmount(() => {
 .final-table tbody tr.city-row.expanded:hover {
   background: #dceee4;
 }
-.final-table tbody tr.city-row.expanded td:first-child {
-  box-shadow: inset 3px 0 0 var(--accent);
+/* Expanded group: one border box running from the top of the city row
+   down to below the expanded panel, to separate it from the rest of the table */
+.final-table tbody tr.city-row.expanded > td {
+  border-top: 2px solid var(--accent);
+  border-bottom: 0;
 }
-.final-table tbody tr.city-row.expanded td {
+.final-table tbody tr.city-row.expanded > td:first-child {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.final-table tbody tr.city-row.expanded > td:last-child {
+  box-shadow: inset -2px 0 0 var(--accent);
+}
+.final-table tbody tr.detail-row > td {
+  border-top: 0;
   border-bottom: 2px solid var(--accent);
+  box-shadow: inset 2px 0 0 var(--accent), inset -2px 0 0 var(--accent);
 }
 
 .expand-col {
