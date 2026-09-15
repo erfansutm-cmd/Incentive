@@ -46,8 +46,6 @@ const incentiveDate = ref('')
 const expanded = ref(new Set())
 const sortKey = ref(null)
 const sortDir = ref('asc')
-const entitySortKey = ref(null)
-const entitySortDir = ref('asc')
 const showPriorityEditor = ref(false)
 const DEFAULT_PRIORITY = ['foodZooket', 'food', 'Zooket']
 const priorityOrder = ref([...DEFAULT_PRIORITY])
@@ -124,32 +122,6 @@ function sortLabel(key) {
   if (sortKey.value !== key) return ''
   return sortDir.value === 'asc' ? '▲' : '▼'
 }
-function toggleEntitySort(key) {
-  if (entitySortKey.value !== key) {
-    entitySortKey.value = key
-    entitySortDir.value = 'asc'
-  } else if (entitySortDir.value === 'asc') {
-    entitySortDir.value = 'desc'
-  } else {
-    entitySortKey.value = null
-  }
-}
-function clearEntitySort() {
-  entitySortKey.value = null
-}
-function entitySortLabel(key) {
-  if (entitySortKey.value !== key) return ''
-  return entitySortDir.value === 'asc' ? '▲' : '▼'
-}
-function onEntityOrderChange(e) {
-  const v = e.target.value
-  if (!v) {
-    entitySortKey.value = null
-  } else {
-    entitySortKey.value = v
-    entitySortDir.value = 'asc'
-  }
-}
 function priorityRank(name) {
   const idx = priorityOrder.value.indexOf(name)
   if (idx !== -1) return idx
@@ -169,31 +141,7 @@ function displayPrimary(city) {
   return sorted[0] || city.primary_entity || null
 }
 function sortedEntities(city) {
-  if (!entitySortKey.value) return prioritySortedEntities(city)
-  const list = city.business_entities || []
-  const key = entitySortKey.value
-  const dir = entitySortDir.value === 'asc' ? 1 : -1
-  return [...list].sort((a, b) => {
-    const av = a.scores?.[key]
-    const bv = b.scores?.[key]
-    const aNull = av === null || av === undefined || av === ''
-    const bNull = bv === null || bv === undefined || bv === ''
-    if (aNull && bNull) return 0
-    if (aNull) return 1
-    if (bNull) return -1
-    const an = Number(av)
-    const bn = Number(bv)
-    if (!Number.isFinite(an) && !Number.isFinite(bn)) return 0
-    if (!Number.isFinite(an)) return 1
-    if (!Number.isFinite(bn)) return -1
-    if (an === bn) {
-      const ra = priorityRank(a.business_entity)
-      const rb = priorityRank(b.business_entity)
-      if (ra !== rb) return ra - rb
-      return String(a.business_entity).localeCompare(String(b.business_entity))
-    }
-    return (an - bn) * dir
-  })
+  return prioritySortedEntities(city)
 }
 const draggedIdx = ref(null)
 const dragOverIdx = ref(null)
@@ -206,18 +154,30 @@ function movePriority(index, dir) {
   next[target] = tmp
   priorityOrder.value = next
 }
-function onDragStart(idx) {
+function onDragStart(idx, evt) {
   draggedIdx.value = idx
+  if (evt?.dataTransfer) {
+    evt.dataTransfer.effectAllowed = 'move'
+    try {
+      evt.dataTransfer.setData('text/plain', String(idx))
+    } catch (e) {
+      // some browsers require this call to enable drag; ignore failures
+    }
+  }
 }
 function onDragOver(idx) {
-  dragOverIdx.value = idx
+  if (dragOverIdx.value !== idx) dragOverIdx.value = idx
 }
 function onDragLeave() {
   dragOverIdx.value = null
 }
 function onDrop(targetIdx) {
   const from = draggedIdx.value
-  if (from === null || from === targetIdx) return
+  if (from === null || from === targetIdx) {
+    draggedIdx.value = null
+    dragOverIdx.value = null
+    return
+  }
   const next = [...priorityOrder.value]
   const [moved] = next.splice(from, 1)
   next.splice(targetIdx, 0, moved)
@@ -395,28 +355,32 @@ onBeforeUnmount(() => {
         <div class="priority-modal-head">
           <div>
             <h4 style="margin:0; font-size:1rem">Entity order</h4>
-            <p class="hint" style="margin:0.2rem 0 0">Drag to reorder · top is shown in collapsed rows · default foodZooket > food > Zooket > others</p>
+            <p class="hint" style="margin:0.2rem 0 0">
+              Drag to reorder · top is shown in collapsed rows<br />
+              Default: foodZooket &gt; food &gt; Zooket &gt; others
+            </p>
           </div>
           <button class="btn btn-ghost btn-sm" @click="showPriorityEditor = false">✕</button>
         </div>
-        <div class="priority-list">
-          <template v-for="(name, i) in priorityOrder" :key="name">
-            <div
-              v-if="draggedIdx !== null && dragOverIdx === i && draggedIdx !== i"
-              class="drop-placeholder active"
-              @dragover.prevent="onDragOver(i)"
-              @drop.prevent="onDrop(i)"
-            ></div>
-            <div
-              class="priority-row"
-              :class="{ dragging: draggedIdx === i, 'drag-over': dragOverIdx === i && draggedIdx !== i }"
-              draggable="true"
-              @dragstart="onDragStart(i)"
-              @dragover.prevent="onDragOver(i)"
-              @dragleave="onDragLeave()"
-              @drop.prevent="onDrop(i)"
-              @dragend="onDragEnd()"
-            >
+        <transition-group
+          tag="div"
+          name="pri-move"
+          class="priority-list"
+          @dragover.prevent="onDragOver(priorityOrder.length)"
+          @drop.prevent="onDrop(priorityOrder.length)"
+        >
+          <div
+            v-for="(name, i) in priorityOrder"
+            :key="name"
+            class="priority-row"
+            :class="{ dragging: draggedIdx === i, 'drag-over-top': dragOverIdx === i && draggedIdx !== null && draggedIdx !== i }"
+            draggable="true"
+            @dragstart="onDragStart(i, $event)"
+            @dragover.prevent.stop="onDragOver(i)"
+            @dragleave="onDragLeave()"
+            @drop.prevent.stop="onDrop(i)"
+            @dragend="onDragEnd()"
+          >
             <span class="drag-handle" aria-hidden="true">⋮⋮</span>
             <span class="pri-rank">{{ i + 1 }}</span>
             <span class="entity-name flex-1">{{ name }}</span>
@@ -425,23 +389,20 @@ onBeforeUnmount(() => {
               <button class="btn btn-ghost tiny" :disabled="i === priorityOrder.length - 1" @click.stop="movePriority(i, 1)" title="Move down">↓</button>
             </div>
           </div>
-          </template>
           <div
-            v-if="draggedIdx !== null && dragOverIdx === priorityOrder.length"
-            class="drop-placeholder active"
-            @dragover.prevent="onDragOver(priorityOrder.length)"
-            @drop.prevent="onDrop(priorityOrder.length)"
+            key="__end_zone"
+            class="drop-end-zone"
+            :class="{ 'drag-over-top': dragOverIdx === priorityOrder.length && draggedIdx !== null }"
           ></div>
-          <div v-if="allKnownEntities.filter(n => !priorityOrder.includes(n)).length" class="priority-add-row">
-            <span class="hint" style="font-size:0.78rem">Others (after): {{ allKnownEntities.filter(n => !priorityOrder.includes(n)).join(', ') }}</span>
-            <button class="btn btn-ghost btn-sm" @click="ensurePriorityCoversAll" style="white-space:nowrap">Add all</button>
-          </div>
+        </transition-group>
+        <div v-if="allKnownEntities.filter(n => !priorityOrder.includes(n)).length" class="priority-add-row">
+          <span class="hint" style="font-size:0.78rem">Others (after): {{ allKnownEntities.filter(n => !priorityOrder.includes(n)).join(', ') }}</span>
+          <button class="btn btn-ghost btn-sm" @click="ensurePriorityCoversAll" style="white-space:nowrap">Add all</button>
         </div>
         <div class="priority-foot">
           <button class="btn btn-ghost btn-sm" @click="resetPriority">↺ Reset to default</button>
-          <span class="hint" style="font-size:0.78rem">Entities are shown in this order inside each city (when not sorted by scores)</span>
-          <span class="spacer"></span>
           <button class="btn btn-primary btn-sm" @click="showPriorityEditor = false">Done</button>
+          <span class="hint priority-foot-hint">Entities are shown in this order inside each city<br />(when not sorted by scores)</span>
         </div>
       </div>
     </div>
@@ -496,49 +457,33 @@ onBeforeUnmount(() => {
             <thead>
               <tr class="group-head-row">
                 <th class="th-expand"></th>
-                <th colspan="5" class="group-header scores-header">
-                  <span class="group-label">
-                    <span class="icon-tile sm accent" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z" />
-                      </svg>
-                    </span>
-                    Scores
-                  </span>
+                <th colspan="5" class="group-header scores-header scores-header-divider">
+                  <span class="group-label">Scores</span>
                 </th>
-                <th class="group-header decisions-header">
-                  <span class="group-label">
-                    <span class="icon-tile sm neutral" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M9 5H7a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2" />
-                        <path d="M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2V5z" />
-                        <path d="M9 12l2 2 4-4" />
-                      </svg>
-                    </span>
-                    Decisions
-                  </span>
+                <th class="group-header decisions-header decisions-header-divider">
+                  <span class="group-label">Decisions</span>
                 </th>
               </tr>
               <tr>
                 <th class="th-expand"><span class="sr-only">Expand</span></th>
-                <th>City</th>
-                <th>Business Entity</th>
-                <th class="score-th">
+                <th class="city-th">City</th>
+                <th class="entity-th">Business Entity</th>
+                <th class="score-th" :class="{ 'is-sorted': sortKey === 'performance' }">
                   <button class="sort-btn" @click="toggleSort('performance')">
-                    Performance <span class="sort-arrow" :class="{ active: sortKey === 'performance' }">{{ sortLabel('performance') }}</span>
+                    Performance <span class="sort-arrow" :class="{ active: sortKey === 'performance' }">{{ sortLabel('performance') || '↕' }}</span>
                   </button>
                 </th>
-                <th class="score-th">
+                <th class="score-th" :class="{ 'is-sorted': sortKey === 'order_level_increase' }">
                   <button class="sort-btn" @click="toggleSort('order_level_increase')">
-                    Order Level <span class="sort-arrow" :class="{ active: sortKey === 'order_level_increase' }">{{ sortLabel('order_level_increase') }}</span>
+                    Order Level <span class="sort-arrow" :class="{ active: sortKey === 'order_level_increase' }">{{ sortLabel('order_level_increase') || '↕' }}</span>
                   </button>
                 </th>
-                <th class="score-th">
+                <th class="score-th score-th-divider" :class="{ 'is-sorted': sortKey === 'weather' }">
                   <button class="sort-btn" @click="toggleSort('weather')">
-                    Weather <span class="sort-arrow" :class="{ active: sortKey === 'weather' }">{{ sortLabel('weather') }}</span>
+                    Weather <span class="sort-arrow" :class="{ active: sortKey === 'weather' }">{{ sortLabel('weather') || '↕' }}</span>
                   </button>
                 </th>
-                <th class="decisions-th">Plans</th>
+                <th class="decisions-th decisions-header-divider">Plans</th>
               </tr>
             </thead>
             <tbody>
@@ -573,17 +518,17 @@ onBeforeUnmount(() => {
                     </span>
                     <span v-else class="muted">—</span>
                   </td>
-                  <td class="score-cell">
+                  <td class="score-cell score-cell-divider">
                     <span v-if="displayPrimary(city)" class="score-badge" :class="scoreBadgeClass(displayPrimary(city).scores.weather)">
                       {{ formatScore(displayPrimary(city).scores.weather) }}
                     </span>
                     <span v-else class="muted">—</span>
                   </td>
-                  <td class="decisions-cell">
+                  <td class="decisions-cell decisions-cell-divider">
                     <span class="decisions-placeholder">
-                      <span class="pill plain decisions-pill">
+                      <span class="pill plain decisions-pill" :class="{ 'is-expanded': isExpanded(city) }">
                         <span class="dot" aria-hidden="true" />
-                        {{ isExpanded(city) ? 'Expanded below' : '—' }}
+                        {{ isExpanded(city) ? 'Expanded below' : 'No plans yet' }}
                       </span>
                     </span>
                   </td>
@@ -596,29 +541,17 @@ onBeforeUnmount(() => {
                         <div class="mini-table-wrap">
                           <table class="mini-table">
                             <colgroup>
-                              <col style="width: 44%" />
-                              <col style="width: 19%" />
-                              <col style="width: 19%" />
-                              <col style="width: 18%" />
+                              <col style="width: 46%" />
+                              <col style="width: 20%" />
+                              <col style="width: 20%" />
+                              <col style="width: 14%" />
                             </colgroup>
                             <thead>
                               <tr>
                                 <th>Business Entity</th>
-                                <th class="num">
-                                  <button class="sort-btn mini" @click="toggleEntitySort('performance')">
-                                    Performance <span class="sort-arrow" :class="{ active: entitySortKey === 'performance' }">{{ entitySortLabel('performance') }}</span>
-                                  </button>
-                                </th>
-                                <th class="num">
-                                  <button class="sort-btn mini" @click="toggleEntitySort('order_level_increase')">
-                                    Order Level <span class="sort-arrow" :class="{ active: entitySortKey === 'order_level_increase' }">{{ entitySortLabel('order_level_increase') }}</span>
-                                  </button>
-                                </th>
-                                <th class="num">
-                                  <button class="sort-btn mini" @click="toggleEntitySort('weather')">
-                                    Weather <span class="sort-arrow" :class="{ active: entitySortKey === 'weather' }">{{ entitySortLabel('weather') }}</span>
-                                  </button>
-                                </th>
+                                <th class="num">Perf.</th>
+                                <th class="num">Order</th>
+                                <th class="num">Weather</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -797,13 +730,13 @@ onBeforeUnmount(() => {
   width: 40px;
 }
 .col-city {
-  width: 132px;
+  width: 92px;
 }
 .col-entity {
-  width: 112px;
+  width: 128px;
 }
 .col-score {
-  width: 68px;
+  width: 82px;
 }
 .col-decisions {
   width: 50%;
@@ -821,26 +754,41 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--border);
 }
 .final-table thead .group-head-row th {
-  padding: 0.55rem 0.9rem;
-  font-size: 0.72rem;
-  letter-spacing: 0.04em;
+  padding: 0.75rem 0.9rem;
+  font-size: 0.86rem;
+  letter-spacing: 0.05em;
 }
 .group-header {
-  font-weight: 700;
+  font-weight: 800;
+  text-align: center;
 }
 .group-header .group-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
+  display: block;
+  text-align: center;
+  width: 100%;
 }
 .scores-header {
-  background: linear-gradient(90deg, #eef3f0, #f6faf8);
-  color: var(--accent-strong);
-  border-right: 1px solid var(--border);
+  background: var(--accent-strong);
+  color: #fff;
+}
+.scores-header-divider {
+  border-right: 2px solid #cfe0d7;
 }
 .decisions-header {
-  background: #f8faf9;
-  color: var(--muted);
+  background: #4a5b54;
+  color: #fff;
+}
+.decisions-header-divider {
+  border-left: 2px solid #cfe0d7;
+}
+.score-th-divider {
+  border-right: 2px solid #cfe0d7;
+}
+.score-cell-divider {
+  border-right: 2px solid #e3ece7;
+}
+.decisions-cell-divider {
+  border-left: 2px solid #e3ece7;
 }
 .final-table thead tr:not(.group-head-row) th {
   padding-top: 0.65rem;
@@ -850,29 +798,43 @@ onBeforeUnmount(() => {
   width: 3rem;
   text-align: center;
 }
+.city-th,
+.entity-th {
+  text-align: center !important;
+}
 .score-th {
   text-align: center;
   padding: 0 !important;
+  white-space: normal;
 }
 .score-th .sort-btn {
   width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.35rem;
-  padding: 0.65rem 0.9rem;
+  gap: 0.3rem;
+  padding: 0.65rem 0.4rem;
   border: 0;
   background: transparent;
   font: inherit;
   color: inherit;
   cursor: pointer;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.02em;
   font-weight: 700;
-  font-size: 0.72rem;
+  font-size: 0.66rem;
+  text-align: center;
+  line-height: 1.25;
+  border-radius: 0.4rem;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 .score-th .sort-btn:hover {
-  background: rgba(61, 139, 109, 0.06);
+  background: rgba(61, 139, 109, 0.1);
+  color: var(--accent-strong);
+}
+.score-th.is-sorted .sort-btn {
+  color: var(--accent-strong);
+  background: rgba(61, 139, 109, 0.08);
 }
 .sort-arrow {
   font-size: 0.68rem;
@@ -898,25 +860,8 @@ onBeforeUnmount(() => {
   gap: 0.5rem;
   flex-wrap: wrap;
 }
-.sort-btn.mini {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.3rem;
-  border: 0;
-  background: transparent;
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
-  padding: 0.62rem 0.6rem;
-  width: 100%;
-}
-.sort-btn.mini:hover {
-  color: var(--accent-strong);
-  background: rgba(61, 139, 109, 0.06);
-}
 .mini-table thead th.num {
-  padding: 0 !important;
+  text-align: center;
 }
 .decisions-th {
   text-align: center;
@@ -945,6 +890,9 @@ onBeforeUnmount(() => {
 .final-table tbody tr.city-row.expanded td:first-child {
   box-shadow: inset 3px 0 0 var(--accent);
 }
+.final-table tbody tr.city-row.expanded td {
+  border-bottom: 2px solid var(--accent);
+}
 
 .expand-col {
   width: 3rem;
@@ -956,7 +904,7 @@ onBeforeUnmount(() => {
 
 .city-cell {
   min-width: 170px;
-  text-align: left;
+  text-align: center;
 }
 .city-name {
   font-weight: 700;
@@ -967,6 +915,7 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 0.45rem;
   align-items: center;
+  justify-content: center;
   flex-wrap: wrap;
   margin-top: 0.2rem;
 }
@@ -977,7 +926,7 @@ onBeforeUnmount(() => {
 
 .entity-cell {
   white-space: nowrap;
-  text-align: left;
+  text-align: center;
 }
 .entity-name {
   font-weight: 600;
@@ -995,6 +944,13 @@ onBeforeUnmount(() => {
 }
 .decisions-cell {
   text-align: center;
+  padding: 0.6rem 0.9rem !important;
+}
+.decisions-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
 }
 .score-badge {
   display: grid;
@@ -1041,7 +997,12 @@ onBeforeUnmount(() => {
   border-color: #cfe0d7;
 }
 .decisions-pill {
-  gap: 0.35rem;
+  gap: 0.4rem;
+  padding: 0.3rem 0.85rem;
+  border: 1px dashed #d9e2de;
+  background: #fbfdfc;
+  color: var(--muted);
+  font-weight: 600;
 }
 .decisions-pill .dot {
   width: 6px;
@@ -1049,6 +1010,15 @@ onBeforeUnmount(() => {
   border-radius: 50%;
   background: var(--muted);
   display: inline-block;
+}
+.decisions-pill.is-expanded {
+  border-style: solid;
+  border-color: #cfe0d7;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+.decisions-pill.is-expanded .dot {
+  background: var(--accent-strong);
 }
 .muted {
   color: var(--muted);
@@ -1060,14 +1030,18 @@ onBeforeUnmount(() => {
 }
 .detail-cell {
   padding: 0 !important;
-  background: #f8faf9;
-  border-top: 1px solid rgba(61, 139, 109, 0.22);
+  background: #fff;
 }
 .integrated-panel {
   display: grid;
-  grid-template-columns: minmax(330px, 0.82fr) 1.45fr;
+  grid-template-columns: 40fr 60fr;
   gap: 1.15rem;
-  padding: 1.1rem 1.25rem 1.25rem;
+  margin: 0.9rem 1rem 1.1rem;
+  padding: 1.1rem 1.1rem 1.2rem;
+  border: 1px solid #cfe0d7;
+  border-radius: 0.9rem;
+  background: #f2f7f4;
+  box-shadow: 0 2px 6px rgba(20, 40, 30, 0.05);
   animation: slideDown 0.22s ease;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -1139,22 +1113,23 @@ onBeforeUnmount(() => {
   table-layout: fixed;
 }
 .mini-table thead th {
-  padding: 0.62rem 0.6rem;
+  padding: 0.62rem 0.4rem;
   background: #f6f9f8;
   color: #3a524a;
-  font-size: 0.66rem;
+  font-size: 0.64rem;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  white-space: nowrap;
+  letter-spacing: 0.03em;
+  white-space: normal;
+  line-height: 1.25;
   border-bottom: 1px solid #e3ece9;
 }
 .mini-table thead th.num {
   text-align: center;
 }
 .mini-table thead th:first-child {
-  text-align: left;
-  padding-left: 0.85rem;
+  text-align: center;
+  padding-left: 0.6rem;
 }
 .mini-table tbody td {
   padding: 0.56rem 0.6rem;
@@ -1175,8 +1150,9 @@ onBeforeUnmount(() => {
 .mini-entity {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 0.4rem;
-  text-align: left;
+  text-align: center;
   min-width: 0;
 }
 .mini-entity .entity-name {
@@ -1239,16 +1215,30 @@ onBeforeUnmount(() => {
 .priority-list {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.3rem;
 }
 .priority-row {
   display: flex;
   align-items: center;
   gap: 0.6rem;
-  padding: 0.45rem 0.6rem;
+  padding: 0.5rem 0.65rem;
   border: 1px solid var(--border);
-  border-radius: 0.55rem;
+  border-radius: 0.6rem;
   background: #fbfdfc;
+  cursor: grab;
+  transition: transform 0.22s cubic-bezier(0.2, 0, 0, 1), box-shadow 0.18s ease, opacity 0.18s ease,
+    background 0.18s ease, border-color 0.18s ease, box-shadow 0.15s ease;
+  will-change: transform;
+}
+.pri-move-move {
+  transition: transform 0.28s cubic-bezier(0.2, 0, 0, 1);
+}
+.priority-row:active {
+  cursor: grabbing;
+}
+.priority-row:hover:not(.dragging) {
+  border-color: #cfe0d7;
+  box-shadow: 0 2px 6px rgba(20, 40, 30, 0.06);
 }
 .pri-rank {
   width: 1.6rem;
@@ -1261,6 +1251,7 @@ onBeforeUnmount(() => {
   font-weight: 700;
   font-size: 0.78rem;
   flex-shrink: 0;
+  transition: background 0.18s ease, color 0.18s ease;
 }
 .priority-row .entity-name {
   font-weight: 600;
@@ -1285,13 +1276,20 @@ onBeforeUnmount(() => {
   border: 1px dashed var(--border);
   border-radius: 0.55rem;
   background: #fff;
+  margin-top: 0.3rem;
 }
 .priority-foot {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.6rem 0.75rem;
   margin-top: 0.75rem;
   flex-wrap: wrap;
+}
+.priority-foot-hint {
+  flex-basis: 100%;
+  order: 3;
+  font-size: 0.78rem;
+  line-height: 1.45;
 }
 .flex-1 {
   flex: 1;
@@ -1327,43 +1325,39 @@ onBeforeUnmount(() => {
 .drag-handle {
   cursor: grab;
   color: #9ab0a8;
-  font-size: 0.82rem;
+  font-size: 0.9rem;
   letter-spacing: 0.08em;
   user-select: none;
   padding: 0 0.15rem;
   line-height: 1;
+  transition: color 0.15s ease;
+}
+.priority-row:hover .drag-handle {
+  color: var(--accent-strong);
 }
 .drag-handle:active {
   cursor: grabbing;
 }
 .priority-row.dragging {
-  opacity: 0.42;
-}
-.priority-row.drag-over {
-  outline: 2px solid var(--accent);
-  outline-offset: -1px;
-  background: #f0faf6 !important;
-  border-color: var(--accent) !important;
-}
-.priority-row {
-  transition: transform 0.18s ease, background 0.18s ease, opacity 0.18s ease, margin 0.18s ease;
-}
-.drop-placeholder {
-  height: 0;
-  opacity: 0;
-  border: 1px dashed transparent;
-  border-radius: 0.55rem;
-  transition: height 0.2s cubic-bezier(0.2, 0, 0, 1), opacity 0.2s ease, margin 0.2s ease, border-color 0.2s ease, background 0.2s ease;
-  overflow: hidden;
-  pointer-events: none;
-}
-.drop-placeholder.active {
-  height: 2.5rem;
-  opacity: 1;
+  opacity: 0.45;
+  transform: scale(0.97);
+  box-shadow: 0 8px 20px rgba(20, 40, 30, 0.14);
   border-color: var(--accent);
+  background: #f3faf6;
+}
+.priority-row.drag-over-top {
+  box-shadow: inset 0 3px 0 0 var(--accent);
+  background: #f0faf6;
+}
+.drop-end-zone {
+  height: 0.65rem;
+  border-radius: 0.5rem;
+  transition: height 0.18s cubic-bezier(0.2, 0, 0, 1), box-shadow 0.15s ease, background 0.15s ease;
+}
+.drop-end-zone.drag-over-top {
+  height: 2.4rem;
+  box-shadow: inset 0 0 0 1.5px var(--accent);
   background: #eefaf5;
-  margin: 0.3rem 0;
-  pointer-events: auto;
 }
 
 @media (max-width: 980px) {
